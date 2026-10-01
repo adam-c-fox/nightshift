@@ -8,7 +8,7 @@ import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { agentEnv, buildAgentSettings } from "./agent-env.js";
 import { deriveOutcome } from "./status.js";
-import { createAndCheckPR, findOpenNightPr, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
+import { createAndCheckPR, existingPrWebUrl, findOpenNightPr, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
 import { writeReport } from "./report.js";
 import { localDate, runStamp, TIME_ZONE } from "./time.js";
 import { branchName, createWorktree, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
@@ -72,8 +72,14 @@ async function openPullRequest(result: TicketResult, baseBranch: string): Promis
 async function updatePullRequest(result: TicketResult, existing: ExistingPr): Promise<void> {
   const { branch, worktreePath } = result;
   log(`  Pushing ${branch} to existing PR #${existing.prId} branch ${existing.sourceBranch}`);
+  let pr: PRResult;
+  try {
+    pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
+  } catch (e) {
+    result.notes = [result.notes, `Push to ${existing.sourceBranch} rejected; tonight's work is on local ${branch}.`].filter(Boolean).join(" | ");
+    throw e;
+  }
   result.branch = existing.sourceBranch;
-  const pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
   result.notes = [result.notes, `Updated existing PR #${existing.prId}.`].filter(Boolean).join(" | ");
   applyPipelineStatus(result, pr);
 }
@@ -167,6 +173,14 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
     branch: wt.branch,
     durationSec: 0,
   };
+  if (existing && wt.startedFromPr) {
+    ticketResult.prId = existing.prId;
+    try {
+      ticketResult.prUrl = existingPrWebUrl(existing, repoPath);
+    } catch (e) {
+      log(`  Could not build URL for PR #${existing.prId}: ${errorMessage(e)}`);
+    }
+  }
   const outcome = deriveOutcome(result);
   ticketResult.status = outcome.status;
   ticketResult.notes = [ticketResult.notes, ...outcome.notes].filter(Boolean).join(" | ");

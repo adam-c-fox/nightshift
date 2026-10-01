@@ -265,6 +265,12 @@ export async function createAndCheckPR(
   return { prId, url, pipelineStatus, durationSec: Math.round((Date.now() - start) / 1000) };
 }
 
+export function existingPrWebUrl(existing: ExistingPr, repoPath: string): string {
+  return buildPrWebUrl(
+    requireEnv("AZURE_DEVOPS_ORG"), requireEnv("AZURE_DEVOPS_PROJECT"), repoNameFromRemote(originUrl(repoPath)), existing.prId,
+  );
+}
+
 export async function updateAndCheckPR(
   existing: ExistingPr,
   localBranch: string,
@@ -272,13 +278,12 @@ export async function updateAndCheckPR(
   options: PolicyWaitOptions = {},
 ): Promise<PRResult> {
   const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
-  const project = requireEnv("AZURE_DEVOPS_PROJECT");
   const start = Date.now();
 
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktreePath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const url = existingPrWebUrl(existing, worktreePath);
   pushBranch(worktreePath, localBranch, existing.sourceBranch);
 
-  const url = buildPrWebUrl(org, project, repoNameFromRemote(originUrl(worktreePath)), existing.prId);
   const timeoutMs = options.timeoutMs ?? POLL_TIMEOUT_MS;
   const seen = await waitForPrCommit(
     () => (az(prShowArgs(existing.prId, org)) as { lastMergeSourceCommit?: { commitId?: string } } | null)?.lastMergeSourceCommit?.commitId,
