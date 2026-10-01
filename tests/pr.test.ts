@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrTitle, buildPrWebUrl, orgUrl, pickNightPr, policyListArgs, repoNameFromRemote, summarizePolicies, waitForPolicies, type AzPullRequest, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrTitle, buildPrWebUrl, orgUrl, pickNightPr, policyListArgs, repoNameFromRemote, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -70,6 +70,57 @@ describe("waitForPolicies", () => {
 
   it("reports failure as soon as a blocking policy is rejected", async () => {
     await expect(waitForPolicies(() => [policy("rejected")], fast)).resolves.toBe("failed");
+  });
+});
+
+describe("waitForPolicies with requireFreshEvaluation", () => {
+  const opts = { timeoutMs: 1000, intervalMs: 1, noPolicyGraceMs: 0, requireFreshEvaluation: true, freshnessGraceMs: 60_000 };
+  const sequence = (...evaluations: PolicyEvaluation[][]) => {
+    let i = 0;
+    return () => evaluations[Math.min(i++, evaluations.length - 1)];
+  };
+
+  it("ignores a stale rejected verdict and waits for the verdict after a pending poll", async () => {
+    const fetch = sequence([policy("rejected")], [policy("rejected")], [policy("running")], [policy("approved")]);
+    await expect(waitForPolicies(fetch, opts)).resolves.toBe("succeeded");
+  });
+
+  it("does not trust a stale approved verdict either", async () => {
+    const fetch = sequence([policy("approved")], [policy("queued")], [policy("rejected")]);
+    await expect(waitForPolicies(fetch, opts)).resolves.toBe("failed");
+  });
+
+  it("accepts a terminal verdict once the freshness grace has passed", async () => {
+    await expect(waitForPolicies(() => [policy("rejected")], { ...opts, freshnessGraceMs: 0 })).resolves.toBe("failed");
+  });
+
+  it("times out as unknown when only stale terminal verdicts are ever seen", async () => {
+    await expect(waitForPolicies(() => [policy("rejected")], { ...opts, timeoutMs: 30 })).resolves.toBe("unknown");
+  });
+});
+
+describe("waitForPrCommit", () => {
+  const fast = { timeoutMs: 1000, intervalMs: 1 };
+
+  it("resolves true once the PR reports the pushed commit", async () => {
+    const seen = ["old", "old", "abc"];
+    let i = 0;
+    await expect(waitForPrCommit(() => seen[Math.min(i++, seen.length - 1)], "abc", fast)).resolves.toBe(true);
+  });
+
+  it("resolves false when the commit never shows up", async () => {
+    await expect(waitForPrCommit(() => "old", "abc", { ...fast, timeoutMs: 30 })).resolves.toBe(false);
+  });
+
+  it("tolerates transient fetch errors and logs them", async () => {
+    let calls = 0;
+    const logged: string[] = [];
+    const fetchCommit = () => {
+      if (++calls < 3) throw new Error("az hiccup");
+      return "abc";
+    };
+    await expect(waitForPrCommit(fetchCommit, "abc", { ...fast, log: m => logged.push(m) })).resolves.toBe(true);
+    expect(logged.join("\n")).toMatch(/az hiccup/);
   });
 });
 

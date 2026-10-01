@@ -5,6 +5,7 @@ import type { PipelineStatus } from "./types.js";
 const POLL_INTERVAL_MS = 15_000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const NO_POLICY_GRACE_MS = 60_000;
+const FRESHNESS_GRACE_MS = 60_000;
 const AZ_TIMEOUT_MS = 60_000;
 const CI_POLICY_TYPES = ["build", "status"];
 
@@ -155,6 +156,8 @@ export async function waitForPolicies(
     intervalMs: number;
     noPolicyGraceMs?: number;
     maxConsecutiveErrors?: number;
+    requireFreshEvaluation?: boolean;
+    freshnessGraceMs?: number;
     log?: (msg: string) => void;
   },
 ): Promise<PipelineStatus> {
@@ -162,7 +165,9 @@ export async function waitForPolicies(
   const maxErrors = opts.maxConsecutiveErrors ?? MAX_CONSECUTIVE_POLICY_ERRORS;
   const log = opts.log ?? (() => {});
   const start = Date.now();
+  const freshnessGrace = opts.freshnessGraceMs ?? FRESHNESS_GRACE_MS;
   let consecutiveErrors = 0;
+  let sawPending = false;
   while (Date.now() - start < opts.timeoutMs) {
     let verdict: PolicyVerdict = "pending";
     try {
@@ -173,24 +178,51 @@ export async function waitForPolicies(
       log(`  Policy check failed (${consecutiveErrors}/${maxErrors}): ${errorText(e)}`);
       if (consecutiveErrors >= maxErrors) return "unknown";
     }
-    if (verdict === "succeeded" || verdict === "failed") return verdict;
+    if (verdict === "pending") sawPending = true;
+    const fresh = !opts.requireFreshEvaluation || sawPending || Date.now() - start >= freshnessGrace;
+    if ((verdict === "succeeded" || verdict === "failed") && fresh) return verdict;
     if (verdict === "none" && Date.now() - start >= grace) return "unknown";
     await sleep(opts.intervalMs);
   }
   return "unknown";
 }
 
+export async function waitForPrCommit(
+  fetchCommit: () => string | undefined,
+  sha: string,
+  opts: { timeoutMs: number; intervalMs: number; log?: (msg: string) => void },
+): Promise<boolean> {
+  const log = opts.log ?? (() => {});
+  const start = Date.now();
+  while (Date.now() - start < opts.timeoutMs) {
+    try {
+      if (fetchCommit() === sha) return true;
+    } catch (e) {
+      log(`  PR commit check failed: ${errorText(e)}`);
+    }
+    await sleep(opts.intervalMs);
+  }
+  return false;
+}
+
 interface PolicyWaitOptions { timeoutMs?: number; intervalMs?: number; log?: (msg: string) => void }
 
-function waitForPrPolicies(prId: number, org: string, options: PolicyWaitOptions): Promise<PipelineStatus> {
+function waitForPrPolicies(
+  prId: number, org: string, options: PolicyWaitOptions, extra: { timeoutMs?: number; requireFreshEvaluation?: boolean } = {},
+): Promise<PipelineStatus> {
   return waitForPolicies(
     () => (az(policyListArgs(prId, org)) ?? []) as PolicyEvaluation[],
     {
-      timeoutMs: options.timeoutMs ?? POLL_TIMEOUT_MS,
+      timeoutMs: extra.timeoutMs ?? options.timeoutMs ?? POLL_TIMEOUT_MS,
       intervalMs: options.intervalMs ?? POLL_INTERVAL_MS,
+      requireFreshEvaluation: extra.requireFreshEvaluation,
       log: options.log,
     },
   );
+}
+
+export function prShowArgs(prId: number, org: string): string[] {
+  return ["repos", "pr", "show", "--id", String(prId), "--org", org];
 }
 
 export async function createAndCheckPR(
@@ -236,10 +268,20 @@ export async function updateAndCheckPR(
   const project = requireEnv("AZURE_DEVOPS_PROJECT");
   const start = Date.now();
 
+  const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktreePath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   pushBranch(worktreePath, localBranch, existing.sourceBranch);
 
   const url = buildPrWebUrl(org, project, repoNameFromRemote(originUrl(worktreePath)), existing.prId);
-  const pipelineStatus = await waitForPrPolicies(existing.prId, org, options);
+  const timeoutMs = options.timeoutMs ?? POLL_TIMEOUT_MS;
+  const seen = await waitForPrCommit(
+    () => (az(prShowArgs(existing.prId, org)) as { lastMergeSourceCommit?: { commitId?: string } } | null)?.lastMergeSourceCommit?.commitId,
+    sha,
+    { timeoutMs, intervalMs: options.intervalMs ?? POLL_INTERVAL_MS, log: options.log },
+  );
+  const remaining = Math.max(0, timeoutMs - (Date.now() - start));
+  const pipelineStatus: PipelineStatus = seen
+    ? await waitForPrPolicies(existing.prId, org, options, { timeoutMs: remaining, requireFreshEvaluation: true })
+    : "unknown";
 
   return { prId: existing.prId, url, pipelineStatus, durationSec: Math.round((Date.now() - start) / 1000) };
 }
