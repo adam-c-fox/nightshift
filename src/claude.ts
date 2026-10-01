@@ -153,6 +153,11 @@ export function buildClaudeArgs(operatingInstructions: string): string[] {
   ];
 }
 
+export function agentRunArgs(base: string[], settings?: string): string[] {
+  if (!settings) return base;
+  return [...base, "--settings", settings, "--strict-mcp-config", "--setting-sources", "user"];
+}
+
 export interface RunAgentOptions {
   shouldAbort?: () => string | undefined;
   checkIntervalMs?: number;
@@ -182,8 +187,7 @@ export async function runAgent(
     }};
   }
 
-  const args = buildClaudeArgs(readFileSync(AGENTS_MD, "utf-8"));
-  if (options.settings) args.push("--settings", options.settings);
+  const args = agentRunArgs(buildClaudeArgs(readFileSync(AGENTS_MD, "utf-8")), options.settings);
   const proc = await runWithWatchdog("claude", args, {
     cwd: worktreePath,
     input: prompt,

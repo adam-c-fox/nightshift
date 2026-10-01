@@ -10,7 +10,22 @@ describe("agentEnv", () => {
       ARM_CLIENT_SECRET: "x", ARM_SUBSCRIPTION_ID: "sub", AZURE_CLIENT_ID: "x",
       ANTHROPIC_API_KEY: "x",
     });
-    expect(env).toEqual({ PATH: "/bin", HOME: "/h", TF_IN_AUTOMATION: "1" });
+    expect(env).toEqual({
+      PATH: "/bin", HOME: "/h", TF_IN_AUTOMATION: "1",
+      ENABLE_CLAUDEAI_MCP_SERVERS: "false", CHECKPOINT_DISABLE: "1",
+    });
+  });
+
+  it("strips credential-shaped names and keeps harmless ones", () => {
+    const env = agentEnv({
+      AWS_SECRET_ACCESS_KEY: "x", TF_TOKEN_app_terraform_io: "x", GOOGLE_APPLICATION_CREDENTIALS: "x",
+      DEPLOY_KEY: "x", npm_config__authToken: "x",
+      SSH_AUTH_SOCK: "s", TMPDIR: "/t", PWD: "/p", NODE_OPTIONS: "--x", npm_config_cache: "/c",
+    });
+    expect(env).toEqual({
+      SSH_AUTH_SOCK: "s", TMPDIR: "/t", PWD: "/p", NODE_OPTIONS: "--x", npm_config_cache: "/c",
+      ENABLE_CLAUDEAI_MCP_SERVERS: "false", CHECKPOINT_DISABLE: "1",
+    });
   });
 });
 
@@ -27,6 +42,19 @@ describe("buildAgentSettings", () => {
     const s = JSON.parse(buildAgentSettings("main", root));
     expect(s.sandbox.filesystem.denyRead).toContain(`${root}/.env`);
     expect(s.permissions.deny).toContain(`Read(/${root}/.env)`);
+  });
+
+  it("blocks reading nightshift's logs", () => {
+    const s = JSON.parse(buildAgentSettings("main", root));
+    expect(s.sandbox.filesystem.denyRead).toContain(`${root}/logs`);
+    expect(s.permissions.deny).toEqual(expect.arrayContaining([`Read(/${root}/logs)`, `Read(/${root}/logs/**)`]));
+  });
+
+  it("denies web and connector tools that run outside the sandbox", () => {
+    const s = JSON.parse(buildAgentSettings("main", root));
+    expect(s.permissions.deny).toEqual(expect.arrayContaining([
+      "WebFetch", "WebSearch", "mcp__claude_ai_Linear", "mcp__claude_ai_Notion",
+    ]));
   });
 
   it("never lets the agent reach Azure DevOps", () => {
