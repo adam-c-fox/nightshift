@@ -5,14 +5,15 @@ import type { Ticket, RepoKind } from "./types.js";
 const TICKETS_FILE = path.resolve(import.meta.dirname, "..", "tickets", "tonight.md");
 
 export function loadTickets(): Ticket[] {
-  let raw: string;
   try {
-    raw = readFileSync(TICKETS_FILE, "utf-8");
+    return parseTickets(readFileSync(TICKETS_FILE, "utf-8"));
   } catch {
     return [];
   }
+}
 
-  const lines = raw.split("\n");
+export function parseTickets(raw: string): Ticket[] {
+  const lines = raw.replace(/<!--[\s\S]*?-->/g, "").split(/\r?\n/);
   const tickets: Ticket[] = [];
   let current: Omit<Ticket, "context"> | null = null;
   let contextLines: string[] = [];
@@ -52,12 +53,6 @@ export function loadTickets(): Ticket[] {
     if (bulletMatch && current) {
       contextLines.push(bulletMatch[1].trim());
       continue;
-    }
-
-    // Blank line or non-ticket line → flush if we're outside a ticket
-    if (trimmed === "" && current) {
-      // Don't flush yet – could be a blank line within a ticket section
-      // Only flush on next heading or EOF
     }
   }
 
