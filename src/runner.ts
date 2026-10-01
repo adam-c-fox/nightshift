@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, LinearTicket, NightBudget } from "./types.js";
 import { loadTickets } from "./tickets.js";
-import { startNightBudget, checkGate, budgetGateMessage } from "./budget.js";
+import { startNightBudget, closedBudget, checkGate, budgetGateMessage } from "./budget.js";
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { deriveOutcome } from "./status.js";
@@ -175,15 +175,32 @@ async function main() {
   mkdirSync(WORKTREES_DIR, { recursive: true });
   mkdirSync(LOGS_DIR, { recursive: true });
 
-  const budgetRef = { current: startNightBudget() };
-  log(`Tonight's allocation: ${budgetRef.current.allocationPct}% of weekly. Started at ${budgetRef.current.startPct}%, cap ${budgetRef.current.capPct}%.`);
-
-  const tickets = loadTickets();
-  log(`Loaded ${tickets.length} ticket(s) from tonight.md`);
-
   const results: TicketResult[] = [];
   let gateHit = false;
   let skipReason = "";
+  let budget: NightBudget;
+  try {
+    budget = startNightBudget();
+    log(`Tonight's allocation: ${budget.allocationPct}% of weekly. Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
+  } catch (e) {
+    const message = (e as Error).message;
+    budget = closedBudget(`usage unavailable: ${message}`);
+    gateHit = true;
+    skipReason = `Skipped – could not read usage at start: ${message}`;
+    log(skipReason);
+  }
+  const budgetRef = { current: budget };
+  const closedAtStart = gateHit;
+
+  let tickets: Ticket[] = [];
+  let ticketError = "";
+  try {
+    tickets = loadTickets();
+    log(`Loaded ${tickets.length} ticket(s) from tonight.md`);
+  } catch (e) {
+    ticketError = (e as Error).message;
+    log(`ERROR loading tickets: ${ticketError}`);
+  }
 
   for (const ticket of tickets) {
     if (!gateHit) {
@@ -217,7 +234,7 @@ async function main() {
   }
 
   try {
-    budgetRef.current = checkGate(budgetRef.current);
+    if (!closedAtStart) budgetRef.current = checkGate(budgetRef.current);
   } catch (e) {
     log(`Final usage check failed: ${(e as Error).message}`);
   }
@@ -230,7 +247,7 @@ async function main() {
     tickets: results,
     budget: budgetRef.current,
     gateHit,
-    noTasks: tickets.length === 0,
+    noTasks: tickets.length === 0 && !ticketError,
   };
 
   // Write report

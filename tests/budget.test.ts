@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { budgetUsedPct, openNightBudget, parseUsageOutput, withCurrentUsage } from "../src/budget.js";
+import { budgetUsedPct, closedBudget, openNightBudget, parseUsageOutput, withCurrentUsage } from "../src/budget.js";
 
 const usageOutput = `Ignoring 6 permissions.allow entries from .claude/settings.json
 You are currently using your subscription to power your Claude Code usage
@@ -59,5 +59,11 @@ describe("night budget gate", () => {
   it("stays closed after reset if the allocation was already spent", () => {
     const spentAll = withCurrentUsage(start, { weeklyPercent: 18, resetInfo: "" });
     expect(withCurrentUsage(spentAll, { weeklyPercent: 0, resetInfo: "" }).gateHit).toBe(true);
+  });
+});
+
+describe("closedBudget", () => {
+  it("is a gate-hit budget that explains why", () => {
+    expect(closedBudget("claude not on PATH")).toMatchObject({ gateHit: true, resetInfo: "claude not on PATH", capPct: 0 });
   });
 });

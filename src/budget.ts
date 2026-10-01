@@ -45,6 +45,10 @@ export function openNightBudget(snapshot: UsageSnapshot, allocationPct = ALLOCAT
   };
 }
 
+export function closedBudget(reason: string): NightBudget {
+  return { ...openNightBudget({ weeklyPercent: 0, resetInfo: reason }, 0), gateHit: true };
+}
+
 export function withCurrentUsage(budget: NightBudget, snapshot: UsageSnapshot): NightBudget {
   const now = snapshot.weeklyPercent;
   if (now < budget.currentPct) {
