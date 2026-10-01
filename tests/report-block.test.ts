@@ -68,9 +68,14 @@ describe("parseReportBlock", () => {
     expect(parsed.status).toBe("needs_review");
   });
 
-  it("tolerates a missing end marker and code fences", () => {
+  it("tolerates code fences around the block", () => {
     const parsed = parseReportBlock("```\n---REPORT---\nstatus: done\nsummary: ok\n---\n```");
     expect(parsed).toMatchObject({ status: "done", summary: "ok" });
+  });
+
+  it("reads to end of output when the end marker is missing", () => {
+    const parsed = parseReportBlock("---REPORT---\nstatus: partial\nsummary: cut off\nnotes: tail");
+    expect(parsed).toMatchObject({ status: "partial", summary: "cut off", notes: "tail" });
   });
 
   it("throws when there is no block", () => {

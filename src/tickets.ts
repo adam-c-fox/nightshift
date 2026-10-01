@@ -4,12 +4,15 @@ import type { Ticket, RepoKind } from "./types.js";
 
 const TICKETS_FILE = path.resolve(import.meta.dirname, "..", "tickets", "tonight.md");
 
-export function loadTickets(): Ticket[] {
+export function loadTickets(file = TICKETS_FILE): Ticket[] {
+  let raw: string;
   try {
-    return parseTickets(readFileSync(TICKETS_FILE, "utf-8"));
-  } catch {
-    return [];
+    raw = readFileSync(file, "utf-8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
   }
+  return parseTickets(raw);
 }
 
 export function parseTickets(raw: string): Ticket[] {
