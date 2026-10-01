@@ -120,4 +120,17 @@ describe("commitWorktree", () => {
     commitWorktree(wt, "ENG-1", "fix", noop);
     expect(readFileSync(join(wt.wtPath, "tfplan"), "utf-8")).toBe("binary");
   });
+
+  it("excludes files nested under node_modules and plan paths even without a gitignore", () => {
+    writeFileSync(join(wt.wtPath, ".gitignore"), "");
+    run(wt.wtPath, "add", ".gitignore");
+    run(wt.wtPath, "commit", "-q", "-m", "drop ignores");
+    mkdirSync(join(wt.wtPath, "pkg", "node_modules"), { recursive: true });
+    mkdirSync(join(wt.wtPath, "infra"), { recursive: true });
+    writeFileSync(join(wt.wtPath, "pkg", "node_modules", "x.js"), "x");
+    writeFileSync(join(wt.wtPath, "infra", "night.tfplan"), "binary");
+    writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
+    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
+    expect(run(wt.wtPath, "diff", "--name-only", "HEAD~1..HEAD").split("\n")).toEqual(["fix.ts"]);
+  });
 });

@@ -99,7 +99,7 @@ export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
 export const EXCLUDED_PATHS = ["node_modules", "tfplan", "*.tfplan"];
 export type CommitOutcome = "committed" | "agent_committed" | "no_changes";
 
-const PATHSPEC = ["--", ".", ...EXCLUDED_PATHS.map(p => `:(exclude,glob)**/${p}`)];
+const PATHSPEC = ["--", ".", ...EXCLUDED_PATHS.flatMap(p => [`:(exclude,glob)**/${p}`, `:(exclude,glob)**/${p}/**`])];
 
 function commitsAhead(wt: Worktree): number {
   return Number(git(["rev-list", "--count", `${wt.baseRef}..HEAD`], wt.wtPath).trim());
