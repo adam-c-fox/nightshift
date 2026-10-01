@@ -17,10 +17,10 @@ and always leave the repo in a state a human can review in the morning.
   - Type-check: `npx tsc --noEmit -p tsconfig.base.json`
   - Lint: `npx eslint .`
 - **Terraform repo** (IaC, no JS):
-  - Validate: `terraform init && terraform validate`
-  - Plan: `terraform plan -out=tfplan`
-  - There are no unit tests. "Tests" for TF tickets = `validate` passes +
-    `plan` shows only the expected resource changes.
+  - Validate: `terraform init -backend=false && terraform validate`
+  - Do NOT run Terraform `plan` or `apply`. The PR pipeline runs `plan`,
+    and the reviewer checks its output.
+  - There are no unit tests. "Tests" for TF tickets = `validate` passes.
 - Node ≥ 22. Do NOT change `engines`, lockfile format, or major dep versions
   unless the ticket explicitly requires it.
 
@@ -45,9 +45,9 @@ force a green.
 
 For **Terraform tickets**, steps 2-5 are replaced by:
 1. Write/modify the `.tf` resources.
-2. `terraform init && terraform validate` → must pass.
-3. `terraform plan -out=tfplan` → review that only expected resources change.
-4. If the plan shows unexpected changes, revert and re-approach.
+2. `terraform init -backend=false && terraform validate` → must pass.
+3. In `notes`, list the resource changes you expect the PR pipeline's
+   `plan` to show, so the reviewer can compare.
 
 ## 3 · Context & token discipline
 
@@ -71,8 +71,9 @@ These rules exist so the machine doesn't burn through the weekly budget.
 
 ## 4 · Edit discipline
 
-- One commit per ticket. Message format: `night: <IDENTIFIER> – <short description>`.
-- Do NOT create branches, PRs, or change git config. The runner handles commits.
+- Do NOT commit. Leave your changes in the worktree; the runner commits them
+  as `night: <IDENTIFIER> – <summary>` and opens the PR.
+- Do NOT create branches, PRs, or change git config.
 - Do NOT run `npm install` unless you added a new dependency AND the ticket
   requires it. `node_modules` is pre-populated via symlink.
 - Do NOT modify `.env`, `.github/`, `pipelines/`, `compose.yml`, or
@@ -87,8 +88,9 @@ Stop working on the current ticket (and mark `needs_review`) if:
 - A test in an unrelated package starts failing (regression risk).
 - You realise the ticket is actually a feature request, not a fix.
 
-In all cases: **commit what you have**, write a clear `notes` field, and
-mark the status. Do not leave the worktree dirty.
+In all cases: **leave what you have in the worktree** (the runner commits it),
+write a clear `notes` field, and mark the status. Delete scratch files you
+created that aren't part of the change.
 
 ## 6 · Output contract – MANDATORY
 

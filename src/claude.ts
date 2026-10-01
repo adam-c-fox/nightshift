@@ -137,7 +137,7 @@ const ALLOWED_TOOLS = [
   "Bash(git *)", "Bash(terraform *)",
   "Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)",
 ];
-const DISALLOWED_TOOLS = ["Bash(git push *)", "Bash(git config *)"];
+const DISALLOWED_TOOLS = ["Bash(git push *)", "Bash(git config *)", "Bash(git commit *)"];
 
 export function buildClaudeArgs(operatingInstructions: string): string[] {
   return [
