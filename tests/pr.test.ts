@@ -85,6 +85,19 @@ describe("waitForPolicies with requireFreshEvaluation", () => {
     await expect(waitForPolicies(fetch, opts)).resolves.toBe("succeeded");
   });
 
+  it("does not count a failed poll as evidence that the evaluation is fresh", async () => {
+    let call = 0;
+    const steps: (PolicyEvaluation[] | Error)[] = [
+      [policy("rejected")], new Error("az hiccup"), [policy("rejected")], [policy("running")], [policy("approved")],
+    ];
+    const fetch = () => {
+      const step = steps[Math.min(call++, steps.length - 1)];
+      if (step instanceof Error) throw step;
+      return step;
+    };
+    await expect(waitForPolicies(fetch, opts)).resolves.toBe("succeeded");
+  });
+
   it("does not trust a stale approved verdict either", async () => {
     const fetch = sequence([policy("approved")], [policy("queued")], [policy("rejected")]);
     await expect(waitForPolicies(fetch, opts)).resolves.toBe("failed");

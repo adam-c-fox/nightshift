@@ -76,7 +76,7 @@ async function updatePullRequest(result: TicketResult, existing: ExistingPr): Pr
   try {
     pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
   } catch (e) {
-    result.notes = [result.notes, `Push to ${existing.sourceBranch} rejected; tonight's work is on local ${branch}.`].filter(Boolean).join(" | ");
+    result.notes = [result.notes, `Updating PR #${existing.prId} failed before or during push to ${existing.sourceBranch}: ${errorMessage(e).split("\n")[0]}; tonight's work is on local ${branch}.`].filter(Boolean).join(" | ");
     throw e;
   }
   result.branch = existing.sourceBranch;

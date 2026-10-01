@@ -180,12 +180,12 @@ export async function waitForPolicies(
     try {
       verdict = summarizePolicies(fetchEvaluations());
       consecutiveErrors = 0;
+      if (verdict === "pending") sawPending = true;
     } catch (e) {
       consecutiveErrors++;
       log(`  Policy check failed (${consecutiveErrors}/${maxErrors}): ${errorText(e)}`);
       if (consecutiveErrors >= maxErrors) return "unknown";
     }
-    if (verdict === "pending") sawPending = true;
     const fresh = !opts.requireFreshEvaluation || sawPending || Date.now() - start >= freshnessGrace;
     if ((verdict === "succeeded" || verdict === "failed") && fresh) return verdict;
     if (verdict === "none" && Date.now() - start >= grace) return "unknown";
