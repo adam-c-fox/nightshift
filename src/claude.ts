@@ -127,6 +127,8 @@ export interface ClaudeResult {
   rawOutput: string;
   report?: AgentReport;
   parseError?: string;
+  failure?: string;
+  abortReason?: string;
 }
 
 export const MAX_TURNS = 80;
@@ -195,5 +197,5 @@ export function runAgent(
     parseError = failure ? `${failure}; ${(e as Error).message}` : (e as Error).message;
   }
 
-  return { success: failure === undefined, rawOutput, report, parseError };
+  return { success: failure === undefined, rawOutput, report, parseError, failure };
 }

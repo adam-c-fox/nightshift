@@ -5,6 +5,7 @@ import { loadTickets } from "./tickets.js";
 import { startNightBudget, checkGate, budgetGateMessage } from "./budget.js";
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
+import { deriveOutcome } from "./status.js";
 import { createAndCheckPR } from "./pr.js";
 import { writeReport } from "./report.js";
 import { localDate, runStamp, TIME_ZONE } from "./time.js";
@@ -115,11 +116,14 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string): Pr
     filesModified: report?.filesModified ?? [],
     tests: report?.tests ?? [],
     verifyCommands: report?.verifyCommands ?? [],
-    notes: report?.notes ?? (result.parseError ? "Agent did not produce a valid ---REPORT--- block." : ""),
+    notes: report?.notes ?? "",
     worktreePath: wt.wtPath,
     branch: wt.branch,
     durationSec: 0,
   };
+  const outcome = deriveOutcome(result);
+  ticketResult.status = outcome.status;
+  ticketResult.notes = [ticketResult.notes, ...outcome.notes].filter(Boolean).join(" | ");
 
   if (dryRun) {
     log(`  [dry-run] Would commit, push ${wt.branch} and open an Azure DevOps PR into ${wt.baseBranch}`);
@@ -133,8 +137,10 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string): Pr
 
     try {
       const commit = commitWorktree(wt, ticketId, ticketResult.summary, log);
-      if (commit !== "no_changes") {
+      if (commit !== "no_changes" && outcome.publish) {
         await openPullRequest(ticketResult, wt.baseBranch);
+      } else if (commit !== "no_changes") {
+        log(`  Not publishing ${wt.branch}: ${outcome.notes.join(" ")}`);
       }
     } catch (e) {
       const message = errorMessage(e);
