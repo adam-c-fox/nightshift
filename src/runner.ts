@@ -7,7 +7,7 @@ import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { agentEnv, buildAgentSettings } from "./agent-env.js";
 import { deriveOutcome } from "./status.js";
-import { createAndCheckPR } from "./pr.js";
+import { createAndCheckPR, findOpenNightPr, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
 import { writeReport } from "./report.js";
 import { localDate, runStamp, TIME_ZONE } from "./time.js";
 import { branchName, createWorktree, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
@@ -49,12 +49,7 @@ function placeholderResult(ticket: Ticket, status: TicketResult["status"], summa
   };
 }
 
-async function openPullRequest(result: TicketResult, baseBranch: string): Promise<void> {
-  const { ticket, branch, worktreePath } = result;
-  log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
-  const pr = await createAndCheckPR(
-    ticket.id, result.summary, result.verifyCommands, branch, baseBranch, worktreePath, { log },
-  );
+function applyPipelineStatus(result: TicketResult, pr: PRResult): void {
   result.prUrl = pr.url;
   result.prId = pr.prId;
   result.pipelineStatus = pr.pipelineStatus;
@@ -69,13 +64,45 @@ async function openPullRequest(result: TicketResult, baseBranch: string): Promis
   }
 }
 
+async function openPullRequest(result: TicketResult, baseBranch: string): Promise<void> {
+  const { ticket, branch, worktreePath } = result;
+  log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
+  const pr = await createAndCheckPR(
+    ticket.id, result.summary, result.verifyCommands, branch, baseBranch, worktreePath, { log },
+  );
+  applyPipelineStatus(result, pr);
+}
+
+async function updatePullRequest(result: TicketResult, existing: ExistingPr): Promise<void> {
+  const { branch, worktreePath } = result;
+  log(`  Pushing ${branch} to existing PR #${existing.prId} branch ${existing.sourceBranch}`);
+  const pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
+  result.branch = existing.sourceBranch;
+  result.notes = [result.notes, `Updated existing PR #${existing.prId}.`].filter(Boolean).join(" | ");
+  applyPipelineStatus(result, pr);
+}
+
+function lookUpExistingPr(ticketId: string, repoPath: string): ExistingPr | null {
+  try {
+    const existing = findOpenNightPr(ticketId, repoPath);
+    if (existing) log(`  Continuing PR #${existing.prId} (${existing.sourceBranch} → ${existing.targetBranch})`);
+    return existing;
+  } catch (e) {
+    log(`  Could not look up existing PRs: ${errorMessage(e)}; a new PR will be opened if needed`);
+    return null;
+  }
+}
+
+const continuingPrContext = (prId: number) =>
+  `This ticket already has open PR #${prId} from an earlier night. The worktree contains that work; continue from it instead of starting over.`;
+
 async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, budgetRef: { current: NightBudget }): Promise<TicketResult> {
   const { id: ticketId, name: ticketName, context, repo } = ticket;
   const repoPath = REPOS[repo];
   const startTime = Date.now();
   const plannedPath = worktreePath(WORKTREES_DIR, repo, ticketId);
   let wt: Worktree = {
-    wtPath: plannedPath, branch: branchName(ticketId, stamp), baseRef: "origin/main", baseBranch: "main",
+    wtPath: plannedPath, branch: branchName(ticketId, stamp), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
   };
 
   log(`\n── Ticket ${ticketId} – ${ticketName} [${repo}] ──`);
@@ -96,11 +123,15 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
     log(`  Linear fetch error: ${(e as Error).message}`);
   }
 
+  const existing = lookUpExistingPr(ticketId, repoPath);
   if (dryRun) {
     log(`  [dry-run] Would create worktree at ${wt.wtPath} on ${wt.branch}`);
   } else {
-    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, runStamp: stamp }, log);
+    const startFrom = existing ? { branch: existing.sourceBranch, baseBranch: existing.targetBranch } : undefined;
+    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, runStamp: stamp, startFrom }, log);
   }
+  const continuing = existing !== null && (dryRun || wt.startedFromPr);
+  const agentContext = continuing ? [continuingPrContext(existing.prId), ...context] : context;
 
   const shouldAbort = () => {
     try {
@@ -114,7 +145,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
       : undefined;
   };
   const result = await runAgent(
-    wt.wtPath, ticketId, ticketName, context,
+    wt.wtPath, ticketId, ticketName, agentContext,
     linearDesc, linearUrl, linearState, dryRun,
     { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(repo, ROOT) },
   );
@@ -139,7 +170,9 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
   ticketResult.notes = [ticketResult.notes, ...outcome.notes].filter(Boolean).join(" | ");
 
   if (dryRun) {
-    log(`  [dry-run] Would commit, push ${wt.branch} and open an Azure DevOps PR into ${wt.baseBranch}`);
+    log(continuing
+      ? `  [dry-run] Would commit and push to existing PR #${existing.prId} branch ${existing.sourceBranch}`
+      : `  [dry-run] Would commit, push ${wt.branch} and open a new Azure DevOps PR into ${wt.baseBranch}`);
   } else {
     try {
       mkdirSync(LOGS_DIR, { recursive: true });
@@ -157,7 +190,8 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
         ticketResult.status = "needs_review";
         ticketResult.notes = [ticketResult.notes, `Branch contains excluded files (${listed}); not pushed.`].filter(Boolean).join(" | ");
       } else if (commit !== "no_changes" && outcome.publish) {
-        await openPullRequest(ticketResult, wt.baseBranch);
+        if (existing && wt.startedFromPr) await updatePullRequest(ticketResult, existing);
+        else await openPullRequest(ticketResult, wt.baseBranch);
       } else if (commit !== "no_changes") {
         log(`  Not publishing ${wt.branch}: ${outcome.notes.join(" ")}`);
       }

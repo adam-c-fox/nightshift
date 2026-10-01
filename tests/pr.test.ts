@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrTitle, buildPrWebUrl, orgUrl, policyListArgs, summarizePolicies, waitForPolicies, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrTitle, buildPrWebUrl, orgUrl, pickNightPr, policyListArgs, repoNameFromRemote, summarizePolicies, waitForPolicies, type AzPullRequest, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -70,5 +70,45 @@ describe("waitForPolicies", () => {
 
   it("reports failure as soon as a blocking policy is rejected", async () => {
     await expect(waitForPolicies(() => [policy("rejected")], fast)).resolves.toBe("failed");
+  });
+});
+
+describe("repoNameFromRemote", () => {
+  it("takes the last path segment of ssh, https and visualstudio remotes", () => {
+    expect(repoNameFromRemote("git@ssh.dev.azure.com:v3/org/project/REPO")).toBe("REPO");
+    expect(repoNameFromRemote("https://org@dev.azure.com/org/project/_git/REPO")).toBe("REPO");
+    expect(repoNameFromRemote("https://org.visualstudio.com/project/_git/REPO.git")).toBe("REPO");
+  });
+});
+
+describe("pickNightPr", () => {
+  const pr = (id: number, source: string, target = "main"): AzPullRequest => ({
+    pullRequestId: id,
+    sourceRefName: `refs/heads/${source}`,
+    targetRefName: `refs/heads/${target}`,
+  });
+
+  it("matches per-run branches and the legacy branch", () => {
+    expect(pickNightPr([pr(5, "night/ENG-1-20261001-2305")], "ENG-1")?.prId).toBe(5);
+    expect(pickNightPr([pr(6, "night/ENG-1")], "ENG-1")?.prId).toBe(6);
+  });
+
+  it("does not match another ticket or a non-night branch", () => {
+    expect(pickNightPr([pr(7, "night/ENG-12-20261001-2305"), pr(8, "feature/ENG-1")], "ENG-1")).toBeNull();
+  });
+
+  it("picks the highest id among matches", () => {
+    const picked = pickNightPr([pr(5, "night/ENG-1-20260930-2300"), pr(9, "night/ENG-1"), pr(7, "night/ENG-1-20260929-2300")], "ENG-1");
+    expect(picked?.prId).toBe(9);
+  });
+
+  it("returns null for an empty list", () => {
+    expect(pickNightPr([], "ENG-1")).toBeNull();
+  });
+
+  it("strips refs/heads/ from both branches", () => {
+    expect(pickNightPr([pr(5, "night/ENG-1-20260930-2300", "develop")], "ENG-1")).toEqual({
+      prId: 5, sourceBranch: "night/ENG-1-20260930-2300", targetBranch: "develop",
+    });
   });
 });

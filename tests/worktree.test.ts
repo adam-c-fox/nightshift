@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { pushBranch } from "../src/pr.js";
 import { branchName, commitWorktree, createWorktree, excludedPathsInBranch, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
@@ -188,5 +189,63 @@ describe("excludedPathsInBranch", () => {
     run(wt.wtPath, "add", "fix.ts");
     run(wt.wtPath, "commit", "-q", "-m", "agent commit");
     expect(excludedPathsInBranch(wt)).toEqual([]);
+  });
+});
+
+describe("createWorktree startFrom", () => {
+  const prBranch = "night/ENG-1-20260930-2300";
+  let env: ReturnType<typeof makeRepo>;
+  let spec: WorktreeSpec;
+  beforeEach(() => {
+    env = makeRepo();
+    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", runStamp: "20261001-2305" };
+  });
+
+  const pushPrBranch = () => {
+    run(env.repoPath, "checkout", "-q", "-b", prBranch);
+    writeFileSync(join(env.repoPath, "prev.ts"), "export {};\n");
+    run(env.repoPath, "add", "prev.ts");
+    run(env.repoPath, "commit", "-q", "-m", "previous night");
+    run(env.repoPath, "push", "-q", "origin", prBranch);
+    run(env.repoPath, "checkout", "-q", "main");
+  };
+
+  it("starts from the PR branch and counts only tonight's commits", () => {
+    pushPrBranch();
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop);
+    expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(true);
+    expect(wt).toMatchObject({ baseRef: `origin/${prBranch}`, baseBranch: "main", startedFromPr: true, branch: "night/ENG-1-20261001-2305" });
+    expect(commitWorktree(wt, "ENG-1", "nothing", noop)).toBe("no_changes");
+  });
+
+  it("falls back to origin/main when the PR branch is gone", () => {
+    const logs: string[] = [];
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m));
+    expect(wt).toMatchObject({ baseRef: "origin/main", baseBranch: "main", startedFromPr: false });
+    expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(false);
+    expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main`))).toBe(true);
+  });
+
+  it("is not started from a PR without startFrom", () => {
+    expect(createWorktree(spec, noop).startedFromPr).toBe(false);
+  });
+
+  it("fast-forwards the remote PR branch and rejects a non-fast-forward push", () => {
+    pushPrBranch();
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop);
+    writeFileSync(join(wt.wtPath, "tonight.ts"), "export {};\n");
+    expect(commitWorktree(wt, "ENG-1", "tonight", noop)).toBe("committed");
+    pushBranch(wt.wtPath, wt.branch, prBranch);
+    const origin = join(env.root, "origin.git");
+    expect(run(origin, "rev-parse", prBranch)).toBe(run(wt.wtPath, "rev-parse", "HEAD"));
+
+    run(env.repoPath, "checkout", "-q", "-b", "other", "main");
+    writeFileSync(join(env.repoPath, "other.ts"), "export {};\n");
+    run(env.repoPath, "add", "other.ts");
+    run(env.repoPath, "commit", "-q", "-m", "unrelated");
+    run(env.repoPath, "push", "-q", "--force", "origin", `other:${prBranch}`);
+    writeFileSync(join(wt.wtPath, "more.ts"), "export {};\n");
+    commitWorktree(wt, "ENG-1", "more", noop);
+    expect(() => pushBranch(wt.wtPath, wt.branch, prBranch)).toThrow();
   });
 });

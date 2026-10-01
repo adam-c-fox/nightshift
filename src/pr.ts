@@ -89,14 +89,50 @@ function az(args: string[], cwd?: string): unknown {
   return out.trim() === "" ? null : JSON.parse(out);
 }
 
-export function pushBranch(worktreePath: string, branch: string): void {
-  execFileSync("git", ["-c", "core.hooksPath=/dev/null", "push", "--set-upstream", "origin", branch], {
+export function pushBranch(worktreePath: string, localBranch: string, remoteBranch: string = localBranch): void {
+  execFileSync("git", ["-c", "core.hooksPath=/dev/null", "push", "origin", `${localBranch}:refs/heads/${remoteBranch}`], {
     cwd: worktreePath,
     env: azEnv(),
     encoding: "utf-8",
     timeout: 5 * 60 * 1000,
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+export interface AzPullRequest { pullRequestId: number; sourceRefName: string; targetRefName: string }
+export interface ExistingPr { prId: number; sourceBranch: string; targetBranch: string }
+
+export function repoNameFromRemote(remoteUrl: string): string {
+  const last = remoteUrl.trim().replace(/\/+$/, "").split(/[/:]/).pop() ?? "";
+  return last.replace(/\.git$/, "");
+}
+
+const stripHeads = (ref: string) => ref.replace(/^refs\/heads\//, "");
+
+export function pickNightPr(prs: AzPullRequest[], ticketId: string): ExistingPr | null {
+  const exact = `refs/heads/night/${ticketId}`;
+  const matches = prs.filter(p => p.sourceRefName === exact || p.sourceRefName.startsWith(`${exact}-`));
+  if (matches.length === 0) return null;
+  const best = matches.reduce((a, b) => (b.pullRequestId > a.pullRequestId ? b : a));
+  return { prId: best.pullRequestId, sourceBranch: stripHeads(best.sourceRefName), targetBranch: stripHeads(best.targetRefName) };
+}
+
+function originUrl(cwd: string): string {
+  return execFileSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+export function findOpenNightPr(ticketId: string, repoPath: string): ExistingPr | null {
+  const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
+  const project = requireEnv("AZURE_DEVOPS_PROJECT");
+  const prs = (az([
+    "repos", "pr", "list",
+    "--org", org,
+    "--project", project,
+    "--repository", repoNameFromRemote(originUrl(repoPath)),
+    "--status", "active",
+    "--top", "200",
+  ]) ?? []) as AzPullRequest[];
+  return pickNightPr(prs, ticketId);
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -144,6 +180,19 @@ export async function waitForPolicies(
   return "unknown";
 }
 
+interface PolicyWaitOptions { timeoutMs?: number; intervalMs?: number; log?: (msg: string) => void }
+
+function waitForPrPolicies(prId: number, org: string, options: PolicyWaitOptions): Promise<PipelineStatus> {
+  return waitForPolicies(
+    () => (az(policyListArgs(prId, org)) ?? []) as PolicyEvaluation[],
+    {
+      timeoutMs: options.timeoutMs ?? POLL_TIMEOUT_MS,
+      intervalMs: options.intervalMs ?? POLL_INTERVAL_MS,
+      log: options.log,
+    },
+  );
+}
+
 export async function createAndCheckPR(
   ticketId: string,
   summary: string,
@@ -151,7 +200,7 @@ export async function createAndCheckPR(
   branch: string,
   targetBranch: string,
   worktreePath: string,
-  options: { timeoutMs?: number; intervalMs?: number; log?: (msg: string) => void } = {},
+  options: PolicyWaitOptions = {},
 ): Promise<PRResult> {
   const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
   const project = requireEnv("AZURE_DEVOPS_PROJECT");
@@ -172,15 +221,25 @@ export async function createAndCheckPR(
 
   const prId = created.pullRequestId;
   const url = buildPrWebUrl(org, project, created.repository.name, prId);
-
-  const pipelineStatus = await waitForPolicies(
-    () => (az(policyListArgs(prId, org)) ?? []) as PolicyEvaluation[],
-    {
-      timeoutMs: options.timeoutMs ?? POLL_TIMEOUT_MS,
-      intervalMs: options.intervalMs ?? POLL_INTERVAL_MS,
-      log: options.log,
-    },
-  );
+  const pipelineStatus = await waitForPrPolicies(prId, org, options);
 
   return { prId, url, pipelineStatus, durationSec: Math.round((Date.now() - start) / 1000) };
+}
+
+export async function updateAndCheckPR(
+  existing: ExistingPr,
+  localBranch: string,
+  worktreePath: string,
+  options: PolicyWaitOptions = {},
+): Promise<PRResult> {
+  const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
+  const project = requireEnv("AZURE_DEVOPS_PROJECT");
+  const start = Date.now();
+
+  pushBranch(worktreePath, localBranch, existing.sourceBranch);
+
+  const url = buildPrWebUrl(org, project, repoNameFromRemote(originUrl(worktreePath)), existing.prId);
+  const pipelineStatus = await waitForPrPolicies(existing.prId, org, options);
+
+  return { prId: existing.prId, url, pipelineStatus, durationSec: Math.round((Date.now() - start) / 1000) };
 }

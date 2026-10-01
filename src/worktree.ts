@@ -11,6 +11,7 @@ export interface WorktreeSpec {
   ticketId: string;
   repo: RepoKind;
   runStamp: string;
+  startFrom?: { branch: string; baseBranch: string };
 }
 
 export interface Worktree {
@@ -18,6 +19,7 @@ export interface Worktree {
   branch: string;
   baseRef: string;
   baseBranch: string;
+  startedFromPr: boolean;
 }
 
 const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"];
@@ -59,6 +61,15 @@ function resolveBaseRef(repoPath: string, log: Log): string {
   throw new Error(`No base branch found in ${repoPath} (tried ${candidates.join(", ")})`);
 }
 
+function refExists(repoPath: string, ref: string): boolean {
+  try {
+    git(["rev-parse", "--verify", "--quiet", ref], repoPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isRegisteredWorktree(repoPath: string, wtPath: string): boolean {
   const target = realpathSync(wtPath);
   return git(["worktree", "list", "--porcelain"], repoPath)
@@ -98,13 +109,20 @@ function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: str
 }
 
 export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
-  const { repoPath, worktreesDir, ticketId, repo, runStamp } = spec;
+  const { repoPath, worktreesDir, ticketId, repo, runStamp, startFrom } = spec;
   const branch = branchName(ticketId, runStamp);
   const wtPath = worktreePath(worktreesDir, repo, ticketId);
 
   removeStaleWorktree(repoPath, worktreesDir, wtPath, log);
 
-  const baseRef = resolveBaseRef(repoPath, log);
+  const freshBaseRef = resolveBaseRef(repoPath, log);
+  const prRef = startFrom ? `origin/${startFrom.branch}` : null;
+  const startedFromPr = prRef !== null && refExists(repoPath, prRef);
+  if (startFrom && !startedFromPr) {
+    log(`  PR branch ${startFrom.branch} no longer on origin; starting fresh from ${freshBaseRef}`);
+  }
+  const baseRef = startedFromPr ? prRef : freshBaseRef;
+  const baseBranch = startedFromPr ? startFrom!.baseBranch : freshBaseRef.replace(/^origin\//, "");
   git(["worktree", "add", "-b", branch, wtPath, baseRef], repoPath);
   log(`Worktree created: ${wtPath} (branch: ${branch} from ${baseRef})`);
 
@@ -117,7 +135,7 @@ export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
     }
   }
 
-  return { wtPath, branch, baseRef, baseBranch: baseRef.replace(/^origin\//, "") };
+  return { wtPath, branch, baseRef, baseBranch, startedFromPr };
 }
 
 export const EXCLUDED_PATHS = ["node_modules", "tfplan", "*.tfplan"];
