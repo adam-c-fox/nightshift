@@ -96,14 +96,27 @@ export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
   return { wtPath, branch, baseRef, baseBranch: baseRef.replace(/^origin\//, "") };
 }
 
-export function commitWorktree(wt: Worktree, ticketId: string, summary: string, log: Log): "committed" | "no_changes" {
-  const status = git(["status", "--porcelain"], wt.wtPath).trim();
-  if (status === "") {
-    log(`No changes to commit for ${ticketId}`);
-    return "no_changes";
+export const EXCLUDED_PATHS = ["node_modules", "tfplan", "*.tfplan"];
+export type CommitOutcome = "committed" | "agent_committed" | "no_changes";
+
+const PATHSPEC = ["--", ".", ...EXCLUDED_PATHS.map(p => `:(exclude,glob)**/${p}`)];
+
+function commitsAhead(wt: Worktree): number {
+  return Number(git(["rev-list", "--count", `${wt.baseRef}..HEAD`], wt.wtPath).trim());
+}
+
+export function commitWorktree(wt: Worktree, ticketId: string, summary: string, log: Log): CommitOutcome {
+  const dirty = git(["status", "--porcelain", ...PATHSPEC], wt.wtPath).trim() !== "";
+  if (dirty) {
+    git(["add", "-A", ...PATHSPEC], wt.wtPath);
+    git(["commit", "-m", `night: ${ticketId} – ${summary.slice(0, 120)}`], wt.wtPath);
+    log(`Committed: ${wt.branch}`);
+    return "committed";
   }
-  git(["add", "-A"], wt.wtPath);
-  git(["commit", "-m", `night: ${ticketId} – ${summary.slice(0, 120)}`], wt.wtPath);
-  log(`Committed: ${wt.branch}`);
-  return "committed";
+  if (commitsAhead(wt) > 0) {
+    log(`Agent already committed on ${wt.branch}`);
+    return "agent_committed";
+  }
+  log(`No changes to commit for ${ticketId}`);
+  return "no_changes";
 }

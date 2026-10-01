@@ -133,7 +133,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string): Pr
 
     try {
       const commit = commitWorktree(wt, ticketId, ticketResult.summary, log);
-      if (commit === "committed") {
+      if (commit !== "no_changes") {
         await openPullRequest(ticketResult, wt.baseBranch);
       }
     } catch (e) {

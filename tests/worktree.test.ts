@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { branchName, createWorktree, worktreePath, type WorktreeSpec } from "../src/worktree.js";
+import { branchName, commitWorktree, createWorktree, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -75,5 +75,49 @@ describe("createWorktree", () => {
     run(first.wtPath, "commit", "-q", "-m", "wip");
     createWorktree({ ...spec, runStamp: "20261002-2305" }, noop);
     expect(run(env.repoPath, "branch", "--list", "night/ENG-1-20261001-2305")).toContain("night/ENG-1-20261001-2305");
+  });
+});
+
+describe("commitWorktree", () => {
+  let wt: ReturnType<typeof createWorktree>;
+  beforeEach(() => {
+    const env = makeRepo();
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", runStamp: "20261001-2305" }, noop);
+  });
+
+  const committedFiles = () => run(wt.wtPath, "diff", "--name-only", `${wt.baseRef}..HEAD`).split("\n").filter(Boolean);
+
+  it("reports no changes when only the node_modules symlink exists", () => {
+    expect(commitWorktree(wt, "ENG-1", "nothing", noop)).toBe("no_changes");
+  });
+
+  it("commits real changes but never node_modules or terraform plan files", () => {
+    writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
+    writeFileSync(join(wt.wtPath, "tfplan"), "binary");
+    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
+    expect(committedFiles()).toEqual(["fix.ts"]);
+  });
+
+  it("treats commits the agent made itself as work to publish", () => {
+    writeFileSync(join(wt.wtPath, "agent.ts"), "export {};\n");
+    run(wt.wtPath, "add", "agent.ts");
+    run(wt.wtPath, "commit", "-q", "-m", "agent commit");
+    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("agent_committed");
+  });
+
+  it("includes both agent commits and leftover uncommitted changes", () => {
+    writeFileSync(join(wt.wtPath, "a.ts"), "export {};\n");
+    run(wt.wtPath, "add", "a.ts");
+    run(wt.wtPath, "commit", "-q", "-m", "agent commit");
+    writeFileSync(join(wt.wtPath, "b.ts"), "export {};\n");
+    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
+    expect(committedFiles().sort()).toEqual(["a.ts", "b.ts"]);
+  });
+
+  it("leaves excluded files untracked in the worktree", () => {
+    writeFileSync(join(wt.wtPath, "tfplan"), "binary");
+    writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
+    commitWorktree(wt, "ENG-1", "fix", noop);
+    expect(readFileSync(join(wt.wtPath, "tfplan"), "utf-8")).toBe("binary");
   });
 });
