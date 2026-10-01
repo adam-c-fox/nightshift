@@ -20,6 +20,8 @@ export interface Worktree {
   baseBranch: string;
 }
 
+const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"];
+
 export function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { encoding: "utf-8", cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 10 * 1024 * 1024 });
 }
@@ -74,7 +76,7 @@ function isRegisteredWorktree(repoPath: string, wtPath: string): boolean {
 function salvageUncommittedWork(wtPath: string, log: Log): void {
   if (git(["status", "--porcelain", ...PATHSPEC], wtPath).trim() === "") return;
   git(["add", "-A", ...PATHSPEC], wtPath);
-  git(["commit", "-m", "night: salvaged uncommitted work from interrupted run", ...PATHSPEC], wtPath);
+  git([...NO_HOOKS, "commit", "-m", "night: salvaged uncommitted work from interrupted run", ...PATHSPEC], wtPath);
   log(`  Salvaged uncommitted work from interrupted run in ${wtPath}`);
 }
 
@@ -131,7 +133,7 @@ export function commitWorktree(wt: Worktree, ticketId: string, summary: string, 
   const dirty = git(["status", "--porcelain", ...PATHSPEC], wt.wtPath).trim() !== "";
   if (dirty) {
     git(["add", "-A", ...PATHSPEC], wt.wtPath);
-    git(["commit", "-m", `night: ${ticketId} – ${summary.slice(0, 120)}`], wt.wtPath);
+    git([...NO_HOOKS, "commit", "-m", `night: ${ticketId} – ${summary.slice(0, 120)}`], wt.wtPath);
     log(`Committed: ${wt.branch}`);
     return "committed";
   }

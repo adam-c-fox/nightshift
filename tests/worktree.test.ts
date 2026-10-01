@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -114,6 +114,17 @@ describe("commitWorktree", () => {
     writeFileSync(join(wt.wtPath, "tfplan"), "binary");
     expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
     expect(committedFiles()).toEqual(["fix.ts"]);
+  });
+
+  it("does not run repo hooks when committing", () => {
+    const marker = join(wt.wtPath, "..", "hook-ran");
+    const hook = join(run(wt.wtPath, "rev-parse", "--git-common-dir"), "hooks", "pre-commit");
+    mkdirSync(join(hook, ".."), { recursive: true });
+    writeFileSync(hook, `#!/bin/sh\ntouch "${marker}"\n`);
+    chmodSync(hook, 0o755);
+    writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
+    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("treats commits the agent made itself as work to publish", () => {

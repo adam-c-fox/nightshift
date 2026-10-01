@@ -90,7 +90,7 @@ function az(args: string[], cwd?: string): unknown {
 }
 
 export function pushBranch(worktreePath: string, branch: string): void {
-  execFileSync("git", ["push", "--set-upstream", "origin", branch], {
+  execFileSync("git", ["-c", "core.hooksPath=/dev/null", "push", "--set-upstream", "origin", branch], {
     cwd: worktreePath,
     env: azEnv(),
     encoding: "utf-8",
