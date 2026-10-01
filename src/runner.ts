@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import path from "node:path";
-import type { Ticket, TicketResult, SessionResult, LinearTicket } from "./types.js";
+import type { Ticket, TicketResult, SessionResult, LinearTicket, NightBudget } from "./types.js";
 import { loadTickets } from "./tickets.js";
 import { startNightBudget, checkGate, budgetGateMessage } from "./budget.js";
 import { fetchTicket } from "./linear.js";
@@ -68,7 +68,7 @@ async function openPullRequest(result: TicketResult, baseBranch: string): Promis
   }
 }
 
-async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string): Promise<TicketResult> {
+async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, budgetRef: { current: NightBudget }): Promise<TicketResult> {
   const { id: ticketId, name: ticketName, context, repo } = ticket;
   const repoPath = REPOS[repo];
   const startTime = Date.now();
@@ -101,9 +101,20 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string): Pr
     wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, runStamp: stamp }, log);
   }
 
-  const result = runAgent(
+  const shouldAbort = () => {
+    try {
+      budgetRef.current = checkGate(budgetRef.current);
+    } catch (e) {
+      log(`  Mid-ticket usage check failed: ${(e as Error).message}`);
+      return undefined;
+    }
+    return budgetRef.current.gateHit
+      ? `budget cap reached mid-ticket (${budgetRef.current.currentPct}% ≥ ${budgetRef.current.capPct}%)`
+      : undefined;
+  };
+  const result = await runAgent(
     wt.wtPath, ticketId, ticketName, context,
-    linearDesc, linearUrl, linearState, dryRun
+    linearDesc, linearUrl, linearState, dryRun, { shouldAbort },
   );
 
   const report = result.report;
@@ -164,8 +175,8 @@ async function main() {
   mkdirSync(WORKTREES_DIR, { recursive: true });
   mkdirSync(LOGS_DIR, { recursive: true });
 
-  let budget = startNightBudget();
-  log(`Tonight's allocation: ${budget.allocationPct}% of weekly. Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
+  const budgetRef = { current: startNightBudget() };
+  log(`Tonight's allocation: ${budgetRef.current.allocationPct}% of weekly. Started at ${budgetRef.current.startPct}%, cap ${budgetRef.current.capPct}%.`);
 
   const tickets = loadTickets();
   log(`Loaded ${tickets.length} ticket(s) from tonight.md`);
@@ -177,11 +188,11 @@ async function main() {
   for (const ticket of tickets) {
     if (!gateHit) {
       try {
-        budget = checkGate(budget);
-        log(budgetGateMessage(budget));
-        if (budget.gateHit) {
+        budgetRef.current = checkGate(budgetRef.current);
+        log(budgetGateMessage(budgetRef.current));
+        if (budgetRef.current.gateHit) {
           gateHit = true;
-          skipReason = `Skipped – nightly budget allocation reached (${budget.currentPct}% ≥ cap ${budget.capPct}%).`;
+          skipReason = `Skipped – nightly budget allocation reached (${budgetRef.current.currentPct}% ≥ cap ${budgetRef.current.capPct}%).`;
         }
       } catch (e) {
         gateHit = true;
@@ -197,7 +208,7 @@ async function main() {
     }
 
     try {
-      const r = await processTicket(ticket, DRY_RUN, stamp);
+      const r = await processTicket(ticket, DRY_RUN, stamp, budgetRef);
       results.push(r);
     } catch (e) {
       log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
@@ -206,7 +217,7 @@ async function main() {
   }
 
   try {
-    budget = checkGate(budget);
+    budgetRef.current = checkGate(budgetRef.current);
   } catch (e) {
     log(`Final usage check failed: ${(e as Error).message}`);
   }
@@ -217,7 +228,7 @@ async function main() {
     startedAt,
     endedAt,
     tickets: results,
-    budget,
+    budget: budgetRef.current,
     gateHit,
     noTasks: tickets.length === 0,
   };

@@ -91,7 +91,7 @@ function generateHTML(session: SessionResult): string {
   const used = budgetUsedPct(b);
   const pctColor = b.currentPct >= b.capPct ? "#ef4444" : b.currentPct >= b.capPct - 3 ? "#eab308" : "#22c55e";
   const fillWidth = Math.min(b.currentPct, 100);
-  const startWidth = Math.min(b.startPct, 100);
+  const startWidth = Math.min(Math.max(0, b.startPct), 100);
   const capLeft = Math.min(b.capPct, 100);
 
   const budgetBar = `
@@ -105,7 +105,7 @@ function generateHTML(session: SessionResult): string {
         <div class="budget-marker" style="left:${capLeft}%"></div>
       </div>
       <div class="budget-figures">
-        <span>Started at <strong>${b.startPct}%</strong></span>
+        <span>Started at <strong>${Math.max(0, b.startPct)}%</strong></span>
         <span>Ended at <strong>${b.currentPct}%</strong> (used ${used}% of ${b.allocationPct}%)</span>
         <span>Cap <strong>${b.capPct}%</strong></span>
       </div>

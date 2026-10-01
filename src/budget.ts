@@ -46,12 +46,20 @@ export function openNightBudget(snapshot: UsageSnapshot, allocationPct = ALLOCAT
 }
 
 export function withCurrentUsage(budget: NightBudget, snapshot: UsageSnapshot): NightBudget {
-  return {
-    ...budget,
-    currentPct: snapshot.weeklyPercent,
-    gateHit: snapshot.weeklyPercent >= budget.capPct,
-    resetInfo: snapshot.resetInfo,
-  };
+  const now = snapshot.weeklyPercent;
+  if (now < budget.currentPct) {
+    const spent = budget.currentPct - budget.startPct;
+    const remaining = Math.max(0, budget.allocationPct - spent);
+    return {
+      ...budget,
+      startPct: now - spent,
+      capPct: now + remaining,
+      currentPct: now,
+      gateHit: remaining <= 0,
+      resetInfo: snapshot.resetInfo,
+    };
+  }
+  return { ...budget, currentPct: now, gateHit: now >= budget.capPct, resetInfo: snapshot.resetInfo };
 }
 
 export function startNightBudget(): NightBudget {

@@ -43,4 +43,21 @@ describe("night budget gate", () => {
   it("reports how much of the allocation was used", () => {
     expect(budgetUsedPct(withCurrentUsage(start, { weeklyPercent: 19, resetInfo: "" }))).toBe(16);
   });
+
+  it("re-bases the cap when weekly usage resets mid-night", () => {
+    const spent5 = withCurrentUsage(start, { weeklyPercent: 8, resetInfo: "" });
+    const afterReset = withCurrentUsage(spent5, { weeklyPercent: 1, resetInfo: "next week" });
+    expect(afterReset).toMatchObject({ currentPct: 1, capPct: 11, gateHit: false });
+    expect(budgetUsedPct(afterReset)).toBe(5);
+  });
+
+  it("keeps the full allocation if usage resets before anything is spent", () => {
+    const afterReset = withCurrentUsage(start, { weeklyPercent: 0, resetInfo: "" });
+    expect(afterReset).toMatchObject({ capPct: 15, gateHit: false });
+  });
+
+  it("stays closed after reset if the allocation was already spent", () => {
+    const spentAll = withCurrentUsage(start, { weeklyPercent: 18, resetInfo: "" });
+    expect(withCurrentUsage(spentAll, { weeklyPercent: 0, resetInfo: "" }).gateHit).toBe(true);
+  });
 });

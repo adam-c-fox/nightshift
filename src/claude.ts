@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { runWithWatchdog } from "./process.js";
 import type { TestResult } from "./types.js";
 
 const AGENTS_MD = path.resolve(import.meta.dirname, "..", "AGENTS.md");
@@ -133,6 +133,7 @@ export interface ClaudeResult {
 
 export const MAX_TURNS = 80;
 const SAFETY_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const USAGE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 
 const ALLOWED_TOOLS = [
   "Bash(npm *)", "Bash(npx *)", "Bash(node *)",
@@ -152,7 +153,14 @@ export function buildClaudeArgs(operatingInstructions: string): string[] {
   ];
 }
 
-export function runAgent(
+export interface RunAgentOptions {
+  shouldAbort?: () => string | undefined;
+  checkIntervalMs?: number;
+  env?: NodeJS.ProcessEnv;
+  settings?: string;
+}
+
+export async function runAgent(
   worktreePath: string,
   ticketId: string,
   ticketName: string,
@@ -161,7 +169,8 @@ export function runAgent(
   linearUrl: string,
   linearState: string,
   dryRun: boolean,
-): ClaudeResult {
+  options: RunAgentOptions = {},
+): Promise<ClaudeResult> {
   const prompt = buildPrompt(ticketId, ticketName, context, linearDesc, linearUrl, linearState);
 
   if (dryRun) {
@@ -173,21 +182,26 @@ export function runAgent(
     }};
   }
 
-  const proc = spawnSync("claude", buildClaudeArgs(readFileSync(AGENTS_MD, "utf-8")), {
+  const args = buildClaudeArgs(readFileSync(AGENTS_MD, "utf-8"));
+  if (options.settings) args.push("--settings", options.settings);
+  const proc = await runWithWatchdog("claude", args, {
     cwd: worktreePath,
     input: prompt,
-    encoding: "utf-8",
-    timeout: SAFETY_TIMEOUT_MS,
-    maxBuffer: 50 * 1024 * 1024,
+    env: options.env,
+    timeoutMs: SAFETY_TIMEOUT_MS,
+    checkIntervalMs: options.checkIntervalMs ?? USAGE_CHECK_INTERVAL_MS,
+    shouldAbort: options.shouldAbort,
   });
 
-  const stdout = proc.stdout ?? "";
+  const stdout = proc.stdout;
   const failure = proc.error
     ? `claude failed to run: ${proc.error.message}`
-    : proc.status !== 0
+    : proc.abortReason
+      ? `claude stopped: ${proc.abortReason}`
+      : proc.status !== 0
       ? `claude exited with status ${proc.status}${proc.signal ? ` (${proc.signal})` : ""}`
       : undefined;
-  const rawOutput = [stdout, proc.stderr ?? "", failure ?? ""].filter(Boolean).join("\n");
+  const rawOutput = [stdout, proc.stderr, failure ?? ""].filter(Boolean).join("\n");
 
   let report: AgentReport | undefined;
   let parseError: string | undefined;
@@ -197,5 +211,5 @@ export function runAgent(
     parseError = failure ? `${failure}; ${(e as Error).message}` : (e as Error).message;
   }
 
-  return { success: failure === undefined, rawOutput, report, parseError, failure };
+  return { success: failure === undefined, rawOutput, report, parseError, failure, abortReason: proc.abortReason };
 }
