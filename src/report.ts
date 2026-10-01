@@ -17,6 +17,21 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+const CI_BADGES: Record<string, { label: string; color: string }> = {
+  succeeded: { label: "CI passed", color: "#22c55e" },
+  failed: { label: "CI failed", color: "#ef4444" },
+  unknown: { label: "CI unknown", color: "#eab308" },
+};
+
+function prLinksHTML(t: TicketResult): string {
+  if (!t.prUrl) return "";
+  const badge = t.pipelineStatus ? CI_BADGES[t.pipelineStatus] : undefined;
+  return `<div class="pr-row">
+        <a href="${esc(t.prUrl)}" target="_blank" class="pr-link">Open PR${t.prId ? ` #${t.prId}` : ""} →</a>
+        ${badge ? `<span class="ci-badge" style="background:${badge.color}">${badge.label}</span>` : ""}
+      </div>`;
+}
+
 function ticketCardHTML(t: TicketResult): string {
   const color = STATUS_COLORS[t.status] ?? "#6b7280";
   const files = [
@@ -53,6 +68,7 @@ function ticketCardHTML(t: TicketResult): string {
     </div>
     <div class="card-body">
       <p class="summary">${esc(t.summary)}</p>
+      ${prLinksHTML(t)}
       ${t.linear ? `<a href="${esc(t.linear.url)}" target="_blank" class="linear-link">Open in Linear →</a>` : ""}
       ${files ? `<ul class="files">${files}</ul>` : ""}
       ${tests}
@@ -147,6 +163,10 @@ function generateHTML(session: SessionResult): string {
   .summary { margin-bottom: 0.75rem; }
   .linear-link { color: var(--accent); text-decoration: none; font-size: 0.85rem; display: inline-block; margin-bottom: 0.75rem; }
   .linear-link:hover { text-decoration: underline; }
+  .pr-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+  .pr-link { color: var(--accent); text-decoration: none; font-size: 0.85rem; font-weight: 600; }
+  .pr-link:hover { text-decoration: underline; }
+  .ci-badge { color: #fff; font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 4px; letter-spacing: 0.5px; }
   .files { list-style: none; margin-bottom: 0.75rem; }
   .file { font-family: ui-monospace, monospace; font-size: 0.85rem; padding: 0.1rem 0; }
   .file.created { color: #22c55e; }

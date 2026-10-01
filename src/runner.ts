@@ -6,6 +6,7 @@ import { loadTickets } from "./tickets.js";
 import { startNightBudget, checkGate, budgetGateMessage } from "./budget.js";
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
+import { createAndCheckPR } from "./pr.js";
 import { writeReport } from "./report.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -60,7 +61,7 @@ function resolveBaseRef(repoPath: string): string {
   throw new Error(`No base branch found in ${repoPath} (tried ${candidates.join(", ")})`);
 }
 
-function createWorktree(repoPath: string, ticketId: string, repo: RepoKind): string {
+function createWorktree(repoPath: string, ticketId: string, repo: RepoKind): { wtPath: string; baseBranch: string } {
   const branch = `night/${ticketId}`;
   const wtPath = path.join(WORKTREES_DIR, ticketId);
 
@@ -83,7 +84,7 @@ function createWorktree(repoPath: string, ticketId: string, repo: RepoKind): str
     }
   }
 
-  return wtPath;
+  return { wtPath, baseBranch: base.replace(/^origin\//, "") };
 }
 
 function commitWorktree(wtPath: string, ticketId: string, summary: string): "committed" | "no_changes" {
@@ -105,6 +106,26 @@ function placeholderResult(ticket: Ticket, status: TicketResult["status"], summa
     verifyCommands: [], notes: "",
     worktreePath: "", branch: `night/${ticket.id}`, durationSec: 0,
   };
+}
+
+async function openPullRequest(result: TicketResult, baseBranch: string): Promise<void> {
+  const { ticket, branch, worktreePath } = result;
+  log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
+  const pr = await createAndCheckPR(
+    ticket.id, result.summary, result.verifyCommands, branch, baseBranch, worktreePath,
+  );
+  result.prUrl = pr.url;
+  result.prId = pr.prId;
+  result.pipelineStatus = pr.pipelineStatus;
+  log(`  PR #${pr.prId}: ${pr.url} (pipelines: ${pr.pipelineStatus})`);
+
+  if (pr.pipelineStatus === "failed") {
+    result.status = "needs_review";
+    result.notes = [result.notes, "CI pipeline failed on PR."].filter(Boolean).join(" | ");
+  } else if (pr.pipelineStatus === "unknown") {
+    result.status = "needs_review";
+    result.notes = [result.notes, "CI status unknown after waiting (timed out or no policies)."].filter(Boolean).join(" | ");
+  }
 }
 
 async function processTicket(ticket: Ticket, dryRun: boolean): Promise<TicketResult> {
@@ -132,10 +153,11 @@ async function processTicket(ticket: Ticket, dryRun: boolean): Promise<TicketRes
     log(`  Linear fetch error: ${(e as Error).message}`);
   }
 
+  let baseBranch = "main";
   if (dryRun) {
     log(`  [dry-run] Would create worktree at ${wtPath}`);
   } else {
-    createWorktree(repoPath, ticketId, repo);
+    baseBranch = createWorktree(repoPath, ticketId, repo).baseBranch;
   }
 
   const result = runAgent(
@@ -159,7 +181,9 @@ async function processTicket(ticket: Ticket, dryRun: boolean): Promise<TicketRes
     durationSec: 0,
   };
 
-  if (!dryRun) {
+  if (dryRun) {
+    log(`  [dry-run] Would commit, push ${branch} and open an Azure DevOps PR into ${baseBranch}`);
+  } else {
     try {
       mkdirSync(LOGS_DIR, { recursive: true });
       writeFileSync(path.join(LOGS_DIR, `${ticketId}-output.txt`), result.rawOutput, "utf-8");
@@ -168,12 +192,15 @@ async function processTicket(ticket: Ticket, dryRun: boolean): Promise<TicketRes
     }
 
     try {
-      commitWorktree(wtPath, ticketId, ticketResult.summary);
+      const commit = commitWorktree(wtPath, ticketId, ticketResult.summary);
+      if (commit === "committed") {
+        await openPullRequest(ticketResult, baseBranch);
+      }
     } catch (e) {
       const message = errorMessage(e);
-      log(`  Commit failed for ${ticketId}: ${message}`);
+      log(`  Commit or PR step failed for ${ticketId}: ${message}`);
       ticketResult.status = "needs_review";
-      ticketResult.notes = [ticketResult.notes, `Commit failed: ${message}`].filter(Boolean).join(" | ");
+      ticketResult.notes = [ticketResult.notes, `Commit/PR failed: ${message}`].filter(Boolean).join(" | ");
     }
   }
 

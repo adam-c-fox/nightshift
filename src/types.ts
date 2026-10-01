@@ -24,6 +24,8 @@ export interface TestResult {
   result: "pass" | "fail";
 }
 
+export type PipelineStatus = "succeeded" | "failed" | "unknown";
+
 export interface TicketResult {
   ticket: Ticket;
   linear: LinearTicket | null;
@@ -37,6 +39,9 @@ export interface TicketResult {
   worktreePath: string;
   branch: string;
   durationSec: number;
+  prUrl?: string;
+  prId?: number;
+  pipelineStatus?: PipelineStatus;
 }
 
 export interface NightBudget {
