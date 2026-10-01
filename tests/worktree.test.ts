@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { branchName, commitWorktree, createWorktree, worktreePath, type WorktreeSpec } from "../src/worktree.js";
+import { branchName, commitWorktree, createWorktree, excludedPathsInBranch, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -140,5 +140,32 @@ describe("commitWorktree", () => {
     writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
     expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
     expect(run(wt.wtPath, "diff", "--name-only", "HEAD~1..HEAD").split("\n")).toEqual(["fix.ts"]);
+  });
+});
+
+describe("excludedPathsInBranch", () => {
+  let wt: ReturnType<typeof createWorktree>;
+  beforeEach(() => {
+    const env = makeRepo();
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", runStamp: "20261001-2305" }, noop);
+  });
+
+  it("returns excluded paths the agent committed itself", () => {
+    mkdirSync(join(wt.wtPath, "pkg", "node_modules"), { recursive: true });
+    mkdirSync(join(wt.wtPath, "infra"), { recursive: true });
+    writeFileSync(join(wt.wtPath, "pkg", "node_modules", "x.js"), "x");
+    writeFileSync(join(wt.wtPath, "infra", "night.tfplan"), "binary");
+    writeFileSync(join(wt.wtPath, "tfplan"), "binary");
+    writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
+    run(wt.wtPath, "add", "-f", "pkg", "infra", "tfplan", "fix.ts");
+    run(wt.wtPath, "commit", "-q", "-m", "agent commit");
+    expect(excludedPathsInBranch(wt).sort()).toEqual(["infra/night.tfplan", "pkg/node_modules/x.js", "tfplan"]);
+  });
+
+  it("returns nothing when every commit is clean", () => {
+    writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
+    run(wt.wtPath, "add", "fix.ts");
+    run(wt.wtPath, "commit", "-q", "-m", "agent commit");
+    expect(excludedPathsInBranch(wt)).toEqual([]);
   });
 });

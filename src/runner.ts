@@ -10,7 +10,7 @@ import { deriveOutcome } from "./status.js";
 import { createAndCheckPR } from "./pr.js";
 import { writeReport } from "./report.js";
 import { localDate, runStamp, TIME_ZONE } from "./time.js";
-import { branchName, createWorktree, commitWorktree, worktreePath, type Worktree } from "./worktree.js";
+import { branchName, createWorktree, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
@@ -150,7 +150,13 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
 
     try {
       const commit = commitWorktree(wt, ticketId, ticketResult.summary, log);
-      if (commit !== "no_changes" && outcome.publish) {
+      const excluded = commit === "no_changes" ? [] : excludedPathsInBranch(wt);
+      if (excluded.length > 0) {
+        const listed = excluded.slice(0, 5).join(", ");
+        log(`  Not publishing ${wt.branch}: contains excluded files (${listed})`);
+        ticketResult.status = "needs_review";
+        ticketResult.notes = [ticketResult.notes, `Branch contains excluded files (${listed}); not pushed.`].filter(Boolean).join(" | ");
+      } else if (commit !== "no_changes" && outcome.publish) {
         await openPullRequest(ticketResult, wt.baseBranch);
       } else if (commit !== "no_changes") {
         log(`  Not publishing ${wt.branch}: ${outcome.notes.join(" ")}`);

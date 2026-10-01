@@ -142,3 +142,10 @@ export function commitWorktree(wt: Worktree, ticketId: string, summary: string, 
   log(`No changes to commit for ${ticketId}`);
   return "no_changes";
 }
+
+const isExcludedPath = (file: string): boolean =>
+  file.split("/").some(segment => segment === "node_modules" || segment === "tfplan" || segment.endsWith(".tfplan"));
+
+export function excludedPathsInBranch(wt: Worktree): string[] {
+  return git(["diff", "--name-only", `${wt.baseRef}..HEAD`], wt.wtPath).split("\n").filter(isExcludedPath);
+}
