@@ -113,7 +113,7 @@ async function openPullRequest(result: TicketResult, baseBranch: string): Promis
   const { ticket, branch, worktreePath } = result;
   log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
   const pr = await createAndCheckPR(
-    ticket.id, result.summary, result.verifyCommands, branch, baseBranch, worktreePath,
+    ticket.id, result.summary, result.verifyCommands, branch, baseBranch, worktreePath, { log },
   );
   result.prUrl = pr.url;
   result.prId = pr.prId;

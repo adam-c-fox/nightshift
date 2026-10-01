@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrTitle, buildPrWebUrl, orgUrl, summarizePolicies, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrTitle, buildPrWebUrl, orgUrl, policyListArgs, summarizePolicies, waitForPolicies, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -36,5 +36,39 @@ describe("PR helpers", () => {
 
   it("truncates the title summary to one line", () => {
     expect(buildPrTitle("ENG-1", "first line\nsecond")).toBe("night: ENG-1 – first line");
+  });
+});
+
+describe("policyListArgs", () => {
+  it("passes only flags the az command accepts", () => {
+    expect(policyListArgs(42, "https://dev.azure.com/acme"))
+      .toEqual(["repos", "pr", "policy", "list", "--id", "42", "--org", "https://dev.azure.com/acme"]);
+  });
+});
+
+describe("waitForPolicies", () => {
+  const fast = { timeoutMs: 1000, intervalMs: 1, noPolicyGraceMs: 0 };
+
+  it("recovers from transient az errors", async () => {
+    let calls = 0;
+    const fetchEvaluations = () => {
+      calls++;
+      if (calls < 3) throw new Error("az hiccup");
+      return [policy("approved")];
+    };
+    await expect(waitForPolicies(fetchEvaluations, fast)).resolves.toBe("succeeded");
+  });
+
+  it("gives up as unknown after repeated errors and logs them", async () => {
+    const logged: string[] = [];
+    const fetchEvaluations = () => { throw new Error("unrecognized arguments: --project"); };
+    const verdict = await waitForPolicies(fetchEvaluations, { ...fast, maxConsecutiveErrors: 3, log: m => logged.push(m) });
+    expect(verdict).toBe("unknown");
+    expect(logged.join("\n")).toMatch(/unrecognized arguments/);
+    expect(logged.length).toBeLessThanOrEqual(4);
+  });
+
+  it("reports failure as soon as a blocking policy is rejected", async () => {
+    await expect(waitForPolicies(() => [policy("rejected")], fast)).resolves.toBe("failed");
   });
 });

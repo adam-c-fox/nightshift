@@ -101,25 +101,45 @@ export function pushBranch(worktreePath: string, branch: string): void {
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
-async function waitForPolicies(
-  prId: number,
-  org: string,
-  project: string,
-  timeoutMs: number,
-  intervalMs: number,
+const MAX_CONSECUTIVE_POLICY_ERRORS = 5;
+
+export function policyListArgs(prId: number, org: string): string[] {
+  return ["repos", "pr", "policy", "list", "--id", String(prId), "--org", org];
+}
+
+function errorText(e: unknown): string {
+  const err = e as { stderr?: string | Buffer; message?: string };
+  return err.stderr?.toString().trim() || err.message || String(e);
+}
+
+export async function waitForPolicies(
+  fetchEvaluations: () => PolicyEvaluation[],
+  opts: {
+    timeoutMs: number;
+    intervalMs: number;
+    noPolicyGraceMs?: number;
+    maxConsecutiveErrors?: number;
+    log?: (msg: string) => void;
+  },
 ): Promise<PipelineStatus> {
+  const grace = opts.noPolicyGraceMs ?? NO_POLICY_GRACE_MS;
+  const maxErrors = opts.maxConsecutiveErrors ?? MAX_CONSECUTIVE_POLICY_ERRORS;
+  const log = opts.log ?? (() => {});
   const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+  let consecutiveErrors = 0;
+  while (Date.now() - start < opts.timeoutMs) {
     let verdict: PolicyVerdict = "pending";
     try {
-      const evaluations = az(["repos", "pr", "policy", "list", "--id", String(prId), "--org", org, "--project", project]);
-      verdict = summarizePolicies((evaluations ?? []) as PolicyEvaluation[]);
-    } catch {
-      verdict = "pending";
+      verdict = summarizePolicies(fetchEvaluations());
+      consecutiveErrors = 0;
+    } catch (e) {
+      consecutiveErrors++;
+      log(`  Policy check failed (${consecutiveErrors}/${maxErrors}): ${errorText(e)}`);
+      if (consecutiveErrors >= maxErrors) return "unknown";
     }
     if (verdict === "succeeded" || verdict === "failed") return verdict;
-    if (verdict === "none" && Date.now() - start >= NO_POLICY_GRACE_MS) return "unknown";
-    await sleep(intervalMs);
+    if (verdict === "none" && Date.now() - start >= grace) return "unknown";
+    await sleep(opts.intervalMs);
   }
   return "unknown";
 }
@@ -131,7 +151,7 @@ export async function createAndCheckPR(
   branch: string,
   targetBranch: string,
   worktreePath: string,
-  options: { timeoutMs?: number; intervalMs?: number } = {},
+  options: { timeoutMs?: number; intervalMs?: number; log?: (msg: string) => void } = {},
 ): Promise<PRResult> {
   const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
   const project = requireEnv("AZURE_DEVOPS_PROJECT");
@@ -154,9 +174,12 @@ export async function createAndCheckPR(
   const url = buildPrWebUrl(org, project, created.repository.name, prId);
 
   const pipelineStatus = await waitForPolicies(
-    prId, org, project,
-    options.timeoutMs ?? POLL_TIMEOUT_MS,
-    options.intervalMs ?? POLL_INTERVAL_MS,
+    () => (az(policyListArgs(prId, org)) ?? []) as PolicyEvaluation[],
+    {
+      timeoutMs: options.timeoutMs ?? POLL_TIMEOUT_MS,
+      intervalMs: options.intervalMs ?? POLL_INTERVAL_MS,
+      log: options.log,
+    },
   );
 
   return { prId, url, pipelineStatus, durationSec: Math.round((Date.now() - start) / 1000) };
