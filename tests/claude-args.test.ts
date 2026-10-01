@@ -29,7 +29,9 @@ describe("agentRunArgs", () => {
     );
   });
 
-  it("leaves args untouched without settings", () => {
-    expect(agentRunArgs(["-p"])).toEqual(["-p"]);
+  it("always appends the isolation flags, even for empty settings", () => {
+    expect(agentRunArgs(["-p"], "")).toEqual(
+      ["-p", "--settings", "", "--strict-mcp-config", "--setting-sources", "user"],
+    );
   });
 });

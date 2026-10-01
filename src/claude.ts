@@ -153,16 +153,15 @@ export function buildClaudeArgs(operatingInstructions: string): string[] {
   ];
 }
 
-export function agentRunArgs(base: string[], settings?: string): string[] {
-  if (!settings) return base;
+export function agentRunArgs(base: string[], settings: string): string[] {
   return [...base, "--settings", settings, "--strict-mcp-config", "--setting-sources", "user"];
 }
 
 export interface RunAgentOptions {
   shouldAbort?: () => string | undefined;
   checkIntervalMs?: number;
-  env?: NodeJS.ProcessEnv;
-  settings?: string;
+  env: NodeJS.ProcessEnv;
+  settings: string;
 }
 
 export async function runAgent(
@@ -174,7 +173,7 @@ export async function runAgent(
   linearUrl: string,
   linearState: string,
   dryRun: boolean,
-  options: RunAgentOptions = {},
+  options: RunAgentOptions,
 ): Promise<ClaudeResult> {
   const prompt = buildPrompt(ticketId, ticketName, context, linearDesc, linearUrl, linearState);
 
