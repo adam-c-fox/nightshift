@@ -15,16 +15,16 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
 1. Read `tickets/tonight.md`. If `## <ID> – …` headings exist outside the HTML comment, show them and ask Adam: replace, append, or stop.
    Done when Adam has chosen, or the file has no tickets.
 
-2. Fetch candidates with `list_issues`, assignee `me`, state `Todo`. If the Linear MCP is unavailable, run the same query through the `linear:linear-api` skill. If there are none, tell Adam and stop.
+2. Fetch candidates with `list_issues`, assignee `me`, state `Todo` only. If the Linear MCP is unavailable, run the same query through the `linear:linear-api` skill. If there are none, tell Adam and stop.
    Done when you hold every Todo ticket assigned to Adam.
 
-3. Show a numbered list: ID, title, team, priority, estimate. Ask which to run tonight, as numbers or IDs, in priority order.
+3. Show a numbered list: ID, title, team, priority, estimate. Ask which to run tonight, as numbers or IDs, in priority order, and tell him the runner works tickets in file order, so order is priority.
    Done when Adam has named an ordered set.
 
 4. For each picked ticket, fetch the full issue with `get_issue` and its comments with `list_comments`.
    Done when every picked ticket has both.
 
-5. Infer each ticket's repo: `terraform` when the team, labels, title or description point at infrastructure (Terraform, `.tf`, azurerm, resource group, module, App Service plan, storage account, Key Vault, networking, IaC), otherwise `main`. Repo paths live in `REPOS` in `src/runner.ts`.
+5. Infer each ticket's repo: `terraform` when the team, labels, title or description point at infrastructure (Terraform, `.tf`, azurerm, resource group, module, App Service plan, storage account, Key Vault, networking, IaC), otherwise `main`. Repo paths live in `REPOS` in `src/repos.ts`.
    Done when every ticket has a repo.
 
 6. Draft up to 5 one-line context bullets per ticket, covering:
@@ -36,9 +36,9 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
    The agent already receives the description, so bullets add what the description lacks.
    Done when each ticket has bullets, each adding something the description lacks.
 
-7. Check each ticket for an open nightshift PR, read-only: `az repos pr list --status active` against the repository, with organisation and project taken from the `AZURE_DEVOPS_*` names in `.env.example` and read from `.env`. Keep their values out of the output. The runner continues an open PR whose source branch is `night/<ID>` or `night/<ID>-*` (see `pickNightPr` in `src/pr.ts`).
-   For a match, mark the ticket "requeued, continues PR #N" and ask Adam what feedback the agent should address. Write his answer as bullets that say what to change on top of the existing PR.
-   If `az` fails, say so and treat the tickets as new.
+7. Look up open nightshift PRs for all picked tickets in one read-only call: `npm run -s open-prs -- <repo>:<ID> …`, for example `main:ENG-142 terraform:INF-7`. It prints one JSON line per ticket. The runner continues an open PR whose source branch is `night/<ID>` or `night/<ID>-*` (see `pickNightPr` in `src/pr.ts`).
+   A non-null `pr` means the ticket is requeued: mark it "requeued, continues PR #N", ask Adam what feedback the agent should address, and write his answer as bullets saying what to change on top of the existing PR.
+   An `error` line or a non-zero exit means: say so and treat that ticket as new.
    Done when each ticket is marked new or requeued, and every requeued ticket has Adam's feedback as bullets.
 
 8. Show the complete draft: the header comment as it stands in the file, then one `## <ID> – <title>` / `repo: <repo>` / `- bullet` section per ticket, with each inferred repo highlighted. Ask Adam to confirm or edit, and repeat until he approves.

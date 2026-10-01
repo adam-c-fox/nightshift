@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, LinearTicket, NightBudget } from "./types.js";
 import { loadTickets } from "./tickets.js";
+import { REPOS } from "./repos.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage } from "./budget.js";
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
@@ -15,11 +16,6 @@ import { branchName, createWorktree, commitWorktree, excludedPathsInBranch, work
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
 const LOGS_DIR = path.join(ROOT, "logs");
-
-const REPOS: Record<string, string> = {
-  main: "/path/to/app",
-  terraform: "/path/to/infra",
-};
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
