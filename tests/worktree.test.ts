@@ -223,7 +223,7 @@ describe("createWorktree startFrom", () => {
     const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m));
     expect(wt).toMatchObject({ baseRef: "origin/main", baseBranch: "main", startedFromPr: false });
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(false);
-    expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main`))).toBe(true);
+    expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main (not available locally (fetch failed?))`))).toBe(true);
   });
 
   it("falls back when the PR branch was deleted on origin but a stale tracking ref remains", () => {
@@ -235,7 +235,16 @@ describe("createWorktree startFrom", () => {
     const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m));
     expect(wt).toMatchObject({ baseRef: "origin/main", startedFromPr: false });
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(false);
-    expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin`))).toBe(true);
+    expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main (deleted on origin)`))).toBe(true);
+  });
+
+  it("does not mistake a differently-prefixed remote branch for the PR branch", () => {
+    pushPrBranch();
+    run(env.repoPath, "fetch", "-q", "origin");
+    const origin = join(env.root, "origin.git");
+    run(origin, "branch", "-m", prBranch, `other/${prBranch}`);
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop);
+    expect(wt.startedFromPr).toBe(false);
   });
 
   it("is not started from a PR without startFrom", () => {

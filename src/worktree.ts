@@ -72,7 +72,7 @@ function refExists(repoPath: string, ref: string): boolean {
 
 function branchMissingOnRemote(repoPath: string, branch: string): boolean {
   try {
-    git(["ls-remote", "--exit-code", "--heads", "origin", branch], repoPath);
+    git(["ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${branch}`], repoPath);
     return false;
   } catch (e) {
     return (e as { status?: number }).status === 2;
@@ -126,9 +126,13 @@ export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
 
   const freshBaseRef = resolveBaseRef(repoPath, log);
   const prRef = startFrom ? `origin/${startFrom.branch}` : null;
-  const startedFromPr = prRef !== null && refExists(repoPath, prRef) && !branchMissingOnRemote(repoPath, startFrom!.branch);
-  if (startFrom && !startedFromPr) {
-    log(`  PR branch ${startFrom.branch} no longer on origin; starting fresh from ${freshBaseRef}`);
+  const fallbackCause = prRef === null ? null
+    : !refExists(repoPath, prRef) ? "not available locally (fetch failed?)"
+    : branchMissingOnRemote(repoPath, startFrom!.branch) ? "deleted on origin"
+    : null;
+  const startedFromPr = prRef !== null && fallbackCause === null;
+  if (startFrom && fallbackCause) {
+    log(`  PR branch ${startFrom.branch} no longer on origin; starting fresh from ${freshBaseRef} (${fallbackCause})`);
   }
   const baseRef = startedFromPr ? prRef : freshBaseRef;
   const baseBranch = startedFromPr ? startFrom!.baseBranch : freshBaseRef.replace(/^origin\//, "");
