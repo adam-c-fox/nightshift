@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, appendFileSync, existsSync, symlinkSync } fro
 import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, LinearTicket, RepoKind } from "./types.js";
 import { loadTickets } from "./tickets.js";
-import { checkBudget, budgetGateMessage } from "./budget.js";
+import { startNightBudget, checkGate, budgetGateMessage } from "./budget.js";
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { writeReport } from "./report.js";
@@ -190,30 +190,35 @@ async function main() {
   mkdirSync(WORKTREES_DIR, { recursive: true });
   mkdirSync(LOGS_DIR, { recursive: true });
 
-  // Budget check
-  const budget = checkBudget();
-  log(budgetGateMessage(budget));
+  let budget = startNightBudget();
+  log(`Tonight's allocation: ${budget.allocationPct}% of weekly. Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
 
-  // Load tickets
   const tickets = loadTickets();
   log(`Loaded ${tickets.length} ticket(s) from tonight.md`);
 
   const results: TicketResult[] = [];
-  let gateHit = budget.gateHit;
+  let gateHit = false;
+  let skipReason = "";
 
   for (const ticket of tickets) {
-    // Re-check budget before each ticket
-    if (!DRY_RUN) {
-      const recheck = checkBudget();
-      if (recheck.gateHit && !gateHit) {
-        log(`⚠️  Budget gate hit mid-session at ${recheck.weeklyPercent}% – stopping.`);
+    if (!gateHit) {
+      try {
+        budget = checkGate(budget);
+        log(budgetGateMessage(budget));
+        if (budget.gateHit) {
+          gateHit = true;
+          skipReason = `Skipped – nightly budget allocation reached (${budget.currentPct}% ≥ cap ${budget.capPct}%).`;
+        }
+      } catch (e) {
         gateHit = true;
+        skipReason = `Skipped – could not read usage: ${(e as Error).message}`;
+        log(`  ${skipReason}`);
       }
     }
 
     if (gateHit) {
-      log(`  Skipping ${ticket.id} – budget gate active`);
-      results.push(placeholderResult(ticket, "skipped", "Skipped – weekly budget gate active."));
+      log(`  Skipping ${ticket.id}`);
+      results.push(placeholderResult(ticket, "skipped", skipReason));
       continue;
     }
 
@@ -226,8 +231,11 @@ async function main() {
     }
   }
 
-  // Final budget snapshot
-  const finalBudget = DRY_RUN ? budget : checkBudget();
+  try {
+    budget = checkGate(budget);
+  } catch (e) {
+    log(`Final usage check failed: ${(e as Error).message}`);
+  }
   const endedAt = new Date().toLocaleString("en-US", { timeZone: "America/Vancouver" });
 
   const session: SessionResult = {
@@ -235,7 +243,7 @@ async function main() {
     startedAt,
     endedAt,
     tickets: results,
-    budget: finalBudget,
+    budget,
     gateHit,
     noTasks: tickets.length === 0,
   };

@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import type { BudgetStatus } from "./types.js";
+import type { NightBudget } from "./types.js";
 
-const GATE_PERCENT = 15;
+const ALLOCATION_PERCENT = 15;
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 export interface UsageSnapshot {
@@ -34,15 +34,42 @@ export function snapshotUsage(): UsageSnapshot {
   return parseUsageOutput(output);
 }
 
-export function checkBudget(): BudgetStatus {
-  const { weeklyPercent, resetInfo } = snapshotUsage();
-  return { weeklyPercent, gateHit: weeklyPercent >= GATE_PERCENT, resetInfo };
+export function openNightBudget(snapshot: UsageSnapshot, allocationPct = ALLOCATION_PERCENT): NightBudget {
+  return {
+    startPct: snapshot.weeklyPercent,
+    capPct: snapshot.weeklyPercent + allocationPct,
+    currentPct: snapshot.weeklyPercent,
+    allocationPct,
+    gateHit: false,
+    resetInfo: snapshot.resetInfo,
+  };
 }
 
-export function budgetGateMessage(b: BudgetStatus): string {
+export function withCurrentUsage(budget: NightBudget, snapshot: UsageSnapshot): NightBudget {
+  return {
+    ...budget,
+    currentPct: snapshot.weeklyPercent,
+    gateHit: snapshot.weeklyPercent >= budget.capPct,
+    resetInfo: snapshot.resetInfo,
+  };
+}
+
+export function startNightBudget(): NightBudget {
+  return openNightBudget(snapshotUsage());
+}
+
+export function checkGate(budget: NightBudget): NightBudget {
+  return withCurrentUsage(budget, snapshotUsage());
+}
+
+export function budgetUsedPct(budget: NightBudget): number {
+  return Math.round((budget.currentPct - budget.startPct) * 10) / 10;
+}
+
+export function budgetGateMessage(b: NightBudget): string {
   if (b.gateHit) {
-    return `Budget gate HIT – weekly usage at ${b.weeklyPercent}% (≥ ${GATE_PERCENT}%). ` +
-           `Reset: ${b.resetInfo}. No tickets will be processed.`;
+    return `Budget allocation reached – weekly usage at ${b.currentPct}% (cap ${b.capPct}%). ` +
+           `Remaining tickets will be skipped. Reset: ${b.resetInfo}.`;
   }
-  return `Budget OK – weekly usage at ${b.weeklyPercent}% (gate at ${GATE_PERCENT}%).`;
+  return `Budget OK – weekly usage at ${b.currentPct}% (night started at ${b.startPct}%, cap ${b.capPct}%).`;
 }

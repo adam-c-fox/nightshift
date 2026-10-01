@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { SessionResult, TicketResult } from "./types.js";
+import { budgetUsedPct } from "./budget.js";
 
 const REPORTS_DIR = path.resolve(import.meta.dirname, "..", "reports");
 
@@ -70,19 +71,29 @@ function generateHTML(session: SessionResult): string {
   const partial = session.tickets.filter(t => t.status === "partial").length;
   const review = session.tickets.filter(t => t.status === "needs_review").length;
   const skipped = session.tickets.filter(t => t.status === "skipped" || t.status === "error").length;
-  const pctColor = session.budget.weeklyPercent >= 15 ? "#ef4444" : session.budget.weeklyPercent >= 10 ? "#eab308" : "#22c55e";
+  const b = session.budget;
+  const used = budgetUsedPct(b);
+  const pctColor = b.currentPct >= b.capPct ? "#ef4444" : b.currentPct >= b.capPct - 3 ? "#eab308" : "#22c55e";
+  const fillWidth = Math.min(b.currentPct, 100);
+  const startWidth = Math.min(b.startPct, 100);
+  const capLeft = Math.min(b.capPct, 100);
 
   const budgetBar = `
     <div class="budget">
-      <div class="budget-label">Weekly usage: <strong>${session.budget.weeklyPercent}%</strong>
-        <span class="budget-gate">gate at 15%</span>
-        ${session.budget.resetInfo ? `<span class="budget-reset">resets ${esc(session.budget.resetInfo)}</span>` : ""}
+      <div class="budget-label">Tonight's allocation: <strong>${b.allocationPct}%</strong> of weekly
+        ${b.resetInfo ? `<span class="budget-reset">resets ${esc(b.resetInfo)}</span>` : ""}
       </div>
       <div class="budget-track">
-        <div class="budget-fill" style="width:${Math.min(session.budget.weeklyPercent, 100)}%;background:${pctColor}"></div>
-        <div class="budget-marker" style="left:15%"></div>
+        <div class="budget-fill" style="width:${fillWidth}%;background:${pctColor}"></div>
+        <div class="budget-start" style="left:${startWidth}%"></div>
+        <div class="budget-marker" style="left:${capLeft}%"></div>
       </div>
-      ${session.gateHit ? `<div class="gate-hit">⛔ Budget gate hit – no tickets were processed</div>` : ""}
+      <div class="budget-figures">
+        <span>Started at <strong>${b.startPct}%</strong></span>
+        <span>Ended at <strong>${b.currentPct}%</strong> (used ${used}% of ${b.allocationPct}%)</span>
+        <span>Cap <strong>${b.capPct}%</strong></span>
+      </div>
+      ${session.gateHit ? `<div class="gate-hit">⛔ Budget allocation reached – remaining tickets were skipped</div>` : ""}
     </div>`;
 
   const ticketsHTML = session.noTasks
@@ -115,10 +126,12 @@ function generateHTML(session: SessionResult): string {
   .stat strong { display: block; font-size: 1.3rem; }
   .budget { margin-bottom: 2rem; }
   .budget-label { font-size: 0.9rem; margin-bottom: 0.4rem; }
-  .budget-gate { color: var(--text-dim); margin-left: 0.5rem; }
+  .budget-figures { display: flex; gap: 1.5rem; flex-wrap: wrap; font-size: 0.85rem; color: var(--text-dim); margin-top: 0.6rem; }
+  .budget-figures strong { color: var(--text); }
+  .budget-start { position: absolute; top: -3px; width: 2px; height: 16px; background: var(--text-dim); border-radius: 1px; }
   .budget-reset { color: var(--text-dim); margin-left: 0.5rem; font-size: 0.8rem; }
   .budget-track { height: 10px; background: var(--surface); border-radius: 5px; position: relative; overflow: visible; }
-  .budget-fill { height: 100%; border-radius: 5px; transition: width 0.3s; }
+  .budget-fill { position: relative; height: 100%; border-radius: 5px; transition: width 0.3s; }
   .budget-marker { position: absolute; top: -3px; width: 2px; height: 16px; background: #ef4444; border-radius: 1px; }
   .gate-hit { color: #ef4444; font-weight: 600; margin-top: 0.5rem; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;

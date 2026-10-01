@@ -39,8 +39,11 @@ export interface TicketResult {
   durationSec: number;
 }
 
-export interface BudgetStatus {
-  weeklyPercent: number;
+export interface NightBudget {
+  startPct: number;
+  capPct: number;
+  currentPct: number;
+  allocationPct: number;
   gateHit: boolean;
   resetInfo: string;
 }
@@ -50,7 +53,7 @@ export interface SessionResult {
   startedAt: string;
   endedAt: string;
   tickets: TicketResult[];
-  budget: BudgetStatus;
+  budget: NightBudget;
   gateHit: boolean;
   noTasks: boolean;
 }
