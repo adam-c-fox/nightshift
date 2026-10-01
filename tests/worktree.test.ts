@@ -76,6 +76,16 @@ describe("createWorktree", () => {
     expect(run(env.repoPath, "show", "--name-only", "--format=", first.branch)).toBe("half-done.ts");
   });
 
+  it("throws on a reused branch name and leaves the first branch untouched", () => {
+    const first = createWorktree(spec, noop);
+    writeFileSync(join(first.wtPath, "work.txt"), "x");
+    run(first.wtPath, "add", "work.txt");
+    run(first.wtPath, "commit", "-q", "-m", "wip");
+    const tip = run(env.repoPath, "rev-parse", first.branch);
+    expect(() => createWorktree(spec, noop)).toThrow();
+    expect(run(env.repoPath, "rev-parse", first.branch)).toBe(tip);
+  });
+
   it("keeps the previous run's branch so unpushed work survives", () => {
     const first = createWorktree(spec, noop);
     writeFileSync(join(first.wtPath, "work.txt"), "x");

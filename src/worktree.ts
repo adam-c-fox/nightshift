@@ -103,7 +103,7 @@ export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
   removeStaleWorktree(repoPath, worktreesDir, wtPath, log);
 
   const baseRef = resolveBaseRef(repoPath, log);
-  git(["worktree", "add", "-B", branch, wtPath, baseRef], repoPath);
+  git(["worktree", "add", "-b", branch, wtPath, baseRef], repoPath);
   log(`Worktree created: ${wtPath} (branch: ${branch} from ${baseRef})`);
 
   if (repo === "main") {
