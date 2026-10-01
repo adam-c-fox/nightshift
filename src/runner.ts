@@ -8,6 +8,7 @@ import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { createAndCheckPR } from "./pr.js";
 import { writeReport } from "./report.js";
+import { localDate, TIME_ZONE } from "./time.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
@@ -26,7 +27,7 @@ function log(msg: string) {
   console.log(line);
   try {
     mkdirSync(LOGS_DIR, { recursive: true });
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDate();
     appendFileSync(path.join(LOGS_DIR, `nightshift-${today}.log`), line + "\n");
   } catch { /* best effort */ }
 }
@@ -210,8 +211,8 @@ async function processTicket(ticket: Ticket, dryRun: boolean): Promise<TicketRes
 }
 
 async function main() {
-  const date = new Date().toISOString().slice(0, 10);
-  const startedAt = new Date().toLocaleString("en-US", { timeZone: "America/Vancouver" });
+  const date = localDate();
+  const startedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
   log(`═══ Nightshift session ${date} started ${DRY_RUN ? "(DRY RUN)" : ""} ═══`);
 
   mkdirSync(WORKTREES_DIR, { recursive: true });
@@ -263,7 +264,7 @@ async function main() {
   } catch (e) {
     log(`Final usage check failed: ${(e as Error).message}`);
   }
-  const endedAt = new Date().toLocaleString("en-US", { timeZone: "America/Vancouver" });
+  const endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
 
   const session: SessionResult = {
     date,
