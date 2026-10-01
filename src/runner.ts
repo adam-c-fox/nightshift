@@ -5,6 +5,7 @@ import { loadTickets } from "./tickets.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage } from "./budget.js";
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
+import { agentEnv, buildAgentSettings } from "./agent-env.js";
 import { deriveOutcome } from "./status.js";
 import { createAndCheckPR } from "./pr.js";
 import { writeReport } from "./report.js";
@@ -114,7 +115,8 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
   };
   const result = await runAgent(
     wt.wtPath, ticketId, ticketName, context,
-    linearDesc, linearUrl, linearState, dryRun, { shouldAbort },
+    linearDesc, linearUrl, linearState, dryRun,
+    { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(repo, ROOT) },
   );
 
   const report = result.report;
