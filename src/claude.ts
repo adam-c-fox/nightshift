@@ -1,7 +1,7 @@
-import { execSync, spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { TicketResult, TestResult } from "./types.js";
+import type { TestResult } from "./types.js";
 
 const AGENTS_MD = path.resolve(import.meta.dirname, "..", "AGENTS.md");
 
@@ -20,77 +20,134 @@ function buildPrompt(ticketId: string, ticketName: string, context: string[], li
     ``,
     `---`,
     `Work on this ticket now.`,
-    `Follow the TDD process in CLAUDE.md exactly.`,
-    `When you are finished, end your final message with the ---REPORT--- block as specified in CLAUDE.md §6.`,
+    `Follow the TDD process in the operating instructions exactly.`,
+    `When you are finished, end your final message with the ---REPORT--- block as specified in the operating instructions §6.`,
   ].join("\n");
 }
 
-function parseReportBlock(output: string): {
+export interface AgentReport {
   status: string; summary: string;
   filesCreated: string[]; filesModified: string[];
   tests: TestResult[]; verifyCommands: string[]; notes: string;
-} {
-  const match = output.match(/---REPORT---\s*\n([\s\S]*?)\n---/);
-  if (!match) {
+}
+
+const VALID_STATUSES = ["done", "partial", "needs_review"];
+const REPORT_START = "---REPORT---";
+const REPORT_END = "---";
+
+function unquote(value: string): string {
+  const v = value.trim();
+  const quoted = v.match(/^(["'])([\s\S]*)\1$/);
+  return quoted ? quoted[2] : v;
+}
+
+function groupByTopLevelKey(lines: string[]): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  let current: string[] | null = null;
+  for (const line of lines) {
+    const key = line.match(/^([a-z_]+):(.*)$/);
+    if (key) {
+      current = [key[2]];
+      groups.set(key[1], current);
+    } else if (current) {
+      current.push(line);
+    }
+  }
+  return groups;
+}
+
+function scalar(lines: string[] | undefined): string {
+  if (!lines) return "";
+  const [first, ...rest] = lines;
+  const head = /^\s*[|>][+-]?\s*$/.test(first) ? "" : first.trim();
+  const text = [head, ...rest.map(l => l.trim())].filter(l => l !== "").join(" ");
+  return unquote(text);
+}
+
+function listItems(lines: string[] | undefined): string[] {
+  if (!lines) return [];
+  return lines
+    .map(l => l.trim())
+    .filter(l => l.startsWith("-"))
+    .map(l => unquote(l.replace(/^-\s*/, "")))
+    .filter(l => l !== "");
+}
+
+function parseTests(lines: string[] | undefined): TestResult[] {
+  const tests: TestResult[] = [];
+  let current: Partial<TestResult> | null = null;
+  const flush = () => {
+    if (current?.name) {
+      tests.push({ name: current.name, file: current.file ?? "", result: current.result ?? "fail" });
+    }
+    current = null;
+  };
+  for (const raw of lines ?? []) {
+    const line = raw.trim().replace(/^-\s*/, "");
+    const field = line.match(/^(name|file|result):\s*(.*)$/);
+    if (!field) continue;
+    if (/^\s*-/.test(raw) && field[1] === "name") flush();
+    current ??= {};
+    const value = unquote(field[2]);
+    if (field[1] === "name") current.name = value;
+    else if (field[1] === "file") current.file = value;
+    else current.result = value.toLowerCase() === "pass" ? "pass" : "fail";
+  }
+  flush();
+  return tests;
+}
+
+export function parseReportBlock(output: string): AgentReport {
+  const lines = output.split(/\r?\n/);
+  const startIdx = lines.map(l => l.trim()).lastIndexOf(REPORT_START);
+  if (startIdx === -1) {
     throw new Error("No ---REPORT--- block found in agent output");
   }
 
-  const block = match[1];
-  const get = (key: string): string => {
-    const m = block.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-    return m ? m[1].trim() : "";
-  };
+  const body = lines.slice(startIdx + 1);
+  const endIdx = body.findIndex(l => l.trimEnd() === REPORT_END);
+  const blockLines = endIdx === -1 ? body : body.slice(0, endIdx);
+  const groups = groupByTopLevelKey(blockLines);
 
-  const getList = (key: string): string[] => {
-    const section = block.match(new RegExp(`^${key}:\\s*\\n((?:\\s+-\\s+.+\\n?)+)`, "m"));
-    if (!section) return [];
-    return section[1]
-      .split("\n")
-      .map(l => l.trim())
-      .filter(l => l.startsWith("-"))
-      .map(l => l.replace(/^-\s*/, "").trim());
-  };
-
-  // Parse tests (structured list)
-  const testsSection = block.match(/^tests:\s*\n([\s\S]*?)(?=^(?:verify|notes|status|--)/m);
-  const tests: TestResult[] = [];
-  if (testsSection) {
-    const lines = testsSection[1].split("\n");
-    let current: Partial<TestResult> | null = null;
-    for (const line of lines) {
-      const nameM = line.match(/^\s*-\s*name:\s*(.+)$/);
-      const fileM = line.match(/^\s*file:\s*(.+)$/);
-      const resultM = line.match(/^\s*result:\s*(pass|fail)$/);
-      if (nameM) { current = { name: nameM[1].trim() }; }
-      else if (fileM && current) { current.file = fileM[1].trim(); }
-      else if (resultM && current) {
-        current.result = resultM[1] as "pass" | "fail";
-        tests.push(current as TestResult);
-        current = null;
-      }
-    }
-  }
+  const status = scalar(groups.get("status")).toLowerCase();
 
   return {
-    status: get("status"),
-    summary: get("summary"),
-    filesCreated: getList("files_created"),
-    filesModified: getList("files_modified"),
-    tests,
-    verifyCommands: getList("verify"),
-    notes: get("notes"),
+    status: VALID_STATUSES.includes(status) ? status : "needs_review",
+    summary: scalar(groups.get("summary")),
+    filesCreated: listItems(groups.get("files_created")),
+    filesModified: listItems(groups.get("files_modified")),
+    tests: parseTests(groups.get("tests")),
+    verifyCommands: listItems(groups.get("verify")),
+    notes: scalar(groups.get("notes")),
   };
 }
 
 export interface ClaudeResult {
   success: boolean;
   rawOutput: string;
-  report?: {
-    status: string; summary: string;
-    filesCreated: string[]; filesModified: string[];
-    tests: TestResult[]; verifyCommands: string[]; notes: string;
-  };
+  report?: AgentReport;
   parseError?: string;
+}
+
+export const MAX_TURNS = 80;
+const SAFETY_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
+const ALLOWED_TOOLS = [
+  "Bash(npm *)", "Bash(npx *)", "Bash(node *)",
+  "Bash(git *)", "Bash(terraform *)",
+  "Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)",
+];
+const DISALLOWED_TOOLS = ["Bash(git push *)", "Bash(git config *)"];
+
+export function buildClaudeArgs(operatingInstructions: string): string[] {
+  return [
+    "-p",
+    "--max-turns", String(MAX_TURNS),
+    "--permission-mode", "acceptEdits",
+    "--allowedTools", ALLOWED_TOOLS.join(","),
+    "--disallowedTools", DISALLOWED_TOOLS.join(","),
+    "--append-system-prompt", operatingInstructions,
+  ];
 }
 
 export function runAgent(
@@ -103,60 +160,40 @@ export function runAgent(
   linearState: string,
   dryRun: boolean,
 ): ClaudeResult {
-  // Copy AGENTS.md → CLAUDE.md in the worktree
-  const claudemdPath = path.join(worktreePath, "CLAUDE.md");
-  if (dryRun) {
-    console.log(`  [dry-run] Would copy AGENTS.md → ${claudemdPath}`);
-  } else {
-    copyFileSync(AGENTS_MD, claudemdPath);
-  }
-
   const prompt = buildPrompt(ticketId, ticketName, context, linearDesc, linearUrl, linearState);
 
   if (dryRun) {
-    console.log(`  [dry-run] Would run: claude -p (in ${worktreePath})`);
+    console.log(`  [dry-run] Would run: claude ${buildClaudeArgs("<AGENTS.md>").slice(0, -2).join(" ")} (in ${worktreePath})`);
     console.log(`  [dry-run] Prompt:\n${prompt.slice(0, 500)}...`);
     return { success: true, rawOutput: "", report: {
       status: "done", summary: "dry run", filesCreated: [], filesModified: [],
-      tests: [], verifyCommands: [], notes: "dry run – no changes"
+      tests: [], verifyCommands: [], notes: "dry run – no changes",
     }};
   }
 
-  const cmd = `claude -p "${prompt.replace(/"/g, '\\"')}" 2>&1`;
-  const maxTurns = 40;
-  const timeout = 45 * 60 * 1000; // 45 min max per ticket
+  const proc = spawnSync("claude", buildClaudeArgs(readFileSync(AGENTS_MD, "utf-8")), {
+    cwd: worktreePath,
+    input: prompt,
+    encoding: "utf-8",
+    timeout: SAFETY_TIMEOUT_MS,
+    maxBuffer: 50 * 1024 * 1024,
+  });
 
-  let output = "";
-  try {
-    output = execSync(
-      `CLAUDE_CODE_MAX_TURNS=${maxTurns} claude -p "${prompt.replace(/"/g, '\\"')}"`,
-      {
-        cwd: worktreePath,
-        encoding: "utf-8",
-        timeout,
-        stdio: ["pipe", "pipe", "pipe"],
-        maxBuffer: 10 * 1024 * 1024, // 10 MB
-      },
-    );
-  } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
-    output = `${e.stdout ?? ""}\n${e.stderr ?? ""}\n${e.message ?? ""}`;
-    // Non-zero exit might still have valid output
-  }
+  const stdout = proc.stdout ?? "";
+  const failure = proc.error
+    ? `claude failed to run: ${proc.error.message}`
+    : proc.status !== 0
+      ? `claude exited with status ${proc.status}${proc.signal ? ` (${proc.signal})` : ""}`
+      : undefined;
+  const rawOutput = [stdout, proc.stderr ?? "", failure ?? ""].filter(Boolean).join("\n");
 
-  let report: ClaudeResult["report"];
+  let report: AgentReport | undefined;
   let parseError: string | undefined;
-
   try {
-    report = parseReportBlock(output);
+    report = parseReportBlock(stdout);
   } catch (e) {
-    parseError = (e as Error).message;
+    parseError = failure ? `${failure}; ${(e as Error).message}` : (e as Error).message;
   }
 
-  return {
-    success: true,
-    rawOutput: output,
-    report,
-    parseError,
-  };
+  return { success: failure === undefined, rawOutput, report, parseError };
 }

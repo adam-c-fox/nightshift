@@ -1,29 +1,22 @@
+import { requireEnv } from "./env.js";
+import type { LinearTicket } from "./types.js";
+
+export type { LinearTicket };
+
 const BASE_URL = "https://api.linear.app/graphql";
 
-function getApiKey(): string {
-  const envKey = process.env.LINEAR_API_KEY;
-  if (envKey) return envKey;
-
-  // Fallback: read from nightshift/.env
-  try {
-    const { readFileSync } = require("node:fs");
-    const { resolve } = require("node:path");
-    const envPath = resolve(import.meta.dirname, "..", ".env");
-    const content = readFileSync(envPath, "utf-8");
-    const match = content.match(/^LINEAR_API_KEY=(.+)$/m);
-    if (match) return match[1].trim();
-  } catch { /* fall through */ }
-
-  throw new Error("LINEAR_API_KEY not found in env or .env file");
+interface IssueResponse {
+  data?: { issue?: {
+    id: string; identifier: string; title: string;
+    description: string | null;
+    state: { name: string } | null;
+    url: string;
+  } | null };
+  errors?: { message: string }[];
 }
 
-export interface LinearTicket {
-  id: string;
-  identifier: string;
-  name: string;
-  description: string;
-  state: string;
-  url: string;
+export function authorizationHeader(apiKey: string): string {
+  return apiKey.startsWith("lin_oauth_") ? `Bearer ${apiKey}` : apiKey;
 }
 
 export async function fetchTicket(identifier: string): Promise<LinearTicket | null> {
@@ -32,7 +25,7 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
       issue(id: $id) {
         id
         identifier
-        name
+        title
         description
         state { name }
         url
@@ -44,7 +37,7 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": getApiKey(),
+      "Authorization": authorizationHeader(requireEnv("LINEAR_API_KEY")),
     },
     body: JSON.stringify({ query, variables: { id: identifier } }),
   });
@@ -54,14 +47,13 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
     throw new Error(`Linear API ${res.status}: ${body.slice(0, 200)}`);
   }
 
-  const json = (await res.json()) as {
-    data?: { issue?: {
-      id: string; identifier: string; name: string;
-      description: string | null;
-      state: { name: string } | null;
-      url: string;
-    } };
-  };
+  const json = (await res.json()) as IssueResponse;
+
+  if (json.errors?.length && !json.data?.issue) {
+    const notFound = json.errors.every(e => /not found/i.test(e.message));
+    if (notFound) return null;
+    throw new Error(`Linear API error: ${json.errors.map(e => e.message).join("; ").slice(0, 200)}`);
+  }
 
   const issue = json.data?.issue;
   if (!issue) return null;
@@ -69,7 +61,7 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
   return {
     id: issue.id,
     identifier: issue.identifier,
-    name: issue.name,
+    name: issue.title,
     description: issue.description ?? "",
     state: issue.state?.name ?? "unknown",
     url: issue.url,

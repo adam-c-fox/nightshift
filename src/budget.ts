@@ -1,47 +1,42 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 import type { BudgetStatus } from "./types.js";
 
 const GATE_PERCENT = 15;
+const ROOT = path.resolve(import.meta.dirname, "..");
+
+export interface UsageSnapshot {
+  weeklyPercent: number;
+  resetInfo: string;
+}
+
+export function parseUsageOutput(output: string): UsageSnapshot {
+  const weekLine = output.match(/^.*Current week \(all models\).*$/im)?.[0]
+    ?? output.match(/^.*Current week[^:\n]*:.*$/im)?.[0];
+  const percent = weekLine?.match(/(\d+(?:\.\d+)?)%\s*used/i);
+  if (!weekLine || !percent) {
+    throw new Error("Could not find weekly usage in `claude -p /usage` output");
+  }
+  const reset = weekLine.match(/resets\s+(.+?)\s*$/i);
+  return {
+    weeklyPercent: parseFloat(percent[1]),
+    resetInfo: reset ? reset[1].trim() : "unknown",
+  };
+}
+
+export function snapshotUsage(): UsageSnapshot {
+  const output = execFileSync("claude", ["-p", "/usage"], {
+    encoding: "utf-8",
+    cwd: ROOT,
+    timeout: 60_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return parseUsageOutput(output);
+}
 
 export function checkBudget(): BudgetStatus {
-  let output = "";
-
-  try {
-    output = execSync("claude /usage", {
-      encoding: "utf-8",
-      timeout: 30_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-  } catch (err: unknown) {
-    // claude sometimes writes to stderr in print mode
-    const e = err as { stdout?: string; stderr?: string };
-    output = `${e.stdout ?? ""}\n${e.stderr ?? ""}`;
-  }
-
-  // Primary pattern: "Current week (all models): 42% used"
-  let weeklyPercent = 0;
-  const weekMatch = output.match(/Current week[^:]*:\s*(\d+(?:\.\d+)?)%\s*used/i);
-  if (weekMatch) {
-    weeklyPercent = parseFloat(weekMatch[1]);
-  }
-
-  // Fallback: "Current session: X% used"
-  if (weeklyPercent === 0) {
-    const sessionMatch = output.match(/Current session:\s*(\d+(?:\.\d+)?)%\s*used/i);
-    if (sessionMatch) {
-      weeklyPercent = parseFloat(sessionMatch[1]);
-    }
-  }
-
-  // Reset info: "resets Sep 30 at 9:59am (America/Vancouver)"
-  const resetMatch = output.match(/resets\s+(.+?)(?:\s*·|\n|$)/i);
-  const resetInfo = resetMatch ? resetMatch[1].trim() : "unknown";
-
-  return {
-    weeklyPercent,
-    gateHit: weeklyPercent >= GATE_PERCENT,
-    resetInfo,
-  };
+  const { weeklyPercent, resetInfo } = snapshotUsage();
+  return { weeklyPercent, gateHit: weeklyPercent >= GATE_PERCENT, resetInfo };
 }
 
 export function budgetGateMessage(b: BudgetStatus): string {

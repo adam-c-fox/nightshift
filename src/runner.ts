@@ -1,7 +1,7 @@
-import { execSync } from "node:child_process";
-import { mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync, appendFileSync, existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
-import type { TicketResult, SessionResult } from "./types.js";
+import type { Ticket, TicketResult, SessionResult, LinearTicket, RepoKind } from "./types.js";
 import { loadTickets } from "./tickets.js";
 import { checkBudget, budgetGateMessage } from "./budget.js";
 import { fetchTicket } from "./linear.js";
@@ -26,32 +26,55 @@ function log(msg: string) {
   try {
     mkdirSync(LOGS_DIR, { recursive: true });
     const today = new Date().toISOString().slice(0, 10);
-    const logPath = path.join(LOGS_DIR, `nightshift-${today}.log`);
-    const { appendFileSync } = require("node:fs");
-    appendFileSync(logPath, line + "\n");
+    appendFileSync(path.join(LOGS_DIR, `nightshift-${today}.log`), line + "\n");
   } catch { /* best effort */ }
 }
 
-function run(cmd: string, cwd?: string): string {
-  return execSync(cmd, { encoding: "utf-8", cwd, stdio: ["pipe", "pipe", "pipe"], maxBuffer: 10 * 1024 * 1024 });
+function git(args: string[], cwd: string): string {
+  return execFileSync("git", args, { encoding: "utf-8", cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 10 * 1024 * 1024 });
 }
 
-function createWorktree(repoPath: string, ticketId: string): string {
+function errorMessage(e: unknown): string {
+  const err = e as { stderr?: string | Buffer; message?: string };
+  const stderr = err.stderr?.toString().trim();
+  return stderr ? `${err.message}\n${stderr}` : (err.message ?? String(e));
+}
+
+function resolveBaseRef(repoPath: string): string {
+  try {
+    git(["fetch", "origin"], repoPath);
+  } catch (e) {
+    log(`  git fetch failed (branching from local refs): ${errorMessage(e)}`);
+  }
+  const candidates: string[] = [];
+  try {
+    candidates.push(git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoPath).trim());
+  } catch { /* origin/HEAD not set */ }
+  candidates.push("origin/main", "main");
+  for (const ref of candidates) {
+    try {
+      git(["rev-parse", "--verify", "--quiet", ref], repoPath);
+      return ref;
+    } catch { /* try next */ }
+  }
+  throw new Error(`No base branch found in ${repoPath} (tried ${candidates.join(", ")})`);
+}
+
+function createWorktree(repoPath: string, ticketId: string, repo: RepoKind): string {
   const branch = `night/${ticketId}`;
   const wtPath = path.join(WORKTREES_DIR, ticketId);
 
-  // Clean up stale worktree if it exists
   if (existsSync(wtPath)) {
     log(`Cleaning stale worktree: ${wtPath}`);
-    run(`git worktree remove --force "${wtPath}"`, repoPath);
+    git(["worktree", "remove", "--force", wtPath], repoPath);
   }
+  git(["worktree", "prune"], repoPath);
 
-  // Create worktree
-  run(`git worktree add "${wtPath}" -b "${branch}"`, repoPath);
-  log(`Worktree created: ${wtPath} (branch: ${branch})`);
+  const base = resolveBaseRef(repoPath);
+  git(["worktree", "add", "-B", branch, wtPath, base], repoPath);
+  log(`Worktree created: ${wtPath} (branch: ${branch} from ${base})`);
 
-  // Symlink node_modules from main repo (speeds up vitest)
-  if (repoPath.includes("example-app") && !repoPath.includes("TF")) {
+  if (repo === "main") {
     const srcNM = path.join(repoPath, "node_modules");
     const dstNM = path.join(wtPath, "node_modules");
     if (existsSync(srcNM) && !existsSync(dstNM)) {
@@ -63,23 +86,29 @@ function createWorktree(repoPath: string, ticketId: string): string {
   return wtPath;
 }
 
-function commitWorktree(wtPath: string, ticketId: string, summary: string): void {
-  try {
-    const status = run(`git status --porcelain`, wtPath).trim();
-    if (status === "") {
-      log(`No changes to commit for ${ticketId}`);
-      return;
-    }
-    const safeSummary = summary.replace(/"/g, '\\"').slice(0, 120);
-    run(`git add -A`, wtPath);
-    run(`git commit -m "night: ${ticketId} – ${safeSummary}"`, wtPath);
-    log(`Committed: night/${ticketId}`);
-  } catch (e) {
-    log(`Commit failed for ${ticketId}: ${(e as Error).message}`);
+function commitWorktree(wtPath: string, ticketId: string, summary: string): "committed" | "no_changes" {
+  const status = git(["status", "--porcelain"], wtPath).trim();
+  if (status === "") {
+    log(`No changes to commit for ${ticketId}`);
+    return "no_changes";
   }
+  git(["add", "-A"], wtPath);
+  git(["commit", "-m", `night: ${ticketId} – ${summary.slice(0, 120)}`], wtPath);
+  log(`Committed: night/${ticketId}`);
+  return "committed";
 }
 
-function processTicket(ticketId: string, ticketName: string, context: string[], repo: string, dryRun: boolean): TicketResult {
+function placeholderResult(ticket: Ticket, status: TicketResult["status"], summary: string): TicketResult {
+  return {
+    ticket, linear: null, status, summary,
+    filesCreated: [], filesModified: [], tests: [],
+    verifyCommands: [], notes: "",
+    worktreePath: "", branch: `night/${ticket.id}`, durationSec: 0,
+  };
+}
+
+async function processTicket(ticket: Ticket, dryRun: boolean): Promise<TicketResult> {
+  const { id: ticketId, name: ticketName, context, repo } = ticket;
   const repoPath = REPOS[repo];
   const branch = `night/${ticketId}`;
   const startTime = Date.now();
@@ -87,11 +116,10 @@ function processTicket(ticketId: string, ticketName: string, context: string[], 
 
   log(`\n── Ticket ${ticketId} – ${ticketName} [${repo}] ──`);
 
-  // Fetch from Linear
-  let linear = null;
+  let linear: LinearTicket | null = null;
   let linearDesc = "", linearUrl = "", linearState = "";
   try {
-    linear = await_fetchTicket(ticketId);
+    linear = await fetchTicket(ticketId);
     if (linear) {
       linearDesc = linear.description;
       linearUrl = linear.url;
@@ -104,26 +132,22 @@ function processTicket(ticketId: string, ticketName: string, context: string[], 
     log(`  Linear fetch error: ${(e as Error).message}`);
   }
 
-  // Create worktree
   if (dryRun) {
     log(`  [dry-run] Would create worktree at ${wtPath}`);
   } else {
-    createWorktree(repoPath, ticketId);
+    createWorktree(repoPath, ticketId, repo);
   }
 
-  // Run agent
   const result = runAgent(
     wtPath, ticketId, ticketName, context,
     linearDesc, linearUrl, linearState, dryRun
   );
 
-  // Build TicketResult
   const report = result.report;
-  const status = report?.status ?? "needs_review";
   const ticketResult: TicketResult = {
-    ticket: { id: ticketId, name: ticketName, context, repo },
+    ticket,
     linear,
-    status: (status as TicketResult["status"]) ?? "needs_review",
+    status: (report?.status ?? "needs_review") as TicketResult["status"],
     summary: report?.summary ?? (result.parseError ? `Parse error: ${result.parseError}` : "Agent produced no report."),
     filesCreated: report?.filesCreated ?? [],
     filesModified: report?.filesModified ?? [],
@@ -132,36 +156,30 @@ function processTicket(ticketId: string, ticketName: string, context: string[], 
     notes: report?.notes ?? (result.parseError ? "Agent did not produce a valid ---REPORT--- block." : ""),
     worktreePath: wtPath,
     branch,
-    durationSec: Math.round((Date.now() - startTime) / 1000),
+    durationSec: 0,
   };
 
-  // Commit
-  if (!dryRun) {
-    commitWorktree(wtPath, ticketId, ticketResult.summary);
-  }
-
-  // Save raw output for debugging
   if (!dryRun) {
     try {
       mkdirSync(LOGS_DIR, { recursive: true });
-      const outPath = path.join(LOGS_DIR, `${ticketId}-output.txt`);
-      writeFileSync(outPath, result.rawOutput, "utf-8");
-    } catch { /* best effort */ }
+      writeFileSync(path.join(LOGS_DIR, `${ticketId}-output.txt`), result.rawOutput, "utf-8");
+    } catch (e) {
+      log(`  Could not save agent output: ${(e as Error).message}`);
+    }
+
+    try {
+      commitWorktree(wtPath, ticketId, ticketResult.summary);
+    } catch (e) {
+      const message = errorMessage(e);
+      log(`  Commit failed for ${ticketId}: ${message}`);
+      ticketResult.status = "needs_review";
+      ticketResult.notes = [ticketResult.notes, `Commit failed: ${message}`].filter(Boolean).join(" | ");
+    }
   }
 
+  ticketResult.durationSec = Math.round((Date.now() - startTime) / 1000);
   log(`  Result: ${ticketResult.status} (${ticketResult.durationSec}s)`);
   return ticketResult;
-}
-
-// Wrapper because fetchTicket is async but processTicket is sync in the loop
-// (we call it from an async main)
-let _ticketCache: Map<string, Awaited<ReturnType<typeof fetchTicket>>>;
-async function await_fetchTicket(id: string) {
-  _ticketCache ??= new Map();
-  if (_ticketCache.has(id)) return _ticketCache.get(id)!;
-  const t = await fetchTicket(id);
-  _ticketCache.set(id, t);
-  return t;
 }
 
 async function main() {
@@ -195,30 +213,16 @@ async function main() {
 
     if (gateHit) {
       log(`  Skipping ${ticket.id} – budget gate active`);
-      results.push({
-        ticket, linear: null, status: "skipped",
-        summary: "Skipped – weekly budget gate active.",
-        filesCreated: [], filesModified: [], tests: [],
-        verifyCommands: [], notes: "",
-        worktreePath: "", branch: `night/${ticket.id}`, durationSec: 0,
-      });
+      results.push(placeholderResult(ticket, "skipped", "Skipped – weekly budget gate active."));
       continue;
     }
 
     try {
-      const r = await processTicket(
-        ticket.id, ticket.name, ticket.context, ticket.repo, DRY_RUN
-      );
+      const r = await processTicket(ticket, DRY_RUN);
       results.push(r);
     } catch (e) {
       log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
-      results.push({
-        ticket, linear: null, status: "error",
-        summary: (e as Error).message,
-        filesCreated: [], filesModified: [], tests: [],
-        verifyCommands: [], notes: "",
-        worktreePath: "", branch: `night/${ticket.id}`, durationSec: 0,
-      });
+      results.push(placeholderResult(ticket, "error", (e as Error).message));
     }
   }
 
