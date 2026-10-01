@@ -68,6 +68,14 @@ describe("createWorktree", () => {
     expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("night/ENG-1-20261001-2305");
   });
 
+  it("salvages uncommitted work from an interrupted run before replacing its worktree", () => {
+    const first = createWorktree(spec, noop);
+    writeFileSync(join(first.wtPath, "half-done.ts"), "export {};\n");
+    createWorktree({ ...spec, runStamp: "20261002-2305" }, noop);
+    expect(run(env.repoPath, "log", "-1", "--format=%s", first.branch)).toBe("night: salvaged uncommitted work from interrupted run");
+    expect(run(env.repoPath, "show", "--name-only", "--format=", first.branch)).toBe("half-done.ts");
+  });
+
   it("keeps the previous run's branch so unpushed work survives", () => {
     const first = createWorktree(spec, noop);
     writeFileSync(join(first.wtPath, "work.txt"), "x");

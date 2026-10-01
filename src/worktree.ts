@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import type { RepoKind } from "./types.js";
 
@@ -57,10 +57,32 @@ function resolveBaseRef(repoPath: string, log: Log): string {
   throw new Error(`No base branch found in ${repoPath} (tried ${candidates.join(", ")})`);
 }
 
+function isRegisteredWorktree(repoPath: string, wtPath: string): boolean {
+  const target = realpathSync(wtPath);
+  return git(["worktree", "list", "--porcelain"], repoPath)
+    .split("\n")
+    .filter(line => line.startsWith("worktree "))
+    .some(line => {
+      try {
+        return realpathSync(line.slice("worktree ".length)) === target;
+      } catch {
+        return false;
+      }
+    });
+}
+
+function salvageUncommittedWork(wtPath: string, log: Log): void {
+  if (git(["status", "--porcelain", ...PATHSPEC], wtPath).trim() === "") return;
+  git(["add", "-A", ...PATHSPEC], wtPath);
+  git(["commit", "-m", "night: salvaged uncommitted work from interrupted run", ...PATHSPEC], wtPath);
+  log(`  Salvaged uncommitted work from interrupted run in ${wtPath}`);
+}
+
 function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: string, log: Log): void {
   git(["worktree", "prune"], repoPath);
   if (!existsSync(wtPath)) return;
   log(`Cleaning stale worktree: ${wtPath}`);
+  if (isRegisteredWorktree(repoPath, wtPath)) salvageUncommittedWork(wtPath, log);
   try {
     git(["worktree", "remove", "--force", wtPath], repoPath);
   } catch {
