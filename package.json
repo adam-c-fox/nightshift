@@ -9,7 +9,7 @@
     "run": "tsx src/runner.ts",
     "run:dry": "tsx src/runner.ts --dry-run",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
