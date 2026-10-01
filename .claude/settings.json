@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Edit(./src/**)",
+      "Edit(./tickets/**)",
+      "Edit(./reports/**)",
+      "Edit(./logs/**)",
+      "Bash(npm *)"
+    ]
+  }
+}

@@ -1,0 +1,56 @@
+export type RepoKind = "main" | "terraform";
+
+export interface Ticket {
+  id: string;            // e.g. "ENG-142"
+  name: string;          // e.g. "CSV export fix"
+  context: string[];     // bullet lines from tonight.md
+  repo: RepoKind;
+}
+
+export interface LinearTicket {
+  id: string;
+  identifier: string;
+  name: string;
+  description: string;
+  state: string;
+  url: string;
+}
+
+export type TicketStatus = "done" | "partial" | "needs_review" | "skipped" | "error";
+
+export interface TestResult {
+  name: string;
+  file: string;
+  result: "pass" | "fail";
+}
+
+export interface TicketResult {
+  ticket: Ticket;
+  linear: LinearTicket | null;
+  status: TicketStatus;
+  summary: string;
+  filesCreated: string[];
+  filesModified: string[];
+  tests: TestResult[];
+  verifyCommands: string[];
+  notes: string;
+  worktreePath: string;
+  branch: string;
+  durationSec: number;
+}
+
+export interface BudgetStatus {
+  weeklyPercent: number;
+  gateHit: boolean;
+  resetInfo: string;
+}
+
+export interface SessionResult {
+  date: string;
+  startedAt: string;
+  endedAt: string;
+  tickets: TicketResult[];
+  budget: BudgetStatus;
+  gateHit: boolean;
+  noTasks: boolean;
+}
