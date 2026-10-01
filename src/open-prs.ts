@@ -17,7 +17,7 @@ function lookup(repo: RepoKind, id: string): object {
     const repoPath = REPOS[repo];
     if (!repoPath) return { id, error: `unknown repo ${repo}` };
     const pr = findOpenNightPr(id, repoPath);
-    return { id, repo, pr: pr?.prId ?? null, branch: pr?.sourceBranch ?? null };
+    return { id, repo, pr: pr?.prId ?? null, branch: pr?.sourceBranch ?? null, ...(pr?.autoComplete ? { autoComplete: true } : {}) };
   } catch (e) {
     const firstLine = ((e as Error).message ?? String(e)).split("\n")[0];
     return { id, error: firstLine };

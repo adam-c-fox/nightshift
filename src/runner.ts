@@ -8,7 +8,7 @@ import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { agentEnv, buildAgentSettings } from "./agent-env.js";
 import { deriveOutcome } from "./status.js";
-import { createAndCheckPR, findOpenNightPr, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
+import { createAndCheckPR, findOpenNightPr, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
 import { writeReport } from "./report.js";
 import { localDate, runStamp, TIME_ZONE } from "./time.js";
 import { branchName, createWorktree, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
@@ -76,6 +76,12 @@ async function updatePullRequest(result: TicketResult, existing: ExistingPr): Pr
   const pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
   result.notes = [result.notes, `Updated existing PR #${existing.prId}.`].filter(Boolean).join(" | ");
   applyPipelineStatus(result, pr);
+}
+
+function holdForAutoComplete(result: TicketResult, existing: ExistingPr): void {
+  log(`  Not pushing ${result.branch}: PR #${existing.prId} has auto-complete set`);
+  result.status = "needs_review";
+  result.notes = [result.notes, `PR #${existing.prId} has auto-complete set; not pushing agent commits to it.`].filter(Boolean).join(" | ");
 }
 
 function lookUpExistingPr(ticketId: string, repoPath: string): ExistingPr | null {
@@ -166,9 +172,12 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
   ticketResult.notes = [ticketResult.notes, ...outcome.notes].filter(Boolean).join(" | ");
 
   if (dryRun) {
-    log(continuing
-      ? `  [dry-run] Would commit and push to existing PR #${existing.prId} branch ${existing.sourceBranch}`
-      : `  [dry-run] Would commit, push ${wt.branch} and open a new Azure DevOps PR into ${wt.baseBranch}`);
+    const action = prAction(existing, true);
+    log(action === "update"
+      ? `  [dry-run] Would push to existing PR #${existing!.prId} branch ${existing!.sourceBranch}`
+      : action === "hold"
+        ? `  [dry-run] Would commit on ${wt.branch} but not push: PR #${existing!.prId} has auto-complete set`
+        : `  [dry-run] Would commit, push ${wt.branch} and open a new Azure DevOps PR into ${wt.baseBranch}`);
   } else {
     try {
       mkdirSync(LOGS_DIR, { recursive: true });
@@ -186,7 +195,9 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
         ticketResult.status = "needs_review";
         ticketResult.notes = [ticketResult.notes, `Branch contains excluded files (${listed}); not pushed.`].filter(Boolean).join(" | ");
       } else if (commit !== "no_changes" && outcome.publish) {
-        if (existing && wt.startedFromPr) await updatePullRequest(ticketResult, existing);
+        const action = prAction(existing, wt.startedFromPr);
+        if (action === "update") await updatePullRequest(ticketResult, existing!);
+        else if (action === "hold") holdForAutoComplete(ticketResult, existing!);
         else await openPullRequest(ticketResult, wt.baseBranch);
       } else if (commit !== "no_changes") {
         log(`  Not publishing ${wt.branch}: ${outcome.notes.join(" ")}`);

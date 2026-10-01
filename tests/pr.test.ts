@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrTitle, buildPrWebUrl, orgUrl, pickNightPr, policyListArgs, repoNameFromRemote, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrTitle, buildPrWebUrl, orgUrl, pickNightPr, policyListArgs, prAction, repoNameFromRemote, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -153,13 +153,37 @@ describe("pickNightPr", () => {
     expect(picked?.prId).toBe(9);
   });
 
+  it("flags a PR that has auto-complete set", () => {
+    const withAuto = { ...pr(5, "night/ENG-1"), autoCompleteSetBy: { displayName: "Adam" } };
+    expect(pickNightPr([withAuto], "ENG-1")?.autoComplete).toBe(true);
+    expect(pickNightPr([pr(5, "night/ENG-1")], "ENG-1")?.autoComplete).toBe(false);
+  });
+
   it("returns null for an empty list", () => {
     expect(pickNightPr([], "ENG-1")).toBeNull();
   });
 
   it("strips refs/heads/ from both branches", () => {
     expect(pickNightPr([pr(5, "night/ENG-1-20260930-2300", "develop")], "ENG-1")).toEqual({
-      prId: 5, sourceBranch: "night/ENG-1-20260930-2300", targetBranch: "develop",
+      prId: 5, sourceBranch: "night/ENG-1-20260930-2300", targetBranch: "develop", autoComplete: false,
     });
+  });
+});
+
+describe("prAction", () => {
+  const existing = (autoComplete: boolean): ExistingPr => ({ prId: 5, sourceBranch: "night/ENG-1", targetBranch: "main", autoComplete });
+
+  it("opens a new PR when there is none or its branch was not started from", () => {
+    expect(prAction(null, false)).toBe("open");
+    expect(prAction(existing(false), false)).toBe("open");
+    expect(prAction(existing(true), false)).toBe("open");
+  });
+
+  it("updates the PR when the worktree started from it", () => {
+    expect(prAction(existing(false), true)).toBe("update");
+  });
+
+  it("holds when the PR has auto-complete set", () => {
+    expect(prAction(existing(true), true)).toBe("hold");
   });
 });

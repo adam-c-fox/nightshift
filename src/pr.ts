@@ -100,8 +100,8 @@ export function pushBranch(worktreePath: string, localBranch: string, remoteBran
   });
 }
 
-export interface AzPullRequest { pullRequestId: number; sourceRefName: string; targetRefName: string }
-export interface ExistingPr { prId: number; sourceBranch: string; targetBranch: string }
+export interface AzPullRequest { pullRequestId: number; sourceRefName: string; targetRefName: string; autoCompleteSetBy?: unknown }
+export interface ExistingPr { prId: number; sourceBranch: string; targetBranch: string; autoComplete: boolean }
 
 export function repoNameFromRemote(remoteUrl: string): string {
   const last = remoteUrl.trim().replace(/\/+$/, "").split(/[/:]/).pop() ?? "";
@@ -115,7 +115,14 @@ export function pickNightPr(prs: AzPullRequest[], ticketId: string): ExistingPr 
   const matches = prs.filter(p => p.sourceRefName === exact || p.sourceRefName.startsWith(`${exact}-`));
   if (matches.length === 0) return null;
   const best = matches.reduce((a, b) => (b.pullRequestId > a.pullRequestId ? b : a));
-  return { prId: best.pullRequestId, sourceBranch: stripHeads(best.sourceRefName), targetBranch: stripHeads(best.targetRefName) };
+  return { prId: best.pullRequestId, sourceBranch: stripHeads(best.sourceRefName), targetBranch: stripHeads(best.targetRefName), autoComplete: Boolean(best.autoCompleteSetBy) };
+}
+
+export type PrAction = "update" | "open" | "hold";
+
+export function prAction(existing: ExistingPr | null, startedFromPr: boolean): PrAction {
+  if (!existing || !startedFromPr) return "open";
+  return existing.autoComplete ? "hold" : "update";
 }
 
 function originUrl(cwd: string): string {

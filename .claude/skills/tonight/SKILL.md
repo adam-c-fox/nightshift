@@ -38,6 +38,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
 
 7. Look up open nightshift PRs for all picked tickets in one read-only call: `npm run -s open-prs -- <repo>:<ID> …`, for example `main:ENG-142 terraform:INF-7`. It prints one JSON line per ticket. The runner continues an open PR whose source branch is `night/<ID>` or `night/<ID>-*` (see `pickNightPr` in `src/pr.ts`).
    A non-null `pr` means the ticket is requeued: mark it "requeued, continues PR #N", ask Adam what feedback the agent should address, and write his answer as bullets saying what to change on top of the existing PR.
+   If the line has `"autoComplete": true`, warn Adam: the runner will not push to that PR (it would merge unreviewed), so tonight's work stays on a local branch and the ticket ends as needs_review. Suggest he cancels auto-complete first.
    An `error` line or a non-zero exit means: say so and treat that ticket as new.
    Done when each ticket is marked new or requeued, and every requeued ticket has Adam's feedback as bullets.
 
