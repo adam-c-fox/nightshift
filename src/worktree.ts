@@ -70,6 +70,15 @@ function refExists(repoPath: string, ref: string): boolean {
   }
 }
 
+function branchMissingOnRemote(repoPath: string, branch: string): boolean {
+  try {
+    git(["ls-remote", "--exit-code", "--heads", "origin", branch], repoPath);
+    return false;
+  } catch (e) {
+    return (e as { status?: number }).status === 2;
+  }
+}
+
 function isRegisteredWorktree(repoPath: string, wtPath: string): boolean {
   const target = realpathSync(wtPath);
   return git(["worktree", "list", "--porcelain"], repoPath)
@@ -117,7 +126,7 @@ export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
 
   const freshBaseRef = resolveBaseRef(repoPath, log);
   const prRef = startFrom ? `origin/${startFrom.branch}` : null;
-  const startedFromPr = prRef !== null && refExists(repoPath, prRef);
+  const startedFromPr = prRef !== null && refExists(repoPath, prRef) && !branchMissingOnRemote(repoPath, startFrom!.branch);
   if (startFrom && !startedFromPr) {
     log(`  PR branch ${startFrom.branch} no longer on origin; starting fresh from ${freshBaseRef}`);
   }

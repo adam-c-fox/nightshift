@@ -76,8 +76,8 @@ async function openPullRequest(result: TicketResult, baseBranch: string): Promis
 async function updatePullRequest(result: TicketResult, existing: ExistingPr): Promise<void> {
   const { branch, worktreePath } = result;
   log(`  Pushing ${branch} to existing PR #${existing.prId} branch ${existing.sourceBranch}`);
-  const pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
   result.branch = existing.sourceBranch;
+  const pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
   result.notes = [result.notes, `Updated existing PR #${existing.prId}.`].filter(Boolean).join(" | ");
   applyPipelineStatus(result, pr);
 }

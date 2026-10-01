@@ -226,6 +226,18 @@ describe("createWorktree startFrom", () => {
     expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main`))).toBe(true);
   });
 
+  it("falls back when the PR branch was deleted on origin but a stale tracking ref remains", () => {
+    pushPrBranch();
+    run(env.repoPath, "fetch", "-q", "origin");
+    run(join(env.root, "origin.git"), "branch", "-D", prBranch);
+    expect(run(env.repoPath, "rev-parse", "--verify", `origin/${prBranch}`)).not.toBe("");
+    const logs: string[] = [];
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m));
+    expect(wt).toMatchObject({ baseRef: "origin/main", startedFromPr: false });
+    expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(false);
+    expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin`))).toBe(true);
+  });
+
   it("is not started from a PR without startFrom", () => {
     expect(createWorktree(spec, noop).startedFromPr).toBe(false);
   });
