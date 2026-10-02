@@ -1,10 +1,13 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import type { NightBudget } from "./types.js";
+import { CLAUDE_TOKEN } from "./agent-env.js";
+import { TIME_ZONE } from "./time.js";
 
 const ALLOCATION_PERCENT = 15;
 const USAGE_ATTEMPTS = 3;
 const USAGE_RETRY_DELAY_MS = 15_000;
+const PROBE_MODEL = "claude-haiku-4-5-20251001";
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 export interface UsageSnapshot {
@@ -56,22 +59,90 @@ function sleepSync(ms: number) {
 function parseUsageResult(result: UsageCommandResult): UsageSnapshot {
   if (result.error) throw new Error(result.error);
   if (result.status !== 0) throw new Error(`\`claude -p /usage\` exited with status ${result.status}`);
+  if (/^Total cost:/m.test(result.stdout)) {
+    throw new Error("claude is not logged in (cron can't read the login keychain); set CLAUDE_CODE_OAUTH_TOKEN in .env from `claude setup-token`");
+  }
   return parseUsageOutput(result.stdout);
+}
+
+export function parseRateLimitHeaders(response: string): UsageSnapshot {
+  const header = (name: string) => response.match(new RegExp(`^anthropic-ratelimit-unified-${name}:\\s*(\\S+)`, "im"))?.[1];
+  const utilization = header("7d-utilization");
+  if (utilization === undefined) {
+    throw new Error("Could not find anthropic-ratelimit-unified-7d-utilization in the usage probe response");
+  }
+  const reset = header("7d-reset");
+  const resetInfo = reset
+    ? `${new Date(Number(reset) * 1000).toLocaleString("en-US", {
+        timeZone: TIME_ZONE, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+      })} (${TIME_ZONE})`
+    : "unknown";
+  return { weeklyPercent: Math.round(parseFloat(utilization) * 1000) / 10, resetInfo };
+}
+
+function runUsageProbe(token: string): UsageCommandResult {
+  const body = JSON.stringify({
+    model: PROBE_MODEL,
+    max_tokens: 1,
+    system: "You are Claude Code, Anthropic's official CLI for Claude.",
+    messages: [{ role: "user", content: "hi" }],
+  });
+  const config = [
+    `header = "Authorization: Bearer ${token}"`,
+    `header = "anthropic-beta: oauth-2025-04-20"`,
+    `header = "anthropic-version: 2023-06-01"`,
+    `header = "content-type: application/json"`,
+    `data = ${JSON.stringify(body)}`,
+  ].join("\n");
+  const result = spawnSync("curl", ["-sS", "-D", "-", "--max-time", "60", "--config", "-", "https://api.anthropic.com/v1/messages"], {
+    encoding: "utf-8",
+    input: config,
+  });
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status, error: result.error?.message };
+}
+
+function parseProbeResult(result: UsageCommandResult): UsageSnapshot {
+  if (result.error) throw new Error(result.error);
+  if (result.status !== 0) throw new Error(`curl exited with status ${result.status}`);
+  const httpStatus = result.stdout.match(/^HTTP\/\S+\s+(\d{3})/m)?.[1];
+  if (httpStatus !== "200") {
+    const responseBody = result.stdout.split(/\r?\n\r?\n/).slice(1).join("\n").trim();
+    throw new Error(`Usage probe returned HTTP ${httpStatus ?? "unknown"}: ${responseBody.slice(0, 300)}`);
+  }
+  return parseRateLimitHeaders(result.stdout);
+}
+
+export interface UsageSource {
+  read: () => UsageCommandResult;
+  parse: (result: UsageCommandResult) => UsageSnapshot;
+}
+
+export function cliUsageSource(read: () => UsageCommandResult = runUsageCommand): UsageSource {
+  return { read, parse: parseUsageResult };
+}
+
+export function apiUsageSource(token: string, read: () => UsageCommandResult = () => runUsageProbe(token)): UsageSource {
+  return { read, parse: parseProbeResult };
+}
+
+function defaultUsageSource(): UsageSource {
+  const token = process.env[CLAUDE_TOKEN];
+  return token ? apiUsageSource(token) : cliUsageSource();
 }
 
 export function snapshotUsage(
   attempts = USAGE_ATTEMPTS,
-  run: () => UsageCommandResult = runUsageCommand,
+  source: UsageSource = defaultUsageSource(),
   pause: (ms: number) => void = sleepSync,
 ): UsageSnapshot {
   const results: UsageCommandResult[] = [];
   let lastMessage = "";
   for (let i = 0; i < attempts; i++) {
     if (i > 0) pause(USAGE_RETRY_DELAY_MS);
-    const result = run();
+    const result = source.read();
     results.push(result);
     try {
-      return parseUsageResult(result);
+      return source.parse(result);
     } catch (e) {
       lastMessage = (e as Error).message;
     }

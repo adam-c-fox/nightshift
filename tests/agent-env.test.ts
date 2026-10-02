@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { agentEnv, buildAgentSettings } from "../src/agent-env.js";
 
 describe("agentEnv", () => {
+  it("keeps the Claude OAuth token so the agent can log in", () => {
+    expect(agentEnv({ PATH: "/bin", CLAUDE_CODE_OAUTH_TOKEN: "t" })).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: "t" });
+  });
+
   it("strips nightshift, cloud and generic secrets, keeps the basics", () => {
     const env = agentEnv({
       PATH: "/bin", HOME: "/h", TF_IN_AUTOMATION: "1",

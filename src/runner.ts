@@ -6,7 +6,8 @@ import { REPOS } from "./repos.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, UsageUnavailableError } from "./budget.js";
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
-import { agentEnv, buildAgentSettings } from "./agent-env.js";
+import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
+import { getEnv } from "./env.js";
 import { deriveOutcome } from "./status.js";
 import { createAndCheckPR, existingPrWebUrl, findOpenNightPr, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
 import { writeReport } from "./report.js";
@@ -18,6 +19,9 @@ const WORKTREES_DIR = path.join(ROOT, "worktrees");
 const LOGS_DIR = path.join(ROOT, "logs");
 
 const DRY_RUN = process.argv.includes("--dry-run");
+
+const claudeToken = getEnv(CLAUDE_TOKEN);
+if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
 
 function log(msg: string) {
   const ts = new Date().toISOString().replace("T", " ").slice(0, 19);

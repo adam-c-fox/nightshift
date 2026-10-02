@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  budgetUsedPct, closedBudget, formatUsageAttempts, openNightBudget, parseUsageOutput, snapshotUsage,
-  UsageUnavailableError, withCurrentUsage, type UsageCommandResult,
+  apiUsageSource, budgetUsedPct, cliUsageSource, closedBudget, formatUsageAttempts, openNightBudget,
+  parseRateLimitHeaders, parseUsageOutput, snapshotUsage, UsageUnavailableError, withCurrentUsage,
+  type UsageCommandResult,
 } from "../src/budget.js";
 
 const usageOutput = `Ignoring 6 permissions.allow entries from .claude/settings.json
@@ -76,7 +77,7 @@ describe("snapshotUsage", () => {
   const garbled: UsageCommandResult = { stdout: "Not logged in · Please run /login", stderr: "auth warning", status: 0 };
   const sequence = (...results: UsageCommandResult[]) => {
     let i = 0;
-    return () => results[i++];
+    return cliUsageSource(() => results[i++]);
   };
 
   it("reads usage on the first attempt without pausing", () => {
@@ -89,6 +90,11 @@ describe("snapshotUsage", () => {
     const pauses: number[] = [];
     expect(snapshotUsage(3, sequence(garbled, good), ms => pauses.push(ms)).weeklyPercent).toBe(1);
     expect(pauses).toHaveLength(1);
+  });
+
+  it("explains a logged-out claude, which prints a cost summary instead of usage", () => {
+    const loggedOut: UsageCommandResult = { stdout: "Total cost:            $0.0000\nUsage: 0 input", stderr: "", status: 0 };
+    expect(() => snapshotUsage(1, sequence(loggedOut), () => {})).toThrow(/not logged in.*CLAUDE_CODE_OAUTH_TOKEN/);
   });
 
   it("treats a non-zero exit as a failed read even if stdout parses", () => {
@@ -126,5 +132,42 @@ describe("formatUsageAttempts", () => {
       "  stdout: (empty)",
       "  stderr: (empty)",
     ].join("\n"));
+  });
+});
+
+const probeHeaders = `HTTP/2 200 
+anthropic-ratelimit-unified-5h-utilization: 0.05
+anthropic-ratelimit-unified-7d-reset: 1791392400
+anthropic-ratelimit-unified-7d-utilization: 0.234
+anthropic-ratelimit-unified-status: allowed
+
+{"type":"message"}`;
+
+describe("parseRateLimitHeaders", () => {
+  it("reads the weekly utilization and reset, not the 5h window", () => {
+    const snapshot = parseRateLimitHeaders(probeHeaders);
+    expect(snapshot.weeklyPercent).toBe(23.4);
+    expect(snapshot.resetInfo).toMatch(/^Oct 7, 10:00\sAM \(America\/Vancouver\)$/);
+  });
+
+  it("throws when the weekly header is missing", () => {
+    expect(() => parseRateLimitHeaders("HTTP/2 200 \nanthropic-ratelimit-unified-5h-utilization: 0.05")).toThrow(/7d-utilization/);
+  });
+});
+
+describe("apiUsageSource", () => {
+  const probe = (stdout: string, status = 0) => apiUsageSource("token", () => ({ stdout, stderr: "", status }));
+
+  it("reads weekly usage from a successful probe", () => {
+    expect(snapshotUsage(1, probe(probeHeaders), () => {}).weeklyPercent).toBe(23.4);
+  });
+
+  it("fails with the HTTP status and body when the probe is rejected", () => {
+    const rejected = `HTTP/2 401 \ncontent-type: application/json\n\n{"error":"invalid token"}`;
+    expect(() => snapshotUsage(1, probe(rejected), () => {})).toThrow(/HTTP 401.*invalid token/);
+  });
+
+  it("fails when curl itself fails", () => {
+    expect(() => snapshotUsage(1, probe("", 6), () => {})).toThrow(/curl exited with status 6/);
   });
 });
