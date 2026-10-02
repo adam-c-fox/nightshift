@@ -9,10 +9,10 @@ import { runAgent } from "./claude.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv } from "./env.js";
 import { deriveOutcome } from "./status.js";
-import { createAndCheckPR, existingPrWebUrl, findOpenNightPr, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
+import { createAndCheckPR, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
 import { writeReport } from "./report.js";
-import { localDate, runStamp, TIME_ZONE } from "./time.js";
-import { branchName, createWorktree, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
+import { localDate, TIME_ZONE } from "./time.js";
+import { createWorktree, fallbackBranchName, ticketBranchName, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
@@ -45,12 +45,12 @@ function errorMessage(e: unknown): string {
   return stderr ? `${err.message}\n${stderr}` : (err.message ?? String(e));
 }
 
-function placeholderResult(ticket: Ticket, status: TicketResult["status"], summary: string, stamp: string): TicketResult {
+function placeholderResult(ticket: Ticket, status: TicketResult["status"], summary: string): TicketResult {
   return {
     ticket, linear: null, status, summary,
     filesCreated: [], filesModified: [], tests: [],
     verifyCommands: [], notes: "",
-    worktreePath: "", branch: branchName(ticket.id, stamp), durationSec: 0,
+    worktreePath: "", branch: fallbackBranchName(ticket.id, ticket.name), durationSec: 0,
   };
 }
 
@@ -73,7 +73,11 @@ async function openPullRequest(result: TicketResult, baseBranch: string): Promis
   const { ticket, branch, worktreePath } = result;
   log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
   const pr = await createAndCheckPR(
-    ticket.id, result.summary, result.verifyCommands, branch, baseBranch, worktreePath, { log },
+    {
+      ticketId: ticket.id, title: result.title ?? "", summary: result.summary,
+      verifyCommands: result.verifyCommands, ticketUrl: result.linear?.url,
+    },
+    branch, baseBranch, worktreePath, { log },
   );
   applyPipelineStatus(result, pr);
 }
@@ -85,7 +89,7 @@ async function updatePullRequest(result: TicketResult, existing: ExistingPr): Pr
   try {
     pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
   } catch (e) {
-    result.notes = [result.notes, `Updating PR #${existing.prId} failed before or during push to ${existing.sourceBranch}: ${errorMessage(e).split("\n")[0]}; tonight's work is on local ${branch}.`].filter(Boolean).join(" | ");
+    result.notes = [result.notes, `Updating PR #${existing.prId} failed before or during push to ${existing.sourceBranch}: ${errorMessage(e).split("\n")[0]}; this run's work is on local ${branch}.`].filter(Boolean).join(" | ");
     throw e;
   }
   result.branch = existing.sourceBranch;
@@ -99,9 +103,9 @@ function holdForAutoComplete(result: TicketResult, existing: ExistingPr): void {
   result.notes = [result.notes, `PR #${existing.prId} has auto-complete set; not pushing agent commits to it.`].filter(Boolean).join(" | ");
 }
 
-function lookUpExistingPr(ticketId: string, repoPath: string): ExistingPr | null {
+function lookUpExistingPr(expectedBranch: string, repoPath: string): ExistingPr | null {
   try {
-    const existing = findOpenNightPr(ticketId, repoPath);
+    const existing = findOpenTicketPr(expectedBranch, repoPath);
     if (existing) log(`  Continuing PR #${existing.prId} (${existing.sourceBranch} → ${existing.targetBranch})`);
     return existing;
   } catch (e) {
@@ -111,15 +115,15 @@ function lookUpExistingPr(ticketId: string, repoPath: string): ExistingPr | null
 }
 
 const continuingPrContext = (prId: number) =>
-  `This ticket already has open PR #${prId} from an earlier night. The worktree contains that work; continue from it instead of starting over.`;
+  `This ticket already has open PR #${prId} from an earlier run. The worktree contains that work; continue from it instead of starting over.`;
 
-async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, budgetRef: { current: NightBudget }): Promise<TicketResult> {
+async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { current: NightBudget }): Promise<TicketResult> {
   const { id: ticketId, name: ticketName, context, repo } = ticket;
   const repoPath = REPOS[repo];
   const startTime = Date.now();
   const plannedPath = worktreePath(WORKTREES_DIR, repo, ticketId);
   let wt: Worktree = {
-    wtPath: plannedPath, branch: branchName(ticketId, stamp), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
+    wtPath: plannedPath, branch: fallbackBranchName(ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
   };
 
   log(`\n── Ticket ${ticketId} – ${ticketName} [${repo}] ──`);
@@ -140,12 +144,14 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
     log(`  Linear fetch error: ${(e as Error).message}`);
   }
 
-  const existing = lookUpExistingPr(ticketId, repoPath);
+  const branchBase = ticketBranchName(ticketId, ticketName, linear?.branchName);
+  wt.branch = branchBase;
+  const existing = lookUpExistingPr(branchBase, repoPath);
   if (dryRun) {
     log(`  [dry-run] Would create worktree at ${wt.wtPath} on ${wt.branch}`);
   } else {
     const startFrom = existing ? { branch: existing.sourceBranch, baseBranch: existing.targetBranch } : undefined;
-    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, runStamp: stamp, startFrom }, log);
+    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, branchBase, startFrom }, log);
   }
   const continuing = existing !== null && (dryRun || wt.startedFromPr);
   const agentContext = continuing ? [continuingPrContext(existing.prId), ...context] : context;
@@ -173,6 +179,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
     ticket,
     linear,
     status: (report?.status ?? "needs_review") as TicketResult["status"],
+    title: report?.title ?? "",
     summary: report?.summary ?? (result.parseError ? `Parse error: ${result.parseError}` : "Agent produced no report."),
     filesCreated: report?.filesCreated ?? [],
     filesModified: report?.filesModified ?? [],
@@ -211,7 +218,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
     }
 
     try {
-      const commit = commitWorktree(wt, ticketId, ticketResult.summary, log);
+      const commit = commitWorktree(wt, buildPrTitle(ticketId, ticketResult.title ?? "", ticketResult.summary), log);
       const excluded = commit === "no_changes" ? [] : excludedPathsInBranch(wt);
       if (excluded.length > 0) {
         const listed = excluded.slice(0, 5).join(", ");
@@ -241,7 +248,6 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
 
 async function main() {
   const date = localDate();
-  const stamp = runStamp();
   const startedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
   log(`═══ Nightshift session ${date} started ${DRY_RUN ? "(DRY RUN)" : ""} ═══`);
 
@@ -295,16 +301,16 @@ async function main() {
 
     if (gateHit) {
       log(`  Skipping ${ticket.id}`);
-      results.push(placeholderResult(ticket, "skipped", skipReason, stamp));
+      results.push(placeholderResult(ticket, "skipped", skipReason));
       continue;
     }
 
     try {
-      const r = await processTicket(ticket, DRY_RUN, stamp, budgetRef);
+      const r = await processTicket(ticket, DRY_RUN, budgetRef);
       results.push(r);
     } catch (e) {
       log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
-      results.push(placeholderResult(ticket, "error", (e as Error).message, stamp));
+      results.push(placeholderResult(ticket, "error", (e as Error).message));
     }
   }
 

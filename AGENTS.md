@@ -38,6 +38,11 @@ For **every** ticket, in this exact order:
 5. **Run the test again.** Confirm it **passes** (green).
 6. **Run the full test suite** (`npx vitest run`) to confirm no regressions.
 7. **Type-check** (`npx tsc --noEmit -p tsconfig.base.json`).
+8. **Lint and format** before reporting: `npm run lint` and `npm run format`
+   (eslint and `prettier --check .`) must both pass. On failure, run
+   `npm run lint:fix` and `npx prettier --write <files you changed>`, then
+   re-run both. Only touch files you changed; never reformat the rest of the
+   repo.
 
 If a test still fails after **two fix iterations**, stop working on the ticket.
 Write what you learned into your report. Mark status `needs_review`. Do NOT
@@ -48,6 +53,8 @@ For **Terraform tickets**, steps 2-5 are replaced by:
 2. `terraform init -backend=false && terraform validate` → must pass.
 3. In `notes`, list the resource changes you expect the PR pipeline's
    `plan` to show, so the reviewer can compare.
+4. `terraform fmt -check` must pass (use `terraform fmt <files you changed>`
+   to fix), instead of lint and format.
 
 ## 3 · Context & token discipline
 
@@ -72,7 +79,11 @@ These rules exist so the machine doesn't burn through the weekly budget.
 ## 4 · Edit discipline
 
 - Do NOT commit. Leave your changes in the worktree; the runner commits them
-  as `night: <IDENTIFIER> – <summary>` and opens the PR.
+  as `<title> (<IDENTIFIER>)`, using the `title` from your report, and opens
+  the PR.
+- Never mention nightshift, automation, "night run" or anything similar in
+  code, comments, commit text, your `title` or your `summary`. Everything you
+  write must read as if a developer wrote it by hand.
 - Do NOT create branches, PRs, or change git config.
 - Do NOT run `npm install` unless you added a new dependency AND the ticket
   requires it. `node_modules` is pre-populated via symlink.
@@ -101,6 +112,7 @@ automatically.
 ```
 ---REPORT---
 status: done
+title: "fix: stream csv rows in export"
 summary: <2-4 sentences. What changed, why, and the key design decision.>
 files_created:
   - path/to/new-file.ts
@@ -121,6 +133,12 @@ notes: <anything the reviewer must know. Empty string if nothing.>
 - `done` – all tests green, ticket fully satisfied.
 - `partial` – core change works, some edge cases or sub-items remain.
 - `needs_review` – you stopped early (see §5). Human needs to look.
+
+**`title`** – the commit and PR title, as a conventional-commit subject:
+`feat`, `fix`, `chore`, `refactor`, `test` or `docs`, then a colon and an
+imperative description in lowercase, e.g. `fix: stream csv rows in export`.
+No ticket ID (the runner appends it), at most 72 characters, no mention of
+automation.
 
 **`verify`** – the exact commands to run in the worktree to confirm the
 change works. The reviewer will copy-paste these.

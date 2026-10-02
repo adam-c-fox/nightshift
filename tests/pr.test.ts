@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrTitle, buildPrWebUrl, orgUrl, pickNightPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrDescription, buildPrTitle, buildPrWebUrl, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -34,8 +34,44 @@ describe("PR helpers", () => {
     expect(orgUrl("acme")).toBe("https://dev.azure.com/acme");
   });
 
-  it("truncates the title summary to one line", () => {
-    expect(buildPrTitle("ENG-1", "first line\nsecond")).toBe("night: ENG-1 – first line");
+});
+
+describe("buildPrTitle", () => {
+  it("appends the ticket id to the agent's title", () => {
+    expect(buildPrTitle("DEMO-500", "feat: add export_runs schema", "ignored")).toBe("feat: add export_runs schema (DEMO-500)");
+  });
+
+  it("never doubles a ticket id the agent already added", () => {
+    expect(buildPrTitle("DEMO-500", "fix: handle empty rows (DEMO-500)", "")).toBe("fix: handle empty rows (DEMO-500)");
+  });
+
+  it("falls back to the first summary line capped at 80 chars", () => {
+    expect(buildPrTitle("ENG-1", "", "first line\nsecond")).toBe("first line (ENG-1)");
+    expect(buildPrTitle("ENG-1", "  ", "x".repeat(200))).toBe(`${"x".repeat(80)} (ENG-1)`);
+  });
+
+  it("never mentions the runner", () => {
+    expect(buildPrTitle("ENG-1", "", "Fixed it").toLowerCase()).not.toContain("night");
+  });
+});
+
+describe("buildPrDescription", () => {
+  const text = buildPrDescription("ENG-1", "Fixed the export.", ["npx vitest run"], "https://linear.app/x/issue/ENG-1");
+
+  it("links the ticket and lists summary and verify commands", () => {
+    expect(text).toContain("[ENG-1](https://linear.app/x/issue/ENG-1)");
+    expect(text).toContain("Fixed the export.");
+    expect(text).toContain("- `npx vitest run`");
+  });
+
+  it("names the bare ticket id without a url and omits verify without commands", () => {
+    const bare = buildPrDescription("ENG-1", "Done.", []);
+    expect(bare).toContain("ENG-1");
+    expect(bare).not.toContain("Verify");
+  });
+
+  it("carries no trace of automation", () => {
+    expect(text.toLowerCase()).not.toMatch(/night|automated|generated/);
   });
 });
 
@@ -160,40 +196,41 @@ describe("repoNameFromRemote", () => {
   });
 });
 
-describe("pickNightPr", () => {
+describe("pickTicketPr", () => {
+  const branch = "adamfox/eng-1-fix-export";
   const pr = (id: number, source: string, target = "main"): AzPullRequest => ({
     pullRequestId: id,
     sourceRefName: `refs/heads/${source}`,
     targetRefName: `refs/heads/${target}`,
   });
 
-  it("matches per-run branches and the legacy branch", () => {
-    expect(pickNightPr([pr(5, "night/ENG-1-20261001-2305")], "ENG-1")?.prId).toBe(5);
-    expect(pickNightPr([pr(6, "night/ENG-1")], "ENG-1")?.prId).toBe(6);
+  it("matches the exact branch and numbered variants", () => {
+    expect(pickTicketPr([pr(5, branch)], branch)?.prId).toBe(5);
+    expect(pickTicketPr([pr(6, `${branch}-2`)], branch)?.prId).toBe(6);
   });
 
-  it("does not match another ticket or a non-night branch", () => {
-    expect(pickNightPr([pr(7, "night/ENG-12-20261001-2305"), pr(8, "feature/ENG-1")], "ENG-1")).toBeNull();
+  it("does not match other branches, other tickets or non-numeric suffixes", () => {
+    const others = [pr(7, "adamfox/eng-12-other"), pr(8, `${branch}-extra`), pr(9, `night/ENG-1`), pr(10, `${branch}2`)];
+    expect(pickTicketPr(others, branch)).toBeNull();
   });
 
   it("picks the highest id among matches", () => {
-    const picked = pickNightPr([pr(5, "night/ENG-1-20260930-2300"), pr(9, "night/ENG-1"), pr(7, "night/ENG-1-20260929-2300")], "ENG-1");
-    expect(picked?.prId).toBe(9);
+    expect(pickTicketPr([pr(5, branch), pr(9, `${branch}-3`), pr(7, `${branch}-2`)], branch)?.prId).toBe(9);
   });
 
   it("flags a PR that has auto-complete set", () => {
-    const withAuto = { ...pr(5, "night/ENG-1"), autoCompleteSetBy: { displayName: "Adam" } };
-    expect(pickNightPr([withAuto], "ENG-1")?.autoComplete).toBe(true);
-    expect(pickNightPr([pr(5, "night/ENG-1")], "ENG-1")?.autoComplete).toBe(false);
+    const withAuto = { ...pr(5, branch), autoCompleteSetBy: { displayName: "Adam" } };
+    expect(pickTicketPr([withAuto], branch)?.autoComplete).toBe(true);
+    expect(pickTicketPr([pr(5, branch)], branch)?.autoComplete).toBe(false);
   });
 
   it("returns null for an empty list", () => {
-    expect(pickNightPr([], "ENG-1")).toBeNull();
+    expect(pickTicketPr([], branch)).toBeNull();
   });
 
   it("strips refs/heads/ from both branches", () => {
-    expect(pickNightPr([pr(5, "night/ENG-1-20260930-2300", "develop")], "ENG-1")).toEqual({
-      prId: 5, sourceBranch: "night/ENG-1-20260930-2300", targetBranch: "develop", autoComplete: false,
+    expect(pickTicketPr([pr(5, branch, "develop")], branch)).toEqual({
+      prId: 5, sourceBranch: branch, targetBranch: "develop", autoComplete: false,
     });
   });
 });

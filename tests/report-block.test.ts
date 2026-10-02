@@ -5,6 +5,7 @@ const block = `I finished the work.
 
 ---REPORT---
 status: done
+title: fix: stream csv export rows
 summary: Fixed the CSV export. Key decision: stream rows.
 files_created:
   - tests/export.spec.ts
@@ -28,6 +29,7 @@ describe("parseReportBlock", () => {
   it("parses every field of the AGENTS.md contract", () => {
     expect(parseReportBlock(block)).toEqual({
       status: "done",
+      title: "fix: stream csv export rows",
       summary: "Fixed the CSV export. Key decision: stream rows.",
       filesCreated: ["tests/export.spec.ts"],
       filesModified: ["src/export.ts"],
@@ -38,6 +40,10 @@ describe("parseReportBlock", () => {
       verifyCommands: ["npx vitest run tests/export.spec.ts", "npx tsc --noEmit -p tsconfig.base.json"],
       notes: "Touched shared util.",
     });
+  });
+
+  it("leaves the title empty when the report has none", () => {
+    expect(parseReportBlock(block.replace("title: fix: stream csv export rows\n", "")).title).toBe("");
   });
 
   it("only ends the block at a line that is exactly ---", () => {

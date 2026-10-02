@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { pushBranch } from "../src/pr.js";
-import { branchName, commitWorktree, createWorktree, excludedPathsInBranch, worktreePath, type WorktreeSpec } from "../src/worktree.js";
+import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, fallbackBranchName, ticketBranchName, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -30,8 +30,29 @@ export function makeRepo(): { root: string; repoPath: string; worktreesDir: stri
 const noop = () => {};
 
 describe("naming", () => {
-  it("makes a unique branch per run", () => {
-    expect(branchName("ENG-1", "20261001-2305")).toBe("night/ENG-1-20261001-2305");
+  it("uses Linear's branch name when it has one", () => {
+    expect(ticketBranchName("DEMO-500", "Export runs schema", "adamfox/demo-500-export-runs-schema")).toBe("adamfox/demo-500-export-runs-schema");
+  });
+
+  it("falls back to the lowercased id and a slug of the ticket name without Linear", () => {
+    expect(ticketBranchName("DEMO-500", "Export runs: schema & store!", null)).toBe("demo-500-export-runs-schema-store");
+    expect(fallbackBranchName("ENG-1", "  --Fix CSV export--  ")).toBe("eng-1-fix-csv-export");
+  });
+
+  it("caps the fallback slug near 50 characters without a trailing dash", () => {
+    const name = fallbackBranchName("ENG-1", "word ".repeat(30));
+    expect(name.length).toBeLessThanOrEqual("eng-1-".length + 50);
+    expect(name.endsWith("-")).toBe(false);
+  });
+
+  it("keeps the id alone when the name has no usable characters", () => {
+    expect(fallbackBranchName("ENG-1", "???")).toBe("eng-1");
+  });
+
+  it("chooses the first free numbered name when the base is taken", () => {
+    expect(chooseBranchName("a/b", () => false)).toBe("a/b");
+    expect(chooseBranchName("a/b", n => n === "a/b")).toBe("a/b-2");
+    expect(chooseBranchName("a/b", n => ["a/b", "a/b-2", "a/b-3"].includes(n))).toBe("a/b-4");
   });
 
   it("namespaces the worktree path by repo", () => {
@@ -44,20 +65,20 @@ describe("createWorktree", () => {
   let spec: WorktreeSpec;
   beforeEach(() => {
     env = makeRepo();
-    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", runStamp: "20261001-2305" };
+    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" };
   });
 
-  it("creates the per-run branch from origin/main and symlinks node_modules", () => {
+  it("creates the ticket branch from origin/main and symlinks node_modules", () => {
     const wt = createWorktree(spec, noop);
-    expect(wt).toMatchObject({ branch: "night/ENG-1-20261001-2305", baseRef: "origin/main", baseBranch: "main" });
-    expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("night/ENG-1-20261001-2305");
+    expect(wt).toMatchObject({ branch: "adamfox/eng-1-fix", baseRef: "origin/main", baseBranch: "main" });
+    expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("adamfox/eng-1-fix");
     expect(existsSync(join(wt.wtPath, "node_modules"))).toBe(true);
   });
 
-  it("replaces a worktree left over from a previous run", () => {
+  it("replaces a worktree left over from a previous run on the next free branch", () => {
     createWorktree(spec, noop);
-    const wt = createWorktree({ ...spec, runStamp: "20261002-2305" }, noop);
-    expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("night/ENG-1-20261002-2305");
+    const wt = createWorktree(spec, noop);
+    expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("adamfox/eng-1-fix-2");
   });
 
   it("removes a leftover directory git does not know about", () => {
@@ -66,34 +87,32 @@ describe("createWorktree", () => {
     writeFileSync(join(stale, "junk.txt"), "x");
     const wt = createWorktree(spec, noop);
     expect(existsSync(join(wt.wtPath, "junk.txt"))).toBe(false);
-    expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("night/ENG-1-20261001-2305");
+    expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("adamfox/eng-1-fix");
   });
 
   it("salvages uncommitted work from an interrupted run before replacing its worktree", () => {
     const first = createWorktree(spec, noop);
     writeFileSync(join(first.wtPath, "half-done.ts"), "export {};\n");
-    createWorktree({ ...spec, runStamp: "20261002-2305" }, noop);
-    expect(run(env.repoPath, "log", "-1", "--format=%s", first.branch)).toBe("night: salvaged uncommitted work from interrupted run");
+    createWorktree(spec, noop);
+    expect(run(env.repoPath, "log", "-1", "--format=%s", first.branch)).toBe("wip: salvage uncommitted work (ENG-1)");
     expect(run(env.repoPath, "show", "--name-only", "--format=", first.branch)).toBe("half-done.ts");
   });
 
-  it("throws on a reused branch name and leaves the first branch untouched", () => {
+  it("never resets a surviving branch: the next run gets a numbered one and the first keeps its tip", () => {
     const first = createWorktree(spec, noop);
     writeFileSync(join(first.wtPath, "work.txt"), "x");
     run(first.wtPath, "add", "work.txt");
     run(first.wtPath, "commit", "-q", "-m", "wip");
     const tip = run(env.repoPath, "rev-parse", first.branch);
-    expect(() => createWorktree(spec, noop)).toThrow();
+    const second = createWorktree(spec, noop);
+    expect(second.branch).toBe("adamfox/eng-1-fix-2");
     expect(run(env.repoPath, "rev-parse", first.branch)).toBe(tip);
   });
 
-  it("keeps the previous run's branch so unpushed work survives", () => {
-    const first = createWorktree(spec, noop);
-    writeFileSync(join(first.wtPath, "work.txt"), "x");
-    run(first.wtPath, "add", "work.txt");
-    run(first.wtPath, "commit", "-q", "-m", "wip");
-    createWorktree({ ...spec, runStamp: "20261002-2305" }, noop);
-    expect(run(env.repoPath, "branch", "--list", "night/ENG-1-20261001-2305")).toContain("night/ENG-1-20261001-2305");
+  it("skips a name that exists on origin only", () => {
+    run(env.repoPath, "push", "-q", "origin", "main:refs/heads/adamfox/eng-1-fix");
+    run(env.repoPath, "push", "-q", "origin", "main:refs/heads/adamfox/eng-1-fix-2");
+    expect(createWorktree(spec, noop).branch).toBe("adamfox/eng-1-fix-3");
   });
 });
 
@@ -101,19 +120,25 @@ describe("commitWorktree", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", runStamp: "20261001-2305" }, noop);
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop);
   });
 
   const committedFiles = () => run(wt.wtPath, "diff", "--name-only", `${wt.baseRef}..HEAD`).split("\n").filter(Boolean);
 
+  it("uses the given subject as the commit message", () => {
+    writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
+    commitWorktree(wt, "fix: handle empty rows (ENG-1)", noop);
+    expect(run(wt.wtPath, "log", "-1", "--format=%B")).toBe("fix: handle empty rows (ENG-1)");
+  });
+
   it("reports no changes when only the node_modules symlink exists", () => {
-    expect(commitWorktree(wt, "ENG-1", "nothing", noop)).toBe("no_changes");
+    expect(commitWorktree(wt, "nothing", noop)).toBe("no_changes");
   });
 
   it("commits real changes but never node_modules or terraform plan files", () => {
     writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
     writeFileSync(join(wt.wtPath, "tfplan"), "binary");
-    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
+    expect(commitWorktree(wt, "fix", noop)).toBe("committed");
     expect(committedFiles()).toEqual(["fix.ts"]);
   });
 
@@ -124,7 +149,7 @@ describe("commitWorktree", () => {
     writeFileSync(hook, `#!/bin/sh\ntouch "${marker}"\n`);
     chmodSync(hook, 0o755);
     writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
-    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
+    expect(commitWorktree(wt, "fix", noop)).toBe("committed");
     expect(existsSync(marker)).toBe(false);
   });
 
@@ -132,7 +157,7 @@ describe("commitWorktree", () => {
     writeFileSync(join(wt.wtPath, "agent.ts"), "export {};\n");
     run(wt.wtPath, "add", "agent.ts");
     run(wt.wtPath, "commit", "-q", "-m", "agent commit");
-    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("agent_committed");
+    expect(commitWorktree(wt, "fix", noop)).toBe("agent_committed");
   });
 
   it("includes both agent commits and leftover uncommitted changes", () => {
@@ -140,14 +165,14 @@ describe("commitWorktree", () => {
     run(wt.wtPath, "add", "a.ts");
     run(wt.wtPath, "commit", "-q", "-m", "agent commit");
     writeFileSync(join(wt.wtPath, "b.ts"), "export {};\n");
-    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
+    expect(commitWorktree(wt, "fix", noop)).toBe("committed");
     expect(committedFiles().sort()).toEqual(["a.ts", "b.ts"]);
   });
 
   it("leaves excluded files untracked in the worktree", () => {
     writeFileSync(join(wt.wtPath, "tfplan"), "binary");
     writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
-    commitWorktree(wt, "ENG-1", "fix", noop);
+    commitWorktree(wt, "fix", noop);
     expect(readFileSync(join(wt.wtPath, "tfplan"), "utf-8")).toBe("binary");
   });
 
@@ -160,7 +185,7 @@ describe("commitWorktree", () => {
     writeFileSync(join(wt.wtPath, "pkg", "node_modules", "x.js"), "x");
     writeFileSync(join(wt.wtPath, "infra", "night.tfplan"), "binary");
     writeFileSync(join(wt.wtPath, "fix.ts"), "export {};\n");
-    expect(commitWorktree(wt, "ENG-1", "fix", noop)).toBe("committed");
+    expect(commitWorktree(wt, "fix", noop)).toBe("committed");
     expect(run(wt.wtPath, "diff", "--name-only", "HEAD~1..HEAD").split("\n")).toEqual(["fix.ts"]);
   });
 });
@@ -169,7 +194,7 @@ describe("excludedPathsInBranch", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", runStamp: "20261001-2305" }, noop);
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop);
   });
 
   it("returns excluded paths the agent committed itself", () => {
@@ -193,29 +218,29 @@ describe("excludedPathsInBranch", () => {
 });
 
 describe("createWorktree startFrom", () => {
-  const prBranch = "night/ENG-1-20260930-2300";
+  const prBranch = "adamfox/eng-1-fix";
   let env: ReturnType<typeof makeRepo>;
   let spec: WorktreeSpec;
   beforeEach(() => {
     env = makeRepo();
-    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", runStamp: "20261001-2305" };
+    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" };
   });
 
   const pushPrBranch = () => {
     run(env.repoPath, "checkout", "-q", "-b", prBranch);
     writeFileSync(join(env.repoPath, "prev.ts"), "export {};\n");
     run(env.repoPath, "add", "prev.ts");
-    run(env.repoPath, "commit", "-q", "-m", "previous night");
+    run(env.repoPath, "commit", "-q", "-m", "previous run");
     run(env.repoPath, "push", "-q", "origin", prBranch);
     run(env.repoPath, "checkout", "-q", "main");
   };
 
-  it("starts from the PR branch and counts only tonight's commits", () => {
+  it("starts from the PR branch, counts only new commits and avoids the local branch of the same name", () => {
     pushPrBranch();
     const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop);
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(true);
-    expect(wt).toMatchObject({ baseRef: `origin/${prBranch}`, baseBranch: "main", startedFromPr: true, branch: "night/ENG-1-20261001-2305" });
-    expect(commitWorktree(wt, "ENG-1", "nothing", noop)).toBe("no_changes");
+    expect(wt).toMatchObject({ baseRef: `origin/${prBranch}`, baseBranch: "main", startedFromPr: true, branch: `${prBranch}-2` });
+    expect(commitWorktree(wt, "nothing", noop)).toBe("no_changes");
   });
 
   it("falls back to origin/main when the PR branch is gone", () => {
@@ -255,7 +280,7 @@ describe("createWorktree startFrom", () => {
     pushPrBranch();
     const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop);
     writeFileSync(join(wt.wtPath, "tonight.ts"), "export {};\n");
-    expect(commitWorktree(wt, "ENG-1", "tonight", noop)).toBe("committed");
+    expect(commitWorktree(wt, "tonight", noop)).toBe("committed");
     pushBranch(wt.wtPath, wt.branch, prBranch);
     const origin = join(env.root, "origin.git");
     expect(run(origin, "rev-parse", prBranch)).toBe(run(wt.wtPath, "rev-parse", "HEAD"));
@@ -266,7 +291,7 @@ describe("createWorktree startFrom", () => {
     run(env.repoPath, "commit", "-q", "-m", "unrelated");
     run(env.repoPath, "push", "-q", "--force", "origin", `other:${prBranch}`);
     writeFileSync(join(wt.wtPath, "more.ts"), "export {};\n");
-    commitWorktree(wt, "ENG-1", "more", noop);
+    commitWorktree(wt, "more", noop);
     expect(() => pushBranch(wt.wtPath, wt.branch, prBranch)).toThrow();
   });
 });

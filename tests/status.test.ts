@@ -3,7 +3,7 @@ import type { AgentReport, ClaudeResult } from "../src/claude.js";
 import { deriveOutcome } from "../src/status.js";
 
 const report = (over: Partial<AgentReport> = {}): AgentReport => ({
-  status: "done", summary: "s", filesCreated: [], filesModified: [],
+  status: "done", title: "", summary: "s", filesCreated: [], filesModified: [],
   tests: [{ name: "t", file: "f", result: "pass" }], verifyCommands: [], notes: "", ...over,
 });
 const ok = (over: Partial<ClaudeResult> = {}): ClaudeResult => ({ success: true, rawOutput: "", report: report(), ...over });

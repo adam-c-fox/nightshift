@@ -14,6 +14,7 @@ export interface LinearTicket {
   description: string;
   state: string;
   url: string;
+  branchName: string;
 }
 
 export type TicketStatus = "done" | "partial" | "needs_review" | "skipped" | "error";
@@ -30,6 +31,7 @@ export interface TicketResult {
   ticket: Ticket;
   linear: LinearTicket | null;
   status: TicketStatus;
+  title?: string;
   summary: string;
   filesCreated: string[];
   filesModified: string[];

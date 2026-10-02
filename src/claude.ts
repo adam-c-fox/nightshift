@@ -26,7 +26,7 @@ function buildPrompt(ticketId: string, ticketName: string, context: string[], li
 }
 
 export interface AgentReport {
-  status: string; summary: string;
+  status: string; title: string; summary: string;
   filesCreated: string[]; filesModified: string[];
   tests: TestResult[]; verifyCommands: string[]; notes: string;
 }
@@ -113,6 +113,7 @@ export function parseReportBlock(output: string): AgentReport {
 
   return {
     status: VALID_STATUSES.includes(status) ? status : "needs_review",
+    title: scalar(groups.get("title")),
     summary: scalar(groups.get("summary")),
     filesCreated: listItems(groups.get("files_created")),
     filesModified: listItems(groups.get("files_modified")),
@@ -181,7 +182,7 @@ export async function runAgent(
     console.log(`  [dry-run] Would run: claude ${buildClaudeArgs("<AGENTS.md>").slice(0, -2).join(" ")} (in ${worktreePath})`);
     console.log(`  [dry-run] Prompt:\n${prompt.slice(0, 500)}...`);
     return { success: true, rawOutput: "", report: {
-      status: "done", summary: "dry run", filesCreated: [], filesModified: [],
+      status: "done", title: "", summary: "dry run", filesCreated: [], filesModified: [],
       tests: [], verifyCommands: [], notes: "dry run – no changes",
     }};
   }

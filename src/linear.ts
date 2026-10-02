@@ -11,6 +11,7 @@ interface IssueResponse {
     description: string | null;
     state: { name: string } | null;
     url: string;
+    branchName: string | null;
   } | null };
   errors?: { message: string }[];
 }
@@ -29,6 +30,7 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
         description
         state { name }
         url
+        branchName
       }
     }
   `;
@@ -65,5 +67,6 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
     description: issue.description ?? "",
     state: issue.state?.name ?? "unknown",
     url: issue.url,
+    branchName: issue.branchName ?? "",
   };
 }

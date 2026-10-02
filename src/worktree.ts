@@ -10,7 +10,7 @@ export interface WorktreeSpec {
   worktreesDir: string;
   ticketId: string;
   repo: RepoKind;
-  runStamp: string;
+  branchBase: string;
   startFrom?: { branch: string; baseBranch: string };
 }
 
@@ -33,8 +33,27 @@ function stderrOf(e: unknown): string {
   return err.stderr?.toString().trim() || err.message || String(e);
 }
 
-export function branchName(ticketId: string, runStamp: string): string {
-  return `night/${ticketId}-${runStamp}`;
+const FALLBACK_SLUG_MAX = 50;
+
+export function fallbackBranchName(ticketId: string, ticketName: string): string {
+  const slug = ticketName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, FALLBACK_SLUG_MAX)
+    .replace(/-+$/, "");
+  return slug === "" ? ticketId.toLowerCase() : `${ticketId.toLowerCase()}-${slug}`;
+}
+
+export function ticketBranchName(ticketId: string, ticketName: string, linearBranchName: string | null | undefined): string {
+  return linearBranchName?.trim() || fallbackBranchName(ticketId, ticketName);
+}
+
+export function chooseBranchName(base: string, exists: (name: string) => boolean): string {
+  if (!exists(base)) return base;
+  for (let n = 2; ; n++) {
+    if (!exists(`${base}-${n}`)) return `${base}-${n}`;
+  }
 }
 
 export function worktreePath(worktreesDir: string, repo: RepoKind, ticketId: string): string {
@@ -93,18 +112,18 @@ function isRegisteredWorktree(repoPath: string, wtPath: string): boolean {
     });
 }
 
-function salvageUncommittedWork(wtPath: string, log: Log): void {
+function salvageUncommittedWork(wtPath: string, ticketId: string, log: Log): void {
   if (git(["status", "--porcelain", ...PATHSPEC], wtPath).trim() === "") return;
   git(["add", "-A", ...PATHSPEC], wtPath);
-  git([...NO_HOOKS, "commit", "-m", "night: salvaged uncommitted work from interrupted run", ...PATHSPEC], wtPath);
+  git([...NO_HOOKS, "commit", "-m", `wip: salvage uncommitted work (${ticketId})`, ...PATHSPEC], wtPath);
   log(`  Salvaged uncommitted work from interrupted run in ${wtPath}`);
 }
 
-function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: string, log: Log): void {
+function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: string, ticketId: string, log: Log): void {
   git(["worktree", "prune"], repoPath);
   if (!existsSync(wtPath)) return;
   log(`Cleaning stale worktree: ${wtPath}`);
-  if (isRegisteredWorktree(repoPath, wtPath)) salvageUncommittedWork(wtPath, log);
+  if (isRegisteredWorktree(repoPath, wtPath)) salvageUncommittedWork(wtPath, ticketId, log);
   try {
     git(["worktree", "remove", "--force", wtPath], repoPath);
   } catch {
@@ -118,11 +137,10 @@ function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: str
 }
 
 export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
-  const { repoPath, worktreesDir, ticketId, repo, runStamp, startFrom } = spec;
-  const branch = branchName(ticketId, runStamp);
+  const { repoPath, worktreesDir, ticketId, repo, branchBase, startFrom } = spec;
   const wtPath = worktreePath(worktreesDir, repo, ticketId);
 
-  removeStaleWorktree(repoPath, worktreesDir, wtPath, log);
+  removeStaleWorktree(repoPath, worktreesDir, wtPath, ticketId, log);
 
   const freshBaseRef = resolveBaseRef(repoPath, log);
   const prRef = startFrom ? `origin/${startFrom.branch}` : null;
@@ -134,6 +152,8 @@ export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
   if (startFrom && fallbackCause) {
     log(`  PR branch ${startFrom.branch} no longer on origin; starting fresh from ${freshBaseRef} (${fallbackCause})`);
   }
+  const localExists = (name: string) => refExists(repoPath, `refs/heads/${name}`);
+  const branch = chooseBranchName(branchBase, startedFromPr ? localExists : name => localExists(name) || !branchMissingOnRemote(repoPath, name));
   const baseRef = startedFromPr ? prRef : freshBaseRef;
   const baseBranch = startedFromPr ? startFrom!.baseBranch : freshBaseRef.replace(/^origin\//, "");
   git(["worktree", "add", "-b", branch, wtPath, baseRef], repoPath);
@@ -160,11 +180,11 @@ function commitsAhead(wt: Worktree): number {
   return Number(git(["rev-list", "--count", `${wt.baseRef}..HEAD`], wt.wtPath).trim());
 }
 
-export function commitWorktree(wt: Worktree, ticketId: string, summary: string, log: Log): CommitOutcome {
+export function commitWorktree(wt: Worktree, subject: string, log: Log): CommitOutcome {
   const dirty = git(["status", "--porcelain", ...PATHSPEC], wt.wtPath).trim() !== "";
   if (dirty) {
     git(["add", "-A", ...PATHSPEC], wt.wtPath);
-    git([...NO_HOOKS, "commit", "-m", `night: ${ticketId} – ${summary.slice(0, 120)}`], wt.wtPath);
+    git([...NO_HOOKS, "commit", "-m", subject], wt.wtPath);
     log(`Committed: ${wt.branch}`);
     return "committed";
   }
@@ -172,7 +192,7 @@ export function commitWorktree(wt: Worktree, ticketId: string, summary: string, 
     log(`Agent already committed on ${wt.branch}`);
     return "agent_committed";
   }
-  log(`No changes to commit for ${ticketId}`);
+  log(`No changes to commit on ${wt.branch}`);
   return "no_changes";
 }
 
