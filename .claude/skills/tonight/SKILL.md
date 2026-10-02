@@ -6,13 +6,13 @@ disable-model-invocation: true
 
 Plan tonight's nightshift run with Adam: fetch his Linear Todo tickets, draft `tickets/tonight.md` together, and write it.
 
-The runner works tickets in file order, so order is priority. The file format is in the header comment of `tickets/tonight.md` and in `parseTickets` in `src/tickets.ts`.
+The runner works tickets in file order, so order is priority. `tickets/tonight.md` is gitignored. The file format is in the header comment of `tickets/tonight.example.md` and in `parseTickets` in `src/tickets.ts`.
 
 Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linear__get_issue` and `mcp__claude_ai_Linear__list_comments`. If their parameters are deferred, load them with ToolSearch first.
 
 ## Steps
 
-1. Read `tickets/tonight.md`. If `## <ID> – …` headings exist outside the HTML comment, show them and ask Adam: replace, append, or stop.
+1. Read `tickets/tonight.md`; if it doesn't exist, copy `tickets/tonight.example.md` to it and delete the example tickets. If `## <ID> – …` headings exist outside the HTML comment, show them and ask Adam: replace, append, or stop.
    Done when Adam has chosen, or the file has no tickets.
 
 2. Fetch candidates with `list_issues`, assignee `me`, state `Todo` only. If the Linear MCP is unavailable, run the same query through the `linear:linear-api` skill. If there are none, tell Adam and stop.
@@ -51,5 +51,5 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
    Done when the parsed output matches the approved draft.
 
 10. Finish with one line per ticket (ID, repo, "continues PR #N" or "new") and the reminder that `npm run run:dry` previews the night.
-    Leave `tickets/tonight.md` uncommitted for Adam to commit, and leave the night run and Linear tickets as they are.
+    Leave the night run and Linear tickets as they are.
     Done when the summary is shown.
