@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { budgetUsedPct, closedBudget, openNightBudget, parseUsageOutput, withCurrentUsage } from "../src/budget.js";
+import {
+  budgetUsedPct, closedBudget, formatUsageAttempts, openNightBudget, parseUsageOutput, snapshotUsage,
+  UsageUnavailableError, withCurrentUsage, type UsageCommandResult,
+} from "../src/budget.js";
 
 const usageOutput = `Ignoring 6 permissions.allow entries from .claude/settings.json
 You are currently using your subscription to power your Claude Code usage
@@ -64,6 +67,64 @@ describe("night budget gate", () => {
 
 describe("closedBudget", () => {
   it("is a gate-hit budget that explains why", () => {
-    expect(closedBudget("claude not on PATH")).toMatchObject({ gateHit: true, resetInfo: "claude not on PATH", capPct: 0 });
+    expect(closedBudget("claude not on PATH")).toMatchObject({ gateHit: true, unavailable: true, resetInfo: "claude not on PATH", capPct: 0 });
+  });
+});
+
+describe("snapshotUsage", () => {
+  const good: UsageCommandResult = { stdout: usageOutput, stderr: "", status: 0 };
+  const garbled: UsageCommandResult = { stdout: "Not logged in · Please run /login", stderr: "auth warning", status: 0 };
+  const sequence = (...results: UsageCommandResult[]) => {
+    let i = 0;
+    return () => results[i++];
+  };
+
+  it("reads usage on the first attempt without pausing", () => {
+    const pauses: number[] = [];
+    expect(snapshotUsage(3, sequence(good), ms => pauses.push(ms)).weeklyPercent).toBe(1);
+    expect(pauses).toEqual([]);
+  });
+
+  it("retries after a failed read and pauses between attempts", () => {
+    const pauses: number[] = [];
+    expect(snapshotUsage(3, sequence(garbled, good), ms => pauses.push(ms)).weeklyPercent).toBe(1);
+    expect(pauses).toHaveLength(1);
+  });
+
+  it("treats a non-zero exit as a failed read even if stdout parses", () => {
+    const crashed: UsageCommandResult = { ...good, status: 1 };
+    expect(() => snapshotUsage(1, sequence(crashed), () => {})).toThrow(/exited with status 1/);
+  });
+
+  it("keeps every attempt's raw output when all attempts fail", () => {
+    const spawnFailure: UsageCommandResult = { stdout: "", stderr: "", status: null, error: "spawnSync claude ETIMEDOUT" };
+    let caught: unknown;
+    try {
+      snapshotUsage(2, sequence(garbled, spawnFailure), () => {});
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(UsageUnavailableError);
+    const err = caught as UsageUnavailableError;
+    expect(err.message).toMatch(/ETIMEDOUT/);
+    expect(err.message).toMatch(/2 attempts/);
+    expect(err.attempts).toEqual([garbled, spawnFailure]);
+  });
+});
+
+describe("formatUsageAttempts", () => {
+  it("shows each attempt's exit, stdout and stderr", () => {
+    const lines = formatUsageAttempts([
+      { stdout: "Not logged in", stderr: "auth warning", status: 0 },
+      { stdout: "", stderr: "", status: null, error: "ETIMEDOUT" },
+    ]);
+    expect(lines.join("\n")).toBe([
+      "Attempt 1: exit 0",
+      "  stdout: Not logged in",
+      "  stderr: auth warning",
+      "Attempt 2: exit null, ETIMEDOUT",
+      "  stdout: (empty)",
+      "  stderr: (empty)",
+    ].join("\n"));
   });
 });

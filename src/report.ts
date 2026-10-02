@@ -82,7 +82,7 @@ function ticketCardHTML(t: TicketResult): string {
   </div>`;
 }
 
-function generateHTML(session: SessionResult): string {
+export function generateHTML(session: SessionResult): string {
   const completed = session.tickets.filter(t => t.status === "done").length;
   const partial = session.tickets.filter(t => t.status === "partial").length;
   const review = session.tickets.filter(t => t.status === "needs_review").length;
@@ -94,7 +94,13 @@ function generateHTML(session: SessionResult): string {
   const startWidth = Math.min(Math.max(0, b.startPct), 100);
   const capLeft = Math.min(b.capPct, 100);
 
-  const budgetBar = `
+  const gateBanner = session.gateHit ? `<div class="gate-hit">⛔ ${esc(session.skipReason)}</div>` : "";
+  const budgetBar = b.unavailable
+    ? `
+    <div class="budget">
+      ${gateBanner}
+    </div>`
+    : `
     <div class="budget">
       <div class="budget-label">Tonight's allocation: <strong>${b.allocationPct}%</strong> of weekly
         ${b.resetInfo ? `<span class="budget-reset">resets ${esc(b.resetInfo)}</span>` : ""}
@@ -109,7 +115,7 @@ function generateHTML(session: SessionResult): string {
         <span>Ended at <strong>${b.currentPct}%</strong> (used ${used}% of ${b.allocationPct}%)</span>
         <span>Cap <strong>${b.capPct}%</strong></span>
       </div>
-      ${session.gateHit ? `<div class="gate-hit">⛔ Budget allocation reached – remaining tickets were skipped</div>` : ""}
+      ${gateBanner}
     </div>`;
 
   const ticketsHTML = session.noTasks

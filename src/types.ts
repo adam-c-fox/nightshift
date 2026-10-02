@@ -50,6 +50,7 @@ export interface NightBudget {
   currentPct: number;
   allocationPct: number;
   gateHit: boolean;
+  unavailable: boolean;
   resetInfo: string;
 }
 
@@ -60,5 +61,6 @@ export interface SessionResult {
   tickets: TicketResult[];
   budget: NightBudget;
   gateHit: boolean;
+  skipReason: string;
   noTasks: boolean;
 }

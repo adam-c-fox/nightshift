@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, LinearTicket, NightBudget } from "./types.js";
 import { loadTickets } from "./tickets.js";
 import { REPOS } from "./repos.js";
-import { startNightBudget, closedBudget, checkGate, budgetGateMessage } from "./budget.js";
+import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, UsageUnavailableError } from "./budget.js";
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { agentEnv, buildAgentSettings } from "./agent-env.js";
@@ -28,6 +28,11 @@ function log(msg: string) {
     const today = localDate();
     appendFileSync(path.join(LOGS_DIR, `nightshift-${today}.log`), line + "\n");
   } catch { /* best effort */ }
+}
+
+function logUsageFailure(e: unknown, prefix = "") {
+  if (!(e instanceof UsageUnavailableError)) return;
+  for (const line of formatUsageAttempts(e.attempts)) log(`${prefix}${line}`);
 }
 
 function errorMessage(e: unknown): string {
@@ -143,9 +148,10 @@ async function processTicket(ticket: Ticket, dryRun: boolean, stamp: string, bud
 
   const shouldAbort = () => {
     try {
-      budgetRef.current = checkGate(budgetRef.current);
+      budgetRef.current = checkGate(budgetRef.current, 1);
     } catch (e) {
       log(`  Mid-ticket usage check failed: ${(e as Error).message}`);
+      logUsageFailure(e, "    ");
       return undefined;
     }
     return budgetRef.current.gateHit
@@ -251,6 +257,7 @@ async function main() {
     gateHit = true;
     skipReason = `Skipped – could not read usage at start: ${message}`;
     log(skipReason);
+    logUsageFailure(e, "  ");
   }
   const budgetRef = { current: budget };
   const closedAtStart = gateHit;
@@ -278,6 +285,7 @@ async function main() {
         gateHit = true;
         skipReason = `Skipped – could not read usage: ${(e as Error).message}`;
         log(`  ${skipReason}`);
+        logUsageFailure(e, "    ");
       }
     }
 
@@ -300,6 +308,7 @@ async function main() {
     if (!closedAtStart) budgetRef.current = checkGate(budgetRef.current);
   } catch (e) {
     log(`Final usage check failed: ${(e as Error).message}`);
+    logUsageFailure(e, "  ");
   }
   const endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
 
@@ -310,6 +319,7 @@ async function main() {
     tickets: results,
     budget: budgetRef.current,
     gateHit,
+    skipReason,
     noTasks: tickets.length === 0 && !ticketError,
   };
 

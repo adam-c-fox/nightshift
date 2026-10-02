@@ -1,8 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import type { NightBudget } from "./types.js";
 
 const ALLOCATION_PERCENT = 15;
+const USAGE_ATTEMPTS = 3;
+const USAGE_RETRY_DELAY_MS = 15_000;
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 export interface UsageSnapshot {
@@ -24,14 +26,66 @@ export function parseUsageOutput(output: string): UsageSnapshot {
   };
 }
 
-export function snapshotUsage(): UsageSnapshot {
-  const output = execFileSync("claude", ["-p", "/usage"], {
+export interface UsageCommandResult {
+  stdout: string;
+  stderr: string;
+  status: number | null;
+  error?: string;
+}
+
+export class UsageUnavailableError extends Error {
+  constructor(message: string, readonly attempts: UsageCommandResult[]) {
+    super(message);
+  }
+}
+
+function runUsageCommand(): UsageCommandResult {
+  const result = spawnSync("claude", ["-p", "/usage"], {
     encoding: "utf-8",
     cwd: ROOT,
     timeout: 60_000,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  return parseUsageOutput(output);
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status, error: result.error?.message };
+}
+
+function sleepSync(ms: number) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function parseUsageResult(result: UsageCommandResult): UsageSnapshot {
+  if (result.error) throw new Error(result.error);
+  if (result.status !== 0) throw new Error(`\`claude -p /usage\` exited with status ${result.status}`);
+  return parseUsageOutput(result.stdout);
+}
+
+export function snapshotUsage(
+  attempts = USAGE_ATTEMPTS,
+  run: () => UsageCommandResult = runUsageCommand,
+  pause: (ms: number) => void = sleepSync,
+): UsageSnapshot {
+  const results: UsageCommandResult[] = [];
+  let lastMessage = "";
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) pause(USAGE_RETRY_DELAY_MS);
+    const result = run();
+    results.push(result);
+    try {
+      return parseUsageResult(result);
+    } catch (e) {
+      lastMessage = (e as Error).message;
+    }
+  }
+  throw new UsageUnavailableError(`${lastMessage} (${attempts} attempt${attempts === 1 ? "" : "s"})`, results);
+}
+
+export function formatUsageAttempts(attempts: UsageCommandResult[]): string[] {
+  const stream = (name: string, text: string) => `  ${name}: ${text.trim() || "(empty)"}`;
+  return attempts.flatMap((a, i) => [
+    `Attempt ${i + 1}: exit ${a.status}${a.error ? `, ${a.error}` : ""}`,
+    stream("stdout", a.stdout),
+    stream("stderr", a.stderr),
+  ]);
 }
 
 export function openNightBudget(snapshot: UsageSnapshot, allocationPct = ALLOCATION_PERCENT): NightBudget {
@@ -41,12 +95,13 @@ export function openNightBudget(snapshot: UsageSnapshot, allocationPct = ALLOCAT
     currentPct: snapshot.weeklyPercent,
     allocationPct,
     gateHit: false,
+    unavailable: false,
     resetInfo: snapshot.resetInfo,
   };
 }
 
 export function closedBudget(reason: string): NightBudget {
-  return { ...openNightBudget({ weeklyPercent: 0, resetInfo: reason }, 0), gateHit: true };
+  return { ...openNightBudget({ weeklyPercent: 0, resetInfo: reason }, 0), gateHit: true, unavailable: true };
 }
 
 export function withCurrentUsage(budget: NightBudget, snapshot: UsageSnapshot): NightBudget {
@@ -70,8 +125,8 @@ export function startNightBudget(): NightBudget {
   return openNightBudget(snapshotUsage());
 }
 
-export function checkGate(budget: NightBudget): NightBudget {
-  return withCurrentUsage(budget, snapshotUsage());
+export function checkGate(budget: NightBudget, attempts = USAGE_ATTEMPTS): NightBudget {
+  return withCurrentUsage(budget, snapshotUsage(attempts));
 }
 
 export function budgetUsedPct(budget: NightBudget): number {
