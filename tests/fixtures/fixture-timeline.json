@@ -1,0 +1,190 @@
+{
+  "records": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "parentId": "00000000-0000-4000-8000-000000000011",
+      "type": "Job",
+      "name": "Job",
+      "result": "failed",
+      "state": "completed",
+      "log": {
+        "id": 12
+      },
+      "issues": [
+        {
+          "category": null,
+          "message": "Hosted runner image update available.",
+          "type": "warning"
+        }
+      ],
+      "order": 1
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "parentId": "00000000-0000-4000-8000-000000000001",
+      "type": "Task",
+      "name": "Use Node 22",
+      "result": "succeeded",
+      "state": "completed",
+      "log": {
+        "id": 6
+      },
+      "issues": null,
+      "order": 3
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "parentId": "00000000-0000-4000-8000-000000000001",
+      "type": "Task",
+      "name": "npm ci",
+      "result": "succeeded",
+      "state": "completed",
+      "log": {
+        "id": 7
+      },
+      "issues": null,
+      "order": 4
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "parentId": "00000000-0000-4000-8000-000000000001",
+      "type": "Task",
+      "name": "Initialize job",
+      "result": "succeeded",
+      "state": "completed",
+      "log": {
+        "id": 4
+      },
+      "issues": [
+        {
+          "category": null,
+          "data": {
+            "logFileLineNumber": "30"
+          },
+          "message": "Task 'Node.js tool installer' version 0 (NodeTool@0) is deprecated.",
+          "type": "warning"
+        },
+        {
+          "category": null,
+          "data": {
+            "logFileLineNumber": "31"
+          },
+          "message": "This task is deprecated and will no longer receive updates. Please use UseNodeV1 as a replacement.",
+          "type": "warning"
+        }
+      ],
+      "order": 1
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "parentId": "00000000-0000-4000-8000-000000000001",
+      "type": "Task",
+      "name": "Post-job: Checkout example-app@refs/pull/1/merge to s",
+      "result": "succeeded",
+      "state": "completed",
+      "log": {
+        "id": 10
+      },
+      "issues": null,
+      "order": 7
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "parentId": "00000000-0000-4000-8000-000000000001",
+      "type": "Task",
+      "name": "prettier --check",
+      "result": "failed",
+      "state": "completed",
+      "log": {
+        "id": 9
+      },
+      "issues": [
+        {
+          "category": "General",
+          "data": {
+            "logFileLineNumber": "23",
+            "source": "TaskInternal",
+            "type": "error"
+          },
+          "message": "Bash exited with code '1'.",
+          "type": "error"
+        }
+      ],
+      "order": 6
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000007",
+      "parentId": "00000000-0000-4000-8000-000000000001",
+      "type": "Task",
+      "name": "eslint",
+      "result": "succeeded",
+      "state": "completed",
+      "log": {
+        "id": 8
+      },
+      "issues": null,
+      "order": 5
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000008",
+      "parentId": null,
+      "type": "Stage",
+      "name": "__default",
+      "result": "failed",
+      "state": "completed",
+      "log": null,
+      "issues": null,
+      "order": 1
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000009",
+      "parentId": "00000000-0000-4000-8000-000000000001",
+      "type": "Task",
+      "name": "Finalize Job",
+      "result": "succeeded",
+      "state": "completed",
+      "log": {
+        "id": 11
+      },
+      "issues": null,
+      "order": 8
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000010",
+      "parentId": "00000000-0000-4000-8000-000000000008",
+      "type": "Checkpoint",
+      "name": "Checkpoint",
+      "result": "succeeded",
+      "state": "completed",
+      "log": null,
+      "issues": null,
+      "order": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000011",
+      "parentId": "00000000-0000-4000-8000-000000000008",
+      "type": "Phase",
+      "name": "Job",
+      "result": "failed",
+      "state": "completed",
+      "log": {
+        "id": 3
+      },
+      "issues": null,
+      "order": 1
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000012",
+      "parentId": "00000000-0000-4000-8000-000000000001",
+      "type": "Task",
+      "name": "Checkout example-app@refs/pull/1/merge to s",
+      "result": "succeeded",
+      "state": "completed",
+      "log": {
+        "id": 5
+      },
+      "issues": null,
+      "order": 2
+    }
+  ]
+}

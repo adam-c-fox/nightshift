@@ -7,9 +7,11 @@ import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsa
 import { fetchTicket } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
-import { getEnv } from "./env.js";
+import { getEnv, requireEnv } from "./env.js";
 import { deriveOutcome } from "./status.js";
-import { createAndCheckPR, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
+import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
+import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
+import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { writeReport } from "./report.js";
 import { localDate, TIME_ZONE } from "./time.js";
 import { createWorktree, fallbackBranchName, ticketBranchName, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
@@ -60,16 +62,13 @@ function applyPipelineStatus(result: TicketResult, pr: PRResult): void {
   result.pipelineStatus = pr.pipelineStatus;
   log(`  PR #${pr.prId}: ${pr.url} (pipelines: ${pr.pipelineStatus})`);
 
-  if (pr.pipelineStatus === "failed") {
-    result.status = "needs_review";
-    result.notes = [result.notes, "CI pipeline failed on PR."].filter(Boolean).join(" | ");
-  } else if (pr.pipelineStatus === "unknown") {
+  if (pr.pipelineStatus === "unknown") {
     result.status = "needs_review";
     result.notes = [result.notes, "CI status unknown after waiting (timed out or no policies)."].filter(Boolean).join(" | ");
   }
 }
 
-async function openPullRequest(result: TicketResult, baseBranch: string): Promise<void> {
+async function openPullRequest(result: TicketResult, baseBranch: string): Promise<PRResult> {
   const { ticket, branch, worktreePath } = result;
   log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
   const pr = await createAndCheckPR(
@@ -80,9 +79,10 @@ async function openPullRequest(result: TicketResult, baseBranch: string): Promis
     branch, baseBranch, worktreePath, { log },
   );
   applyPipelineStatus(result, pr);
+  return pr;
 }
 
-async function updatePullRequest(result: TicketResult, existing: ExistingPr): Promise<void> {
+async function updatePullRequest(result: TicketResult, existing: ExistingPr): Promise<PRResult> {
   const { branch, worktreePath } = result;
   log(`  Pushing ${branch} to existing PR #${existing.prId} branch ${existing.sourceBranch}`);
   let pr: PRResult;
@@ -95,6 +95,25 @@ async function updatePullRequest(result: TicketResult, existing: ExistingPr): Pr
   result.branch = existing.sourceBranch;
   result.notes = [result.notes, `Updated existing PR #${existing.prId}.`].filter(Boolean).join(" | ");
   applyPipelineStatus(result, pr);
+  return pr;
+}
+
+function settleCi(result: TicketResult, fix: CiFixOutcome): void {
+  const { pr, attempts, stopped, agentStatus } = fix;
+  applyPipelineStatus(result, pr);
+  result.notes = [result.notes, ...fix.notes].filter(Boolean).join(" | ");
+  const attemptsNote = `${attempts} CI fix attempt(s)`;
+  if (pr.pipelineStatus === "failed") {
+    const names = pr.failedChecks.map(c => c.name).join(", ");
+    const why = stopped === "exhausted" ? "" : `; stopped: ${stopped}`;
+    result.status = "needs_review";
+    result.notes = [result.notes, `Required checks still failing on PR #${pr.prId}: ${names} after ${attemptsNote}${why}.`].filter(Boolean).join(" | ");
+  } else if (pr.pipelineStatus === "succeeded" && attempts > 0) {
+    if (agentStatus === "needs_review") result.status = "needs_review";
+    result.notes = [result.notes, `Required checks passed after ${attemptsNote}.`].filter(Boolean).join(" | ");
+  } else if (attempts > 0) {
+    result.notes = [result.notes, `After ${attemptsNote}: CI status unknown.`].filter(Boolean).join(" | ");
+  }
 }
 
 function holdForAutoComplete(result: TicketResult, existing: ExistingPr): void {
@@ -168,10 +187,10 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
       ? `budget cap reached mid-ticket (${budgetRef.current.currentPct}% ≥ ${budgetRef.current.capPct}%)`
       : undefined;
   };
+  const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(repo, ROOT) };
   const result = await runAgent(
     wt.wtPath, ticketId, ticketName, agentContext,
-    linearDesc, linearUrl, linearState, dryRun,
-    { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(repo, ROOT) },
+    linearDesc, linearUrl, linearState, dryRun, agentOptions,
   );
 
   const report = result.report;
@@ -227,9 +246,36 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
         ticketResult.notes = [ticketResult.notes, `Branch contains excluded files (${listed}); not pushed.`].filter(Boolean).join(" | ");
       } else if (commit !== "no_changes" && outcome.publish) {
         const action = prAction(existing, wt.startedFromPr);
-        if (action === "update") await updatePullRequest(ticketResult, existing!);
-        else if (action === "hold") holdForAutoComplete(ticketResult, existing!);
-        else await openPullRequest(ticketResult, wt.baseBranch);
+        let pr: PRResult | undefined;
+        let pushedTo: ExistingPr | undefined;
+        if (action === "update") {
+          pushedTo = existing!;
+          pr = await updatePullRequest(ticketResult, pushedTo);
+        } else if (action === "hold") {
+          holdForAutoComplete(ticketResult, existing!);
+        } else {
+          pr = await openPullRequest(ticketResult, wt.baseBranch);
+          pushedTo = { prId: pr.prId, sourceBranch: wt.branch, targetBranch: wt.baseBranch, autoComplete: false };
+        }
+        if (pr?.pipelineStatus === "failed" && pushedTo) {
+          const target = pushedTo;
+          const logSource = azCiSource(orgUrl(requireEnv("AZURE_DEVOPS_ORG")), requireEnv("AZURE_DEVOPS_PROJECT"));
+          const fix = await fixFailingChecks(pr, { ticketId, title: ticketResult.title ?? "" }, {
+            runAgent: context => runAgent(
+              wt.wtPath, ticketId, ticketName, context, linearDesc, linearUrl, linearState, false, agentOptions,
+            ),
+            commit: subject => {
+              const outcome = commitWorktree(wt, subject, log);
+              if (outcome !== "no_changes" && excludedPathsInBranch(wt).length > 0) throw new Error("CI fix touched excluded files; not pushing.");
+              return outcome;
+            },
+            publish: () => updateAndCheckPR(target, wt.branch, wt.wtPath, { log }),
+            fetchLogs: checks => fetchCiFailures(checks, logSource),
+            gateOpen: () => shouldAbort() === undefined,
+            log,
+          });
+          settleCi(ticketResult, fix);
+        }
       } else if (commit !== "no_changes") {
         log(`  Not publishing ${wt.branch}: ${outcome.notes.join(" ")}`);
       }

@@ -1,0 +1,29 @@
+{
+  "count": 24,
+  "value": [
+    "2026-01-01T00:00:00.0000000Z ##[section]Starting: prettier --check",
+    "2026-01-01T00:00:01.0000000Z ==============================================================================",
+    "2026-01-01T00:00:02.0000000Z Task         : Command line",
+    "2026-01-01T00:00:03.0000000Z Description  : Run a command line script using Bash on Linux and macOS and cmd.exe on Windows",
+    "2026-01-01T00:00:04.0000000Z Version      : 2.0.0",
+    "2026-01-01T00:00:05.0000000Z Author       : Microsoft Corporation",
+    "2026-01-01T00:00:06.0000000Z Help         : https://docs.microsoft.com/azure/devops/pipelines/tasks/utility/command-line",
+    "2026-01-01T00:00:07.0000000Z ==============================================================================",
+    "2026-01-01T00:00:08.0000000Z [Host] Selected Node version: Node22 (Strategy: Node22Strategy)",
+    "2026-01-01T00:00:09.0000000Z Generating script.",
+    "2026-01-01T00:00:10.0000000Z Script contents:",
+    "2026-01-01T00:00:11.0000000Z npm run format",
+    "2026-01-01T00:00:12.0000000Z ========================== Starting Command Output ===========================",
+    "2026-01-01T00:00:13.0000000Z [command]/usr/bin/bash --noprofile --norc /home/vsts/work/_temp/00000000-0000-4000-8000-000000000001.sh",
+    "2026-01-01T00:00:14.0000000Z ",
+    "2026-01-01T00:00:15.0000000Z > format",
+    "2026-01-01T00:00:16.0000000Z > prettier --check .",
+    "2026-01-01T00:00:17.0000000Z ",
+    "2026-01-01T00:00:18.0000000Z Checking formatting...",
+    "2026-01-01T00:00:19.0000000Z [warn] services/export/src/export.ts",
+    "2026-01-01T00:00:20.0000000Z [warn] Code style issues found in the above file. Run Prettier with --write to fix.",
+    "2026-01-01T00:00:21.0000000Z ",
+    "2026-01-01T00:00:22.0000000Z ##[error]Bash exited with code '1'.",
+    "2026-01-01T00:00:23.0000000Z ##[section]Finishing: prettier --check"
+  ]
+}

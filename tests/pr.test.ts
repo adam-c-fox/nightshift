@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildPrDescription, buildPrTitle, buildPrWebUrl, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrDescription, buildPrTitle, buildPrWebUrl, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -18,9 +19,46 @@ describe("summarizePolicies", () => {
     expect(summarizePolicies([policy("broken")])).toBe("failed");
   });
 
+  it("stays pending while any required check is unfinished, even after a rejection", () => {
+    expect(summarizePolicies([policy("rejected"), policy("running")])).toBe("pending");
+    expect(summarizePolicies([policy("broken"), policy("queued", "Status")])).toBe("pending");
+  });
+
   it("ignores reviewer, non-blocking and not-applicable policies", () => {
     expect(summarizePolicies([policy("queued", "Minimum number of reviewers"), policy("rejected", "Build", false)])).toBe("none");
     expect(summarizePolicies([policy("approved"), policy("notApplicable")])).toBe("succeeded");
+  });
+});
+
+describe("failedChecks", () => {
+  const named = (status: string, displayName: string | undefined, buildId?: number, type = "Build"): PolicyEvaluation => ({
+    status,
+    context: buildId === undefined ? undefined : { buildId },
+    configuration: { isEnabled: true, isBlocking: true, type: { displayName: type }, settings: displayName ? { displayName } : undefined },
+  });
+
+  it("names the rejected and broken required checks with their build ids", () => {
+    expect(failedChecks([named("rejected", "lint-format", 1), named("approved", "typecheck", 2), named("broken", "unit-tests", 3)]))
+      .toEqual([{ name: "lint-format", buildId: 1 }, { name: "unit-tests", buildId: 3 }]);
+  });
+
+  it("falls back to the policy type name", () => {
+    expect(failedChecks([named("rejected", undefined, 9, "Status")])).toEqual([{ name: "Status", buildId: 9 }]);
+  });
+
+  it("omits the build id when the evaluation has none", () => {
+    expect(failedChecks([named("rejected", "lint-format")])).toEqual([{ name: "lint-format", buildId: undefined }]);
+  });
+
+  it("reads the real Azure DevOps policy list", () => {
+    const evaluations = JSON.parse(readFileSync(new URL("./fixtures/fixture-policies.json", import.meta.url), "utf-8"));
+    expect(summarizePolicies(evaluations)).toBe("failed");
+    expect(failedChecks(evaluations)).toEqual([{ name: "lint-format", buildId: 101 }]);
+  });
+
+  it("is not affected by non-blocking rejections", () => {
+    const optional = { ...named("rejected", "optional", 5), configuration: { isEnabled: true, isBlocking: false, type: { displayName: "Build" } } };
+    expect(failedChecks([optional])).toEqual([]);
   });
 });
 
@@ -107,20 +145,20 @@ describe("waitForPolicies", () => {
       if (calls < 3) throw new Error("az hiccup");
       return [policy("approved")];
     };
-    await expect(waitForPolicies(fetchEvaluations, fast)).resolves.toBe("succeeded");
+    await expect(waitForPolicies(fetchEvaluations, fast)).resolves.toMatchObject({ status: "succeeded" });
   });
 
   it("gives up as unknown after repeated errors and logs them", async () => {
     const logged: string[] = [];
     const fetchEvaluations = () => { throw new Error("unrecognized arguments: --project"); };
-    const verdict = await waitForPolicies(fetchEvaluations, { ...fast, maxConsecutiveErrors: 3, log: m => logged.push(m) });
+    const { status: verdict } = await waitForPolicies(fetchEvaluations, { ...fast, maxConsecutiveErrors: 3, log: m => logged.push(m) });
     expect(verdict).toBe("unknown");
     expect(logged.join("\n")).toMatch(/unrecognized arguments/);
     expect(logged.length).toBeLessThanOrEqual(4);
   });
 
   it("reports failure as soon as a blocking policy is rejected", async () => {
-    await expect(waitForPolicies(() => [policy("rejected")], fast)).resolves.toBe("failed");
+    await expect(waitForPolicies(() => [policy("rejected")], fast)).resolves.toMatchObject({ status: "failed" });
   });
 });
 
@@ -133,7 +171,7 @@ describe("waitForPolicies with requireFreshEvaluation", () => {
 
   it("ignores a stale rejected verdict and waits for the verdict after a pending poll", async () => {
     const fetch = sequence([policy("rejected")], [policy("rejected")], [policy("running")], [policy("approved")]);
-    await expect(waitForPolicies(fetch, opts)).resolves.toBe("succeeded");
+    await expect(waitForPolicies(fetch, opts)).resolves.toMatchObject({ status: "succeeded" });
   });
 
   it("does not count a failed poll as evidence that the evaluation is fresh", async () => {
@@ -146,20 +184,20 @@ describe("waitForPolicies with requireFreshEvaluation", () => {
       if (step instanceof Error) throw step;
       return step;
     };
-    await expect(waitForPolicies(fetch, opts)).resolves.toBe("succeeded");
+    await expect(waitForPolicies(fetch, opts)).resolves.toMatchObject({ status: "succeeded" });
   });
 
   it("does not trust a stale approved verdict either", async () => {
     const fetch = sequence([policy("approved")], [policy("queued")], [policy("rejected")]);
-    await expect(waitForPolicies(fetch, opts)).resolves.toBe("failed");
+    await expect(waitForPolicies(fetch, opts)).resolves.toMatchObject({ status: "failed" });
   });
 
   it("accepts a terminal verdict once the freshness grace has passed", async () => {
-    await expect(waitForPolicies(() => [policy("rejected")], { ...opts, freshnessGraceMs: 0 })).resolves.toBe("failed");
+    await expect(waitForPolicies(() => [policy("rejected")], { ...opts, freshnessGraceMs: 0 })).resolves.toMatchObject({ status: "failed" });
   });
 
   it("times out as unknown when only stale terminal verdicts are ever seen", async () => {
-    await expect(waitForPolicies(() => [policy("rejected")], { ...opts, timeoutMs: 30 })).resolves.toBe("unknown");
+    await expect(waitForPolicies(() => [policy("rejected")], { ...opts, timeoutMs: 30 })).resolves.toMatchObject({ status: "unknown" });
   });
 });
 

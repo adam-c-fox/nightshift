@@ -1,0 +1,50 @@
+[
+  {
+    "status": "rejected",
+    "context": {
+      "buildId": 101
+    },
+    "configuration": {
+      "isEnabled": true,
+      "isBlocking": true,
+      "type": {
+        "displayName": "Build"
+      },
+      "settings": {
+        "displayName": "lint-format"
+      }
+    }
+  },
+  {
+    "status": "approved",
+    "context": {
+      "buildId": 102
+    },
+    "configuration": {
+      "isEnabled": true,
+      "isBlocking": true,
+      "type": {
+        "displayName": "Build"
+      },
+      "settings": {
+        "displayName": "typecheck"
+      }
+    }
+  },
+  {
+    "status": "approved",
+    "context": {
+      "buildId": 103
+    },
+    "configuration": {
+      "isEnabled": true,
+      "isBlocking": true,
+      "type": {
+        "displayName": "Build"
+      },
+      "settings": {
+        "displayName": "unit-tests"
+      }
+    }
+  }
+]

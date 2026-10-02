@@ -9,26 +9,39 @@ const FRESHNESS_GRACE_MS = 60_000;
 const AZ_TIMEOUT_MS = 60_000;
 const CI_POLICY_TYPES = ["build", "status"];
 
+export interface FailedCheck {
+  name: string;
+  buildId: number | undefined;
+}
+
 export interface PRResult {
   prId: number;
   url: string;
   pipelineStatus: PipelineStatus;
+  failedChecks: FailedCheck[];
   durationSec: number;
+}
+
+export interface PolicyWaitResult {
+  status: PipelineStatus;
+  failedChecks: FailedCheck[];
 }
 
 export interface PolicyEvaluation {
   status: string;
+  context?: { buildId?: number };
   configuration?: {
     isEnabled?: boolean;
     isBlocking?: boolean;
     type?: { displayName?: string };
+    settings?: { displayName?: string };
   };
 }
 
 export type PolicyVerdict = PipelineStatus | "pending" | "none";
 
-export function summarizePolicies(evaluations: PolicyEvaluation[]): PolicyVerdict {
-  const required = evaluations.filter(e => {
+function requiredChecks(evaluations: PolicyEvaluation[]): PolicyEvaluation[] {
+  return evaluations.filter(e => {
     const config = e.configuration;
     const type = config?.type?.displayName?.toLowerCase() ?? "";
     return config?.isEnabled !== false
@@ -36,12 +49,25 @@ export function summarizePolicies(evaluations: PolicyEvaluation[]): PolicyVerdic
       && CI_POLICY_TYPES.includes(type)
       && e.status.toLowerCase() !== "notapplicable";
   });
-  if (required.length === 0) return "none";
+}
 
-  const statuses = required.map(e => e.status.toLowerCase());
-  if (statuses.some(s => s === "rejected" || s === "broken")) return "failed";
-  if (statuses.every(s => s === "approved")) return "succeeded";
-  return "pending";
+const FAILED_STATUSES = ["rejected", "broken"];
+const TERMINAL_STATUSES = ["approved", ...FAILED_STATUSES];
+
+export function summarizePolicies(evaluations: PolicyEvaluation[]): PolicyVerdict {
+  const statuses = requiredChecks(evaluations).map(e => e.status.toLowerCase());
+  if (statuses.length === 0) return "none";
+  if (!statuses.every(s => TERMINAL_STATUSES.includes(s))) return "pending";
+  return statuses.some(s => FAILED_STATUSES.includes(s)) ? "failed" : "succeeded";
+}
+
+export function failedChecks(evaluations: PolicyEvaluation[]): FailedCheck[] {
+  return requiredChecks(evaluations)
+    .filter(e => FAILED_STATUSES.includes(e.status.toLowerCase()))
+    .map(e => ({
+      name: e.configuration?.settings?.displayName || e.configuration?.type?.displayName || "unnamed check",
+      buildId: e.context?.buildId,
+    }));
 }
 
 export function orgUrl(org: string): string {
@@ -82,7 +108,7 @@ function azEnv(): NodeJS.ProcessEnv {
   return pat ? { ...process.env, AZURE_DEVOPS_EXT_PAT: pat } : process.env;
 }
 
-function az(args: string[], cwd?: string): unknown {
+export function az(args: string[], cwd?: string): unknown {
   const out = execFileSync("az", [...args, "--output", "json"], {
     encoding: "utf-8",
     cwd,
@@ -172,7 +198,7 @@ export async function waitForPolicies(
     freshnessGraceMs?: number;
     log?: (msg: string) => void;
   },
-): Promise<PipelineStatus> {
+): Promise<PolicyWaitResult> {
   const grace = opts.noPolicyGraceMs ?? NO_POLICY_GRACE_MS;
   const maxErrors = opts.maxConsecutiveErrors ?? MAX_CONSECUTIVE_POLICY_ERRORS;
   const log = opts.log ?? (() => {});
@@ -180,23 +206,26 @@ export async function waitForPolicies(
   const freshnessGrace = opts.freshnessGraceMs ?? FRESHNESS_GRACE_MS;
   let consecutiveErrors = 0;
   let sawPending = false;
+  let failed: FailedCheck[] = [];
   while (Date.now() - start < opts.timeoutMs) {
     let verdict: PolicyVerdict = "pending";
     try {
-      verdict = summarizePolicies(fetchEvaluations());
+      const evaluations = fetchEvaluations();
+      verdict = summarizePolicies(evaluations);
+      failed = failedChecks(evaluations);
       consecutiveErrors = 0;
       if (verdict === "pending") sawPending = true;
     } catch (e) {
       consecutiveErrors++;
       log(`  Policy check failed (${consecutiveErrors}/${maxErrors}): ${errorText(e)}`);
-      if (consecutiveErrors >= maxErrors) return "unknown";
+      if (consecutiveErrors >= maxErrors) return { status: "unknown", failedChecks: [] };
     }
     const fresh = !opts.requireFreshEvaluation || sawPending || Date.now() - start >= freshnessGrace;
-    if ((verdict === "succeeded" || verdict === "failed") && fresh) return verdict;
-    if (verdict === "none" && Date.now() - start >= grace) return "unknown";
+    if ((verdict === "succeeded" || verdict === "failed") && fresh) return { status: verdict, failedChecks: verdict === "failed" ? failed : [] };
+    if (verdict === "none" && Date.now() - start >= grace) return { status: "unknown", failedChecks: [] };
     await sleep(opts.intervalMs);
   }
-  return "unknown";
+  return { status: "unknown", failedChecks: [] };
 }
 
 export async function waitForPrCommit(
@@ -221,7 +250,7 @@ interface PolicyWaitOptions { timeoutMs?: number; intervalMs?: number; log?: (ms
 
 function waitForPrPolicies(
   prId: number, org: string, options: PolicyWaitOptions, extra: { timeoutMs?: number; requireFreshEvaluation?: boolean } = {},
-): Promise<PipelineStatus> {
+): Promise<PolicyWaitResult> {
   return waitForPolicies(
     () => (az(policyListArgs(prId, org)) ?? []) as PolicyEvaluation[],
     {
@@ -281,9 +310,9 @@ export async function createAndCheckPR(
 
   const prId = created.pullRequestId;
   const url = buildPrWebUrl(org, project, created.repository.name, prId);
-  const pipelineStatus = await waitForPrPolicies(prId, org, options);
+  const { status: pipelineStatus, failedChecks } = await waitForPrPolicies(prId, org, options);
 
-  return { prId, url, pipelineStatus, durationSec: Math.round((Date.now() - start) / 1000) };
+  return { prId, url, pipelineStatus, failedChecks, durationSec: Math.round((Date.now() - start) / 1000) };
 }
 
 export function existingPrWebUrl(existing: ExistingPr, repoPath: string): string {
@@ -312,9 +341,9 @@ export async function updateAndCheckPR(
     { timeoutMs, intervalMs: options.intervalMs ?? POLL_INTERVAL_MS, log: options.log },
   );
   const remaining = Math.max(0, timeoutMs - (Date.now() - start));
-  const pipelineStatus: PipelineStatus = seen
+  const { status: pipelineStatus, failedChecks }: PolicyWaitResult = seen
     ? await waitForPrPolicies(existing.prId, org, options, { timeoutMs: remaining, requireFreshEvaluation: true })
-    : "unknown";
+    : { status: "unknown", failedChecks: [] };
 
-  return { prId: existing.prId, url, pipelineStatus, durationSec: Math.round((Date.now() - start) / 1000) };
+  return { prId: existing.prId, url, pipelineStatus, failedChecks, durationSec: Math.round((Date.now() - start) / 1000) };
 }
