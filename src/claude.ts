@@ -58,7 +58,7 @@ function reportSummary(report: AgentReport | undefined): string[] {
 export function buildReviewPrompt(brief: TicketBrief, report: AgentReport | undefined, baseRef: string): string {
   return [
     ...ticketSection(brief),
-    `**The implementer's report:**`,
+    `**The implementer's report (unverified claims: check them yourself):**`,
     ...reportSummary(report).map(l => `  ${l}`),
     ``,
     `**Base ref:** \`${baseRef}\``,
@@ -234,6 +234,7 @@ export interface ToolProfile {
   permissionMode: string;
   allowedTools: string[];
   disallowedTools: string[];
+  enforceAllowList?: boolean;
 }
 
 const NEVER_PUBLISH = ["Bash(git push *)", "Bash(git config *)", "Bash(git commit *)"];
@@ -255,6 +256,8 @@ export const REVIEW_PROFILE: ToolProfile = {
     "Bash(git diff *)", "Bash(git status*)", "Bash(git log *)", "Bash(git show *)",
     "Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)",
     "Bash(npx vitest run*)", "Bash(npm run lint)", "Bash(npm run format)", "Bash(npx tsc --noEmit*)",
+    "Bash(npm run build)", "Bash(npm run typecheck)", "Bash(npm test)", "Bash(npm test -w *)",
+    "Bash(terraform init -backend=false*)", "Bash(terraform validate*)", "Bash(terraform fmt -check*)",
   ],
   disallowedTools: [
     "Edit", "Write", "NotebookEdit",
@@ -262,6 +265,7 @@ export const REVIEW_PROFILE: ToolProfile = {
     "Bash(npx vitest * -u*)", "Bash(npx vitest * --update*)",
     ...NEVER_PUBLISH,
   ],
+  enforceAllowList: true,
 };
 
 export function buildClaudeArgs(operatingInstructions: string, profile: ToolProfile = EDIT_PROFILE): string[] {
@@ -275,8 +279,15 @@ export function buildClaudeArgs(operatingInstructions: string, profile: ToolProf
   ];
 }
 
-export function agentRunArgs(base: string[], settings: string): string[] {
-  return [...base, "--settings", settings, "--strict-mcp-config", "--setting-sources", "user"];
+function withEnforcedAllowList(settings: string): string {
+  const parsed = JSON.parse(settings);
+  return JSON.stringify({ ...parsed, sandbox: { ...parsed.sandbox, autoAllowBashIfSandboxed: false } });
+}
+
+export function agentRunArgs(base: string[], settings: string, profile: ToolProfile = EDIT_PROFILE): string[] {
+  return profile.enforceAllowList
+    ? [...base, "--settings", withEnforcedAllowList(settings), "--strict-mcp-config", "--setting-sources", "project"]
+    : [...base, "--settings", settings, "--strict-mcp-config", "--setting-sources", "user"];
 }
 
 export interface RunAgentOptions {
@@ -296,7 +307,7 @@ interface ClaudeRun {
 async function execClaude(
   worktreePath: string, prompt: string, systemPrompt: string, profile: ToolProfile, options: RunAgentOptions,
 ): Promise<ClaudeRun> {
-  const args = agentRunArgs(buildClaudeArgs(systemPrompt, profile), options.settings);
+  const args = agentRunArgs(buildClaudeArgs(systemPrompt, profile), options.settings, profile);
   const proc = await runWithWatchdog("claude", args, {
     cwd: worktreePath,
     input: prompt,

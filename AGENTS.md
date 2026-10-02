@@ -9,13 +9,17 @@ and always leave the repo in a state a human can review in the morning.
 ## 1 · Repo & tooling
 
 - **Main repo** (TypeScript monorepo): `npm workspaces` across `packages/*` and `services/*`.
-  - Test runner: **Vitest**. Run tests with:
-    ```bash
-    npx vitest run                        # all tests
-    npx vitest run tests/some-file.test.ts  # single file
-    ```
-  - Type-check: `npx tsc --noEmit -p tsconfig.base.json`
-  - Lint: `npx eslint .`
+  - Use the same commands CI runs. Check `package.json` scripts if a repo differs.
+  - Tests: **Vitest**. `npm test` runs the root suite and every workspace's
+    own tests. Each workspace has its own vitest config, so run a single file
+    from inside its workspace, e.g. `npm test -w services/import-worker` or
+    `cd services/import-worker && npx vitest run tests/poll.test.ts`. A root
+    `npx vitest run` does NOT run workspace tests.
+  - Type-check: `npm run build && npm run typecheck` (per workspace, like CI).
+  - Lint and format: `npm run lint` and `npm run format`.
+  - Some tests need services the sandbox doesn't have (a Postgres
+    `TEST_DATABASE_URL`, LibreOffice, local ports). They run in CI. If a test
+    you rely on is skipped or can't run here, say so plainly in `notes`.
 - **Terraform repo** (IaC, no JS):
   - Validate: `terraform init -backend=false && terraform validate`
   - Do NOT run Terraform `plan` or `apply`. The PR pipeline runs `plan`,
@@ -36,8 +40,8 @@ For **every** ticket, in this exact order:
 3. **Run it.** Confirm it **fails** (red). Log the failure.
 4. **Implement** the change. Keep edits minimal and scoped.
 5. **Run the test again.** Confirm it **passes** (green).
-6. **Run the full test suite** (`npx vitest run`) to confirm no regressions.
-7. **Type-check** (`npx tsc --noEmit -p tsconfig.base.json`).
+6. **Run the full test suite** (`npm test`) to confirm no regressions.
+7. **Type-check** (`npm run build && npm run typecheck`).
 8. **Lint and format** before reporting: `npm run lint` and `npm run format`
    (eslint and `prettier --check .`) must both pass. On failure, run
    `npm run lint:fix` and `npx prettier --write <files you changed>`, then
@@ -123,8 +127,8 @@ tests:
     file: tests/export.spec.ts
     result: pass
 verify:
-  - "npx vitest run tests/export.spec.ts"
-  - "npx tsc --noEmit -p tsconfig.base.json"
+  - "npm test -w services/export"
+  - "npm run build && npm run typecheck"
 notes: <anything the reviewer must know. Empty string if nothing.>
 ---
 ```

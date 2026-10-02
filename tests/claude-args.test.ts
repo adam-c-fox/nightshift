@@ -29,6 +29,13 @@ describe("agentRunArgs", () => {
     );
   });
 
+  it("enforces the allow list for the review run and leaves out personal settings", () => {
+    const args = agentRunArgs(["-p"], JSON.stringify({ sandbox: { enabled: true } }), REVIEW_PROFILE);
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+    expect(settings.sandbox).toEqual({ enabled: true, autoAllowBashIfSandboxed: false });
+    expect(args[args.indexOf("--setting-sources") + 1]).toBe("project");
+  });
+
   it("always appends the isolation flags, even for empty settings", () => {
     expect(agentRunArgs(["-p"], "")).toEqual(
       ["-p", "--settings", "", "--strict-mcp-config", "--setting-sources", "user"],
@@ -53,6 +60,12 @@ describe("review run args", () => {
     expect(allowed).toEqual(expect.arrayContaining(["Bash(npm run lint)", "Bash(npm run format)", "Bash(npx tsc --noEmit*)"]));
     expect(allowed.some(t => /lint\*|format\*|tsc\*\)/.test(t))).toBe(false);
     expect(value("--disallowedTools").split(",")).toContain("Bash(npx vitest * -u*)");
+  });
+
+  it("allows the same build, typecheck and test commands CI runs", () => {
+    expect(value("--allowedTools").split(",")).toEqual(expect.arrayContaining(
+      ["Bash(npm run build)", "Bash(npm run typecheck)", "Bash(npm test)", "Bash(terraform validate*)", "Bash(terraform fmt -check*)"],
+    ));
   });
 
   it("does not auto-accept edits", () => {
