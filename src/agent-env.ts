@@ -12,7 +12,7 @@ export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 const DENY_READ = ["~/.ssh", "~/.aws", "~/.azure", "~/.config/gh", "~/.npmrc", "~/.netrc", "~/.git-credentials"];
 const ADO_DOMAINS = ["dev.azure.com", "*.dev.azure.com", "*.visualstudio.com", "vssps.visualstudio.com"];
 const ALLOWED_DOMAINS: Record<RepoKind, string[]> = {
-  main: ["registry.npmjs.org"],
+  main: ["registry.npmjs.org", "localhost", "127.0.0.1"],
   terraform: ["registry.terraform.io", "releases.hashicorp.com"],
 };
 
@@ -32,7 +32,10 @@ export function buildAgentSettings(repo: RepoKind, nightshiftRoot: string): stri
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
       filesystem: { denyRead },
-      network: { strictAllowlist: true, allowedDomains: ALLOWED_DOMAINS[repo], deniedDomains: ADO_DOMAINS },
+      network: {
+        strictAllowlist: true, allowedDomains: ALLOWED_DOMAINS[repo], deniedDomains: ADO_DOMAINS,
+        ...(repo === "main" ? { allowLocalBinding: true } : {}),
+      },
     },
   });
 }

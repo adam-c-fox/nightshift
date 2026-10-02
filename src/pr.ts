@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { getEnv, requireEnv } from "./env.js";
-import type { PipelineStatus, TicketResult } from "./types.js";
+import type { PipelineStatus, ReviewRisk, TicketResult } from "./types.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -93,21 +93,28 @@ export interface PrContent {
   summary: string;
   verifyCommands: string[];
   ticketUrl?: string;
+  risks: ReviewRisk[];
 }
 
 export function prContent(result: TicketResult): PrContent {
   return {
     ticketId: result.ticket.id, title: result.title ?? "", summary: result.summary,
     verifyCommands: result.verifyCommands, ticketUrl: result.linear?.url,
+    risks: result.review?.risks ?? [],
   };
 }
 
-export function buildPrDescription(ticketId: string, summary: string, verifyCommands: string[], ticketUrl?: string): string {
+export function buildPrDescription(
+  ticketId: string, summary: string, verifyCommands: string[], ticketUrl?: string, risks: ReviewRisk[] = [],
+): string {
   const ticket = ticketUrl ? `[${ticketId}](${ticketUrl})` : ticketId;
+  const worthALook = risks.length > 0
+    ? ["", "Worth a closer look:", ...risks.map(r => `- \`${r.file}\`: ${r.risk}`)]
+    : [];
   const verify = verifyCommands.length > 0
     ? ["", "To verify locally:", ...verifyCommands.map(c => `- \`${c}\``)]
     : [];
-  return [`Ticket: ${ticket}`, "", summary, ...verify].join("\n").slice(0, 4000);
+  return [`Ticket: ${ticket}`, "", summary, ...worthALook, ...verify].join("\n").slice(0, 4000);
 }
 
 function azEnv(): NodeJS.ProcessEnv {
@@ -312,7 +319,7 @@ export async function createAndCheckPR(
     sourceBranch: branch,
     targetBranch,
     title: buildPrTitle(content.ticketId, content.title, content.summary),
-    description: buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl),
+    description: buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl, content.risks),
   }), worktreePath) as { pullRequestId: number; repository: { name: string } };
 
   const prId = created.pullRequestId;

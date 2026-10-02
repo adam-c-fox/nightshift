@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { runWithWatchdog } from "./process.js";
-import type { FixResolution, ReviewFinding, Severity, TestResult } from "./types.js";
+import type { ClassifiedCheck } from "./checks.js";
+import type { FixResolution, ReviewFinding, ReviewRisk, Severity, TestResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const AGENTS_MD = path.join(ROOT, "AGENTS.md");
@@ -55,7 +56,51 @@ function reportSummary(report: AgentReport | undefined): string[] {
   ];
 }
 
-export function buildReviewPrompt(brief: TicketBrief, report: AgentReport | undefined, baseRef: string): string {
+export interface RelatedBranch {
+  ticketId: string;
+  branch: string;
+}
+
+const CHECK_LABELS: Record<ClassifiedCheck["status"], string> = {
+  passed: "passed", regression: "REGRESSION (passed before the change, fails now)",
+  "pre-existing": "pre-existing failure (failed before the change too)", new: "new check",
+};
+const OUTPUT_CHARS = 4000;
+
+function checkLine(c: ClassifiedCheck): string {
+  const result = c.status === "new" ? `new check, ${c.passed ? "passed" : "FAILED"}` : CHECK_LABELS[c.status];
+  return `- \`${c.command}\`: ${result} (${c.durationSec}s)`;
+}
+
+function checksSection(checks: ClassifiedCheck[] | undefined): string[] {
+  if (!checks || checks.length === 0) return [];
+  const failing = checks.filter(c => !c.passed).flatMap(c =>
+    [``, `Output of \`${c.command}\` (last lines):`, "```", c.outputTail.slice(-OUTPUT_CHARS), "```"]);
+  return [
+    ``,
+    `**Check results.** The runner already ran these on the worktree before and after the change, so you do not need to re-run them. You may run targeted commands to investigate a failure.`,
+    ...checks.map(checkLine),
+    ...failing,
+  ];
+}
+
+function relatedSection(related: RelatedBranch[] | undefined, baseRef: string): string[] {
+  if (!related || related.length === 0) return [];
+  return [
+    ``,
+    ...related.map(r =>
+      `Related ticket ${r.ticketId} was implemented earlier this session on branch ${r.branch}. Check that both sides of any shared contract agree: \`git diff ${baseRef}...${r.branch}\`.`),
+  ];
+}
+
+export interface ReviewPromptExtras {
+  checks?: ClassifiedCheck[];
+  related?: RelatedBranch[];
+}
+
+export function buildReviewPrompt(
+  brief: TicketBrief, report: AgentReport | undefined, baseRef: string, extras: ReviewPromptExtras = {},
+): string {
   return [
     ...ticketSection(brief),
     `**The implementer's report (unverified claims: check them yourself):**`,
@@ -63,6 +108,9 @@ export function buildReviewPrompt(brief: TicketBrief, report: AgentReport | unde
     ``,
     `**Base ref:** \`${baseRef}\``,
     `Inspect the change yourself with \`git diff ${baseRef}\` and \`git status --porcelain\` (untracked files are not in the diff; read them directly).`,
+    ...checksSection(extras.checks),
+    ...relatedSection(extras.related, baseRef),
+    ``,
     `Review it now. Do not modify any file. End your final message with the ---REVIEW--- block.`,
   ].join("\n");
 }
@@ -181,9 +229,23 @@ function parseRecords(lines: string[] | undefined, fields: string[]): Record<str
   return records;
 }
 
-export function parseReviewBlock(output: string): ReviewFinding[] {
+export interface ParsedReview {
+  findings: ReviewFinding[];
+  risks: ReviewRisk[];
+}
+
+function parseRisks(lines: string[] | undefined): ReviewRisk[] {
+  const body = (lines ?? []).map(l => l.trim()).filter(l => l !== "");
+  if (body.length === 0 || body.join("") === "[]") return [];
+  const records = parseRecords(lines, ["file", "risk"]);
+  const risks = records.filter(r => r.risk).map(r => ({ file: r.file ?? "", risk: r.risk }));
+  if (risks.length === 0) throw new Error("Malformed risks list in ---REVIEW--- block");
+  return risks;
+}
+
+export function parseReviewBlock(output: string): ParsedReview {
   const groups = groupByTopLevelKey(extractBlock(output, REVIEW_START));
-  return parseRecords(groups.get("findings"), ["id", "severity", "file", "issue", "suggestion"])
+  const findings = parseRecords(groups.get("findings"), ["id", "severity", "file", "issue", "suggestion"])
     .filter(r => r.issue)
     .map((r, i) => ({
       id: r.id || `R${i + 1}`,
@@ -192,6 +254,7 @@ export function parseReviewBlock(output: string): ReviewFinding[] {
       issue: r.issue,
       suggestion: r.suggestion ?? "",
     }));
+  return { findings, risks: parseRisks(groups.get("risks")) };
 }
 
 export function parseFixesBlock(output: string): FixResolution[] {
@@ -367,6 +430,7 @@ export interface ReviewRunResult {
   success: boolean;
   rawOutput: string;
   findings?: ReviewFinding[];
+  risks?: ReviewRisk[];
   parseError?: string;
   failure?: string;
   abortReason?: string;
@@ -374,11 +438,12 @@ export interface ReviewRunResult {
 
 export async function runReview(
   worktreePath: string, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, options: RunAgentOptions,
+  extras: ReviewPromptExtras = {},
 ): Promise<ReviewRunResult> {
-  const prompt = buildReviewPrompt(brief, report, baseRef);
+  const prompt = buildReviewPrompt(brief, report, baseRef, extras);
   const run = await execClaude(worktreePath, prompt, readFileSync(REVIEW_MD, "utf-8"), REVIEW_PROFILE, options);
-  const { value: findings, error: parseError } = parseOrError(run.stdout, run.failure, parseReviewBlock);
-  return { success: run.failure === undefined, rawOutput: run.rawOutput, findings, parseError, failure: run.failure, abortReason: run.abortReason };
+  const { value: parsed, error: parseError } = parseOrError(run.stdout, run.failure, parseReviewBlock);
+  return { success: run.failure === undefined, rawOutput: run.rawOutput, findings: parsed?.findings, risks: parsed?.risks, parseError, failure: run.failure, abortReason: run.abortReason };
 }
 
 export interface FixRunResult extends ClaudeResult {

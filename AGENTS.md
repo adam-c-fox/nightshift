@@ -17,9 +17,16 @@ and always leave the repo in a state a human can review in the morning.
     `npx vitest run` does NOT run workspace tests.
   - Type-check: `npm run build && npm run typecheck` (per workspace, like CI).
   - Lint and format: `npm run lint` and `npm run format`.
-  - Some tests need services the sandbox doesn't have (a Postgres
-    `TEST_DATABASE_URL`, LibreOffice, local ports). They run in CI. If a test
-    you rely on is skipped or can't run here, say so plainly in `notes`.
+  - A throwaway Postgres is running and `TEST_DATABASE_URL` points at it, so
+    database-backed tests (claims, races, migrations) run here. Run them.
+    Binding local ports is allowed, so HTTP server tests run too. Some things
+    are still missing (e.g. LibreOffice). If a test you rely on is skipped or
+    can't run, say so plainly in `notes`, and don't treat a skipped test as
+    proof.
+  - Do NOT build gitignored artifacts (`dist/`, generated clients) of other
+    packages just to make your tests pass. CI won't have them. If your tests
+    only pass that way, the test setup is wrong: fix it the way the repo
+    already resolves workspace packages in tests, or say so in `notes`.
 - **Terraform repo** (IaC, no JS):
   - Validate: `terraform init -backend=false && terraform validate`
   - Do NOT run Terraform `plan` or `apply`. The PR pipeline runs `plan`,
@@ -47,6 +54,18 @@ For **every** ticket, in this exact order:
    `npm run lint:fix` and `npx prettier --write <files you changed>`, then
    re-run both. Only touch files you changed; never reformat the rest of the
    repo.
+
+Before you finish, decide every operational choice that has an obvious
+answer. Don't leave them as they fall by default. In particular, for anything
+that runs repeatedly (a poller, a queue consumer, a retry), decide the end
+state of every input you skip, reject or fail on. If the ticket says "ignore
+X", decide what ignoring means durably: mark it read, move it, or record it,
+so it isn't fetched again forever and doesn't block the rest of the queue. A
+claimed or in-progress record that can never succeed must reach a terminal
+state. Write a test for each such decision and list it in `notes`. Where two
+pieces of code must agree on a definition (what counts as a valid
+attachment, a status, a contract), share one definition rather than writing
+it twice.
 
 If a test still fails after **two fix iterations**, stop working on the ticket.
 Write what you learned into your report. Mark status `needs_review`. Do NOT

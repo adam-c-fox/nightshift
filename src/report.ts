@@ -1,6 +1,6 @@
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import type { FixResolution, ReviewFinding, SessionResult, TicketResult } from "./types.js";
+import type { CheckRecord, FixResolution, ReviewFinding, SessionResult, TicketResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 
 const REPORTS_DIR = path.resolve(import.meta.dirname, "..", "reports");
@@ -48,6 +48,29 @@ function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefin
          </li>`;
 }
 
+function risksHTML(t: TicketResult): string {
+  const risks = t.review?.risks ?? [];
+  if (risks.length === 0) return "";
+  const items = risks.map(r => `<li><code class="finding-file">${esc(r.file)}</code> ${esc(r.risk)}</li>`).join("");
+  return `<div class="review"><strong>Worth a closer look</strong><ul class="risks">${items}</ul></div>`;
+}
+
+const CHECK_RESULTS: Record<NonNullable<CheckRecord["status"]>, string> = {
+  passed: "passed", regression: "regression", "pre-existing": "failed (pre-existing)", new: "new",
+};
+
+function checkResult(c: CheckRecord): string {
+  if (c.status === "new") return c.passed ? "passed (new)" : "failed (new)";
+  return c.status ? CHECK_RESULTS[c.status] : c.passed ? "passed" : "failed";
+}
+
+function checksHTML(t: TicketResult): string {
+  if (!t.checks || t.checks.length === 0) return "";
+  const rows = t.checks.map(c =>
+    `<tr class="${c.passed ? "check-pass" : "check-fail"}"><td>${esc(c.name)}</td><td>${esc(checkResult(c))}</td><td>${c.durationSec}s</td></tr>`).join("");
+  return `<div class="checks"><strong>Checks</strong><table><tr><th>Check</th><th>Result</th><th>Time</th></tr>${rows}</table></div>`;
+}
+
 function reviewHTML(t: TicketResult): string {
   const review = t.review;
   if (!review) return "";
@@ -55,10 +78,10 @@ function reviewHTML(t: TicketResult): string {
     return `<div class="review review-${review.outcome}">Review ${review.outcome}: ${esc(review.reason ?? "")}</div>`;
   }
   if (review.findings.length === 0) {
-    return `<div class="review"><strong>Review: no issues found</strong></div>`;
+    return `<div class="review"><strong>Review: no issues found</strong></div>${risksHTML(t)}`;
   }
   const items = review.findings.map(f => findingHTML(f, review.resolutions.find(r => r.id === f.id))).join("");
-  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong><ul class="findings">${items}</ul></div>`;
+  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong><ul class="findings">${items}</ul></div>${risksHTML(t)}`;
 }
 
 function ticketCardHTML(t: TicketResult): string {
@@ -102,6 +125,7 @@ function ticketCardHTML(t: TicketResult): string {
       ${files ? `<ul class="files">${files}</ul>` : ""}
       ${tests}
       ${verify}
+      ${checksHTML(t)}
       ${reviewHTML(t)}
       ${notes}
       <div class="meta">
@@ -220,6 +244,13 @@ export function generateHTML(session: SessionResult): string {
                  font-size: 0.85rem; display: inline-block; margin: 0.1rem 0; }
   .review { font-size: 0.9rem; margin-bottom: 0.75rem; }
   .review-skipped, .review-failed { color: var(--text-dim); }
+  .checks { font-size: 0.9rem; margin-bottom: 0.75rem; }
+  .checks table { border-collapse: collapse; margin-top: 0.3rem; }
+  .checks th, .checks td { text-align: left; padding: 0.15rem 0.9rem 0.15rem 0; font-size: 0.85rem; }
+  .checks th { color: var(--text-dim); font-weight: 600; }
+  .check-pass td:nth-child(2) { color: #22c55e; }
+  .check-fail td:nth-child(2) { color: #ef4444; }
+  .risks { margin: 0.3rem 0 0 1.2rem; }
   .findings { list-style: none; margin-top: 0.4rem; }
   .finding { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; }
   .finding-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.2rem; }

@@ -42,11 +42,25 @@ export interface FixResolution {
   how: string;
 }
 
+export interface ReviewRisk {
+  file: string;
+  risk: string;
+}
+
 export interface TicketReview {
   outcome: "reviewed" | "skipped" | "failed";
   reason?: string;
   findings: ReviewFinding[];
   resolutions: FixResolution[];
+  risks?: ReviewRisk[];
+}
+
+export interface CheckRecord {
+  name: string;
+  command: string;
+  passed: boolean;
+  durationSec: number;
+  status?: "passed" | "regression" | "pre-existing" | "new";
 }
 
 export type PipelineStatus = "succeeded" | "failed" | "unknown";
@@ -69,6 +83,7 @@ export interface TicketResult {
   prId?: number;
   pipelineStatus?: PipelineStatus;
   review?: TicketReview;
+  checks?: CheckRecord[];
 }
 
 export interface NightBudget {

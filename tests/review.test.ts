@@ -63,7 +63,7 @@ describe("reviewAndFix", () => {
     const { calls, run } = harness();
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
-    expect(outcome.review).toEqual({ outcome: "reviewed", findings: [], resolutions: [] });
+    expect(outcome.review).toEqual({ outcome: "reviewed", findings: [], resolutions: [], risks: [] });
     expect(outcome).toMatchObject({ needsReview: false, publish: true });
   });
 
@@ -228,5 +228,69 @@ describe("mergeFixReport", () => {
     expect(merged.filesCreated).toEqual(["a.ts", "c.ts"]);
     expect(merged.filesModified).toEqual(["b.ts", "d.ts"]);
     expect(merged.tests.map(t => `${t.name}:${t.result}`)).toEqual(["t1:pass", "t2:pass"]);
+  });
+});
+
+describe("reviewAndFix with check regressions", () => {
+  const regression: ReviewFinding = {
+    id: "C1", severity: "blocker", file: ".", issue: "npm run lint fails after the change (passed before it): boom", suggestion: "Make npm run lint pass again.",
+  };
+
+  it("runs the fix with regressions first even when the reviewer reports nothing", async () => {
+    const { calls, run } = harness({ regressions: [regression] });
+    const outcome = await run();
+    expect(calls.fix).toEqual([[regression]]);
+    expect(outcome.review.findings).toEqual([regression]);
+    expect(outcome).toMatchObject({ needsReview: false, publish: true });
+  });
+
+  it("puts regressions ahead of the reviewer's findings", async () => {
+    const { calls, run } = harness({ regressions: [regression], review: async () => reviewed(finding("R1")) });
+    await run();
+    expect(calls.fix[0].map(f => f.id)).toEqual(["C1", "R1"]);
+  });
+
+  it("flags needs_review and names the command when a regression survives the fix", async () => {
+    const { run } = harness({ regressions: [regression], recheck: async () => [regression] });
+    const outcome = await run();
+    expect(outcome.needsReview).toBe(true);
+    expect(outcome.notes.join(" ")).toMatch(/still failing.*npm run lint/);
+  });
+
+  it("stays clean when the recheck finds nothing", async () => {
+    const { run } = harness({ regressions: [regression], recheck: async () => [] });
+    expect(await run()).toMatchObject({ needsReview: false });
+  });
+
+  it("does not recheck when there was nothing to fix", async () => {
+    let rechecked = 0;
+    const { run } = harness({ recheck: async () => { rechecked++; return []; } });
+    await run();
+    expect(rechecked).toBe(0);
+  });
+
+  it("still names regressions when the review itself fails", async () => {
+    const { run } = harness({ regressions: [regression], review: async () => ({ success: false, rawOutput: "", failure: "crashed" }) });
+    const outcome = await run();
+    expect(outcome.needsReview).toBe(true);
+    expect(outcome.notes.join(" ")).toContain("npm run lint");
+  });
+});
+
+describe("reviewAndFix with risks", () => {
+  const risks = [{ file: "a.ts", risk: "Confirm the default." }];
+
+  it("keeps risks on the review and never sends them to the fix", async () => {
+    const { calls, run } = harness({ review: async () => ({ ...reviewed(finding("R1")), risks }) });
+    const outcome = await run();
+    expect(outcome.review.risks).toEqual(risks);
+    expect(JSON.stringify(calls.fix)).not.toContain("Confirm the default");
+  });
+
+  it("keeps risks when there are no findings, without running the fix", async () => {
+    const { calls, run } = harness({ review: async () => ({ ...reviewed(), risks }) });
+    const outcome = await run();
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review.risks).toEqual(risks);
   });
 });

@@ -20,6 +20,11 @@ describe("agentEnv", () => {
     });
   });
 
+  it("keeps TEST_DATABASE_URL so the checks and agents can reach the test database", () => {
+    const url = "postgresql://nightshift_example:nightshift_example@127.0.0.1:55433/nightshift_example_test";
+    expect(agentEnv({ TEST_DATABASE_URL: url })).toMatchObject({ TEST_DATABASE_URL: url });
+  });
+
   it("strips credential-shaped names and keeps harmless ones", () => {
     const env = agentEnv({
       AWS_SECRET_ACCESS_KEY: "x", TF_TOKEN_app_terraform_io: "x", GOOGLE_APPLICATION_CREDENTIALS: "x",
@@ -80,5 +85,16 @@ describe("buildAgentSettings", () => {
   it("lets terraform runs reach only the provider registry", () => {
     const tf = JSON.parse(buildAgentSettings("terraform", root));
     expect(tf.sandbox.network.allowedDomains).toEqual(["registry.terraform.io", "releases.hashicorp.com"]);
+  });
+
+  it("lets main runs listen locally and reach the local test database", () => {
+    const main = JSON.parse(buildAgentSettings("main", root));
+    expect(main.sandbox.network.allowLocalBinding).toBe(true);
+    expect(main.sandbox.network.allowedDomains).toEqual(expect.arrayContaining(["registry.npmjs.org", "localhost", "127.0.0.1"]));
+  });
+
+  it("does not open local binding for terraform runs", () => {
+    const tf = JSON.parse(buildAgentSettings("terraform", root));
+    expect(tf.sandbox.network.allowLocalBinding).toBeUndefined();
   });
 });

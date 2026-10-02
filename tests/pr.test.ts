@@ -109,6 +109,22 @@ describe("buildPrDescription", () => {
     expect(bare).not.toContain("Verify");
   });
 
+  it("adds a closer-look section with the risks before the verify commands", () => {
+    const withRisks = buildPrDescription("ENG-1", "Done.", ["npx vitest run"], undefined, [{ file: "src/a.ts", risk: "Confirm the default." }]);
+    expect(withRisks).toContain("Worth a closer look:\n- `src/a.ts`: Confirm the default.");
+    expect(withRisks.indexOf("Worth a closer look:")).toBeLessThan(withRisks.indexOf("To verify locally:"));
+  });
+
+  it("omits the closer-look section without risks", () => {
+    expect(buildPrDescription("ENG-1", "Done.", [], undefined, [])).not.toContain("closer look");
+    expect(text).not.toContain("closer look");
+  });
+
+  it("keeps the 4000 character cap with many risks", () => {
+    const risks = Array.from({ length: 200 }, (_, i) => ({ file: `f${i}.ts`, risk: "x".repeat(100) }));
+    expect(buildPrDescription("ENG-1", "Done.", [], undefined, risks).length).toBe(4000);
+  });
+
   it("carries no trace of automation", () => {
     expect(text.toLowerCase()).not.toMatch(/night|automated|generated/);
   });
@@ -318,5 +334,14 @@ describe("PR content", () => {
     }
     expect(text).toContain("feat: stream csv export (ENG-1)");
     expect(text).toContain("Streams rows to the response.");
+  });
+
+  it("threads the review's risks into the content", () => {
+    const risks = [{ file: "src/export.ts", risk: "Confirm the batch size." }];
+    const content = prContent({ ...result, review: { ...result.review!, risks } });
+    expect(content.risks).toEqual(risks);
+    expect(buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl, content.risks))
+      .toContain("- `src/export.ts`: Confirm the batch size.");
+    expect(prContent(result).risks).toEqual([]);
   });
 });

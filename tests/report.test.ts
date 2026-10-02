@@ -88,3 +88,28 @@ describe("reportFilename", () => {
     expect(reportFilename("2026-10-01", name => name === "nightshift-2026-10-01.html")).toBe("nightshift-2026-10-01-2.html");
   });
 });
+
+describe("report checks and risks", () => {
+  it("renders a compact checks table", () => {
+    const html = reportFor(ticketResult({ checks: [
+      { name: "lint", command: "npm run lint", passed: true, durationSec: 12, status: "passed" },
+      { name: "tests (services/a)", command: "npm test -w services/a", passed: false, durationSec: 30, status: "regression" },
+      { name: "format", command: "npm run format", passed: false, durationSec: 3, status: "pre-existing" },
+    ] }));
+    expect(html).toContain("<td>lint</td><td>passed</td><td>12s</td>");
+    expect(html).toContain("<td>tests (services/a)</td><td>regression</td><td>30s</td>");
+    expect(html).toContain("failed (pre-existing)");
+  });
+
+  it("omits the checks table when none ran", () => {
+    expect(reportFor(ticketResult())).not.toContain('class="checks"');
+  });
+
+  it("lists risks with escaping, with or without findings", () => {
+    const risks = [{ file: "src/<a>.ts", risk: "Confirm <b>this</b>." }];
+    const html = reportFor(ticketResult({ review: { outcome: "reviewed", findings: [], resolutions: [], risks } }));
+    expect(html).toContain("Worth a closer look");
+    expect(html).toContain("src/&lt;a&gt;.ts");
+    expect(html).not.toContain("<b>this</b>");
+  });
+});

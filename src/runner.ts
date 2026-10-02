@@ -14,6 +14,9 @@ import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { writeReport } from "./report.js";
+import { checkCommands, classifyChecks, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
+import { relatedTickets, type ProcessedTicket } from "./related.js";
+import { startTestDb } from "./test-db.js";
 import { localDate, TIME_ZONE } from "./time.js";
 import { createWorktree, ticketBranchName, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
 
@@ -169,7 +172,20 @@ function lookUpExistingPr(expectedBranch: string, repoPath: string): ExistingPr 
 const continuingPrContext = (prId: number) =>
   `This ticket already has open PR #${prId} from an earlier run. The worktree contains that work; continue from it instead of starting over.`;
 
-async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { current: NightBudget }): Promise<TicketResult> {
+async function runLoggedChecks(label: string, cwd: string, commands: CheckCommand[]): Promise<CheckResult[]> {
+  log(`  Running checks ${label}`);
+  const results = await runChecks(cwd, commands, agentEnv(process.env));
+  const failed = results.filter(r => !r.passed).map(r => r.command);
+  log(`  Checks ${label}: ${results.length - failed.length}/${results.length} passed${failed.length > 0 ? `; failing: ${failed.join(", ")}` : ""}`);
+  return results;
+}
+
+const checkRecords = (checks: ClassifiedCheck[]): TicketResult["checks"] =>
+  checks.map(({ outputTail: _tail, ...record }) => record);
+
+async function processTicket(
+  ticket: Ticket, dryRun: boolean, budgetRef: { current: NightBudget }, processed: Map<string, ProcessedTicket>,
+): Promise<TicketResult> {
   const { id: ticketId, name: ticketName, context, repo } = ticket;
   const repoPath = REPOS[repo];
   const startTime = Date.now();
@@ -223,6 +239,8 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
   };
   const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
   const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(repo, ROOT) };
+  const commands = dryRun ? [] : checkCommands(repo, repo === "main" ? discoverWorkspaces(wt.wtPath) : []);
+  const baseline = dryRun ? [] : await runLoggedChecks("before the change", wt.wtPath, commands);
   if (!dryRun) await waitForSession();
   const result = await runAgent(
     wt.wtPath, ticketId, ticketName, agentContext,
@@ -269,13 +287,21 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
     saveLog(`${ticketId}-output.txt`, result.rawOutput);
 
     const brief: TicketBrief = { ticketId, ticketName, context: agentContext, linearDesc, linearUrl, state: linearState };
+    const after = outcome.publish && hasChangesVsBase(wt) ? await runLoggedChecks("after the change", wt.wtPath, commands) : undefined;
+    let checks = after && classifyChecks(baseline, after);
+    const related = relatedTickets(ticketId, repo, [...agentContext, linearDesc], processed);
     const stage = await reviewAndFix(outcome.publish, {
+      regressions: checks ? regressionFindings(checks) : [],
+      recheck: async () => {
+        checks = classifyChecks(baseline, await runLoggedChecks("after the fix", wt.wtPath, commands));
+        return regressionFindings(checks);
+      },
       hasChanges: () => hasChangesVsBase(wt),
       snapshot: () => worktreeSnapshot(wt),
       gateOpen: () => weeklyGateReason() === undefined,
       review: async () => {
         await waitForSession();
-        return runReview(wt.wtPath, brief, report, wt.baseRef, agentOptions);
+        return runReview(wt.wtPath, brief, report, wt.baseRef, agentOptions, { checks, related: related.map(r => ({ ticketId: r.ticketId, branch: r.branch })) });
       },
       fix: async findings => {
         await waitForSession();
@@ -292,6 +318,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
       };
     });
     applyReviewStage(ticketResult, stage);
+    if (checks) ticketResult.checks = checkRecords(checks);
     const publish = outcome.publish && stage.publish;
 
     try {
@@ -387,36 +414,43 @@ async function main() {
     log(`ERROR loading tickets: ${ticketError}`);
   }
 
-  for (const ticket of tickets) {
-    if (!gateHit) {
-      try {
-        budgetRef.current = checkGate(budgetRef.current);
-        log(budgetGateMessage(budgetRef.current));
-        if (budgetRef.current.gateHit) {
+  const processed = new Map<string, ProcessedTicket>();
+  const testDb = !DRY_RUN && tickets.some(t => t.repo === "main") ? startTestDb(log) : undefined;
+  try {
+    for (const ticket of tickets) {
+      if (!gateHit) {
+        try {
+          budgetRef.current = checkGate(budgetRef.current);
+          log(budgetGateMessage(budgetRef.current));
+          if (budgetRef.current.gateHit) {
+            gateHit = true;
+            skipReason = `Skipped – nightly budget allocation reached (${budgetRef.current.currentPct}% ≥ cap ${budgetRef.current.capPct}%).`;
+          }
+        } catch (e) {
           gateHit = true;
-          skipReason = `Skipped – nightly budget allocation reached (${budgetRef.current.currentPct}% ≥ cap ${budgetRef.current.capPct}%).`;
+          skipReason = `Skipped – could not read usage: ${(e as Error).message}`;
+          log(`  ${skipReason}`);
+          logUsageFailure(e, "    ");
         }
+      }
+
+      if (gateHit) {
+        log(`  Skipping ${ticket.id}`);
+        results.push(placeholderResult(ticket, "skipped", skipReason));
+        continue;
+      }
+
+      try {
+        const r = await processTicket(ticket, DRY_RUN, budgetRef, processed);
+        results.push(r);
+        if (!DRY_RUN && r.worktreePath) processed.set(ticket.id, { branch: r.branch, repo: ticket.repo });
       } catch (e) {
-        gateHit = true;
-        skipReason = `Skipped – could not read usage: ${(e as Error).message}`;
-        log(`  ${skipReason}`);
-        logUsageFailure(e, "    ");
+        log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
+        results.push(placeholderResult(ticket, "error", (e as Error).message));
       }
     }
-
-    if (gateHit) {
-      log(`  Skipping ${ticket.id}`);
-      results.push(placeholderResult(ticket, "skipped", skipReason));
-      continue;
-    }
-
-    try {
-      const r = await processTicket(ticket, DRY_RUN, budgetRef);
-      results.push(r);
-    } catch (e) {
-      log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
-      results.push(placeholderResult(ticket, "error", (e as Error).message));
-    }
+  } finally {
+    testDb?.stop();
   }
 
   try {

@@ -8,6 +8,8 @@ export interface ReviewDeps {
   gateOpen(): boolean;
   review(): Promise<ReviewRunResult>;
   fix(findings: ReviewFinding[]): Promise<FixRunResult>;
+  regressions?: ReviewFinding[];
+  recheck?(): Promise<ReviewFinding[]>;
   saveOutput(stage: "review" | "fix", raw: string): void;
   log(msg: string): void;
 }
@@ -58,20 +60,26 @@ function settle(
   return { publish: !blocking, needsReview: extraNeedsReview || blocking || major, notes };
 }
 
-function failedReview(reason: string, publish: boolean, notes: string[]): ReviewStageOutcome {
-  return { review: { outcome: "failed", reason, findings: [], resolutions: [] }, publish, needsReview: true, notes };
+function failedReview(reason: string, publish: boolean, notes: string[], regressions: ReviewFinding[] = []): ReviewStageOutcome {
+  const unchecked = regressions.length > 0 ? [`Unreviewed check regressions: ${regressionNames(regressions)}.`] : [];
+  return { review: { outcome: "failed", reason, findings: [], resolutions: [] }, publish, needsReview: true, notes: [...notes, ...unchecked] };
 }
+
+const regressionNames = (findings: ReviewFinding[]): string =>
+  findings.map(f => f.issue.split(" fails after the change")[0]).join(", ");
 
 export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Promise<ReviewStageOutcome> {
   const quiet = (reason: string): ReviewStageOutcome =>
     ({ review: { outcome: "skipped", reason, findings: [], resolutions: [] }, publish: true, needsReview: false, notes: [] });
 
+  const regressions = deps.regressions ?? [];
   if (!publishable) return quiet("implementation did not finish");
   if (!deps.hasChanges()) return quiet("no changes against base");
   if (!deps.gateOpen()) {
     return {
       review: { outcome: "skipped", reason: "budget cap reached", findings: [], resolutions: [] },
-      publish: true, needsReview: true, notes: ["Review skipped: budget cap reached."],
+      publish: true, needsReview: true,
+      notes: ["Review skipped: budget cap reached.", ...(regressions.length > 0 ? [`Check regressions: ${regressionNames(regressions)}.`] : [])],
     };
   }
 
@@ -83,26 +91,27 @@ export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Prom
   if (deps.snapshot() !== before) {
     const reason = "the review run modified the worktree";
     deps.log(`  Review failed: ${reason}; not publishing`);
-    return failedReview(reason, false, [`Review failed: ${reason}; work kept on local branch, not pushed.`]);
+    return failedReview(reason, false, [`Review failed: ${reason}; work kept on local branch, not pushed.`], regressions);
   }
 
   const failure = run.failure ?? run.parseError;
   if (failure || !run.findings) {
     const reason = failure ?? "no findings reported";
     deps.log(`  Review failed: ${reason}`);
-    return failedReview(reason, true, [`Review failed: ${reason}`]);
+    return failedReview(reason, true, [`Review failed: ${reason}`], regressions);
   }
 
-  const findings = run.findings;
+  const findings = [...regressions, ...run.findings];
+  const risks = run.risks ?? [];
   if (findings.length === 0) {
     deps.log("  Review: no issues found");
-    return { review: { outcome: "reviewed", findings, resolutions: [] }, publish: true, needsReview: false, notes: [] };
+    return { review: { outcome: "reviewed", findings, resolutions: [], risks }, publish: true, needsReview: false, notes: [] };
   }
   deps.log(`  Review: ${findings.length} issue(s) found`);
 
   if (!deps.gateOpen()) {
     return {
-      review: { outcome: "reviewed", findings, resolutions: [] },
+      review: { outcome: "reviewed", findings, resolutions: [], risks },
       ...settle(findings, [], [`Review found ${findings.length} issue(s); fix skipped: budget cap reached.`], true),
     };
   }
@@ -114,7 +123,7 @@ export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Prom
 
   if (!agent.publish) {
     return {
-      review: { outcome: "reviewed", findings, resolutions: notFixed(findings, "the fix run did not finish") },
+      review: { outcome: "reviewed", findings, resolutions: notFixed(findings, "the fix run did not finish"), risks },
       ...settle(findings, [], [`Review found ${findings.length} issue(s). ${agent.notes.join(" ")}`], true),
     };
   }
@@ -123,14 +132,17 @@ export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Prom
   const resolutions = findings.map((f): FixResolution =>
     reported.find(r => r.id === f.id) ?? { id: f.id, status: "not_fixed", how: "not reported by the fix run" });
   const fixedCount = resolutions.filter(r => r.status === "fixed").length;
+  const remaining = deps.recheck ? await deps.recheck() : [];
+  const stillFailing = remaining.length > 0 ? [`Checks still failing after the fix: ${regressionNames(remaining)}.`] : [];
   const notes = [
     `Review found ${findings.length} issue(s); ${fixedCount} fixed.`,
     ...(fix.fixesError ? [`Fix run gave no usable fixes list: ${fix.fixesError}`] : []),
     ...agent.notes,
+    ...stillFailing,
   ];
   return {
-    review: { outcome: "reviewed", findings, resolutions },
+    review: { outcome: "reviewed", findings, resolutions, risks },
     fixReport: fix.report,
-    ...settle(findings, resolutions, notes, agent.status === "needs_review"),
+    ...settle(findings, resolutions, notes, agent.status === "needs_review" || remaining.length > 0),
   };
 }
