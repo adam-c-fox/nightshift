@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  apiUsageSource, budgetUsedPct, cliUsageSource, closedBudget, formatUsageAttempts, openNightBudget,
+  apiUsageSource, budgetUsedPct, sessionAbortReason, sessionWaitMs, waitForSessionCapacity, cliUsageSource, closedBudget, formatUsageAttempts, openNightBudget,
   parseRateLimitHeaders, parseUsageOutput, snapshotUsage, UsageUnavailableError, withCurrentUsage,
   type UsageCommandResult,
 } from "../src/budget.js";
@@ -19,7 +19,12 @@ describe("parseUsageOutput", () => {
     expect(parseUsageOutput(usageOutput)).toEqual({
       weeklyPercent: 1,
       resetInfo: "Oct 7 at 10am (America/Vancouver)",
+      sessionPercent: 5,
     });
+  });
+
+  it("reads the session line too", () => {
+    expect(parseUsageOutput(usageOutput).sessionPercent).toBe(5);
   });
 
   it("supports decimal percentages", () => {
@@ -150,6 +155,12 @@ describe("parseRateLimitHeaders", () => {
     expect(snapshot.resetInfo).toMatch(/^Oct 7, 10:00\sAM \(America\/Vancouver\)$/);
   });
 
+  it("reads the 5-hour session utilization and reset time", () => {
+    const snapshot = parseRateLimitHeaders(`${probeHeaders}\nanthropic-ratelimit-unified-5h-reset: 1790975400`);
+    expect(snapshot.sessionPercent).toBe(5);
+    expect(snapshot.sessionResetAt).toBe(1790975400 * 1000);
+  });
+
   it("throws when the weekly header is missing", () => {
     expect(() => parseRateLimitHeaders("HTTP/2 200 \nanthropic-ratelimit-unified-5h-utilization: 0.05")).toThrow(/7d-utilization/);
   });
@@ -169,5 +180,53 @@ describe("apiUsageSource", () => {
 
   it("fails when curl itself fails", () => {
     expect(() => snapshotUsage(1, probe("", 6), () => {})).toThrow(/curl exited with status 6/);
+  });
+});
+
+describe("5-hour session guard", () => {
+  const now = 1_000_000;
+  const at = (sessionPercent?: number, sessionResetAt?: number) => ({ weeklyPercent: 10, resetInfo: "", sessionPercent, sessionResetAt });
+
+  it("does not wait below 80% or when the session is unknown", () => {
+    expect(sessionWaitMs(at(79.9, now + 60_000), now)).toBe(0);
+    expect(sessionWaitMs(at(undefined), now)).toBe(0);
+  });
+
+  it("waits until a minute after the reset at 80% or more", () => {
+    expect(sessionWaitMs(at(80, now + 600_000), now)).toBe(660_000);
+  });
+
+  it("waits a fixed interval when the reset time is unknown or already past", () => {
+    expect(sessionWaitMs(at(95), now)).toBe(15 * 60_000);
+    expect(sessionWaitMs(at(95, now - 5_000), now)).toBe(60_000);
+  });
+
+  it("aborts a running agent only at 98% or more", () => {
+    expect(sessionAbortReason(at(97.9))).toBeUndefined();
+    expect(sessionAbortReason(at(98))).toMatch(/5-hour session/);
+  });
+
+  it("sleeps until the session has capacity, then returns", async () => {
+    const reads = [at(90, now + 120_000), at(10, now + 18_000_000)];
+    const sleeps: number[] = [];
+    const logs: string[] = [];
+    await waitForSessionCapacity({
+      snapshot: () => reads.shift()!, sleep: async ms => { sleeps.push(ms); }, log: m => logs.push(m), now: () => now,
+    });
+    expect(sleeps).toEqual([180_000]);
+    expect(logs.join()).toMatch(/5-hour session at 90%/);
+  });
+
+  it("carries on when usage cannot be read", async () => {
+    const logs: string[] = [];
+    await waitForSessionCapacity({
+      snapshot: () => { throw new Error("probe down"); }, sleep: async () => {}, log: m => logs.push(m), now: () => now,
+    });
+    expect(logs.join()).toMatch(/probe down/);
+  });
+
+  it("remembers the latest session reading on the night budget", () => {
+    const start = openNightBudget({ weeklyPercent: 3, resetInfo: "" });
+    expect(withCurrentUsage(start, { weeklyPercent: 4, resetInfo: "", sessionPercent: 42 }).sessionPercent).toBe(42);
   });
 });

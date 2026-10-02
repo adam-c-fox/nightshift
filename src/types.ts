@@ -79,6 +79,7 @@ export interface NightBudget {
   gateHit: boolean;
   unavailable: boolean;
   resetInfo: string;
+  sessionPercent?: number;
 }
 
 export interface SessionResult {

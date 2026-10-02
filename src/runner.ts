@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, LinearTicket, NightBudget } from "./types.js";
 import { loadTickets } from "./tickets.js";
 import { REPOS } from "./repos.js";
-import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, UsageUnavailableError } from "./budget.js";
+import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, markInProgress, shouldMarkInProgress } from "./linear.js";
 import { runAgent, runFix, runReview, type TicketBrief } from "./claude.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
@@ -37,6 +37,15 @@ function log(msg: string) {
     const today = localDate();
     appendFileSync(path.join(LOGS_DIR, `nightshift-${today}.log`), line + "\n");
   } catch { /* best effort */ }
+}
+
+function waitForSession(): Promise<void> {
+  return waitForSessionCapacity({
+    snapshot: () => snapshotUsage(),
+    sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    log,
+    now: Date.now,
+  });
 }
 
 function logUsageFailure(e: unknown, prefix = "") {
@@ -200,7 +209,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
   const continuing = existing !== null && (dryRun || wt.startedFromPr);
   const agentContext = continuing ? [continuingPrContext(existing.prId), ...context] : context;
 
-  const shouldAbort = () => {
+  const weeklyGateReason = () => {
     try {
       budgetRef.current = checkGate(budgetRef.current, 1);
     } catch (e) {
@@ -212,7 +221,9 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
       ? `budget cap reached mid-ticket (${budgetRef.current.currentPct}% ≥ ${budgetRef.current.capPct}%)`
       : undefined;
   };
+  const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
   const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(repo, ROOT) };
+  if (!dryRun) await waitForSession();
   const result = await runAgent(
     wt.wtPath, ticketId, ticketName, agentContext,
     linearDesc, linearUrl, linearState, dryRun, agentOptions,
@@ -261,9 +272,15 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
     const stage = await reviewAndFix(outcome.publish, {
       hasChanges: () => hasChangesVsBase(wt),
       snapshot: () => worktreeSnapshot(wt),
-      gateOpen: () => shouldAbort() === undefined,
-      review: () => runReview(wt.wtPath, brief, report, wt.baseRef, agentOptions),
-      fix: findings => runFix(wt.wtPath, brief, findings, agentOptions),
+      gateOpen: () => weeklyGateReason() === undefined,
+      review: async () => {
+        await waitForSession();
+        return runReview(wt.wtPath, brief, report, wt.baseRef, agentOptions);
+      },
+      fix: async findings => {
+        await waitForSession();
+        return runFix(wt.wtPath, brief, findings, agentOptions);
+      },
       saveOutput: (name, raw) => saveLog(`${ticketId}-${name}.txt`, raw),
       log,
     }).catch((e): ReviewStageOutcome => {
@@ -302,9 +319,10 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
           const target = pushedTo;
           const logSource = azCiSource(orgUrl(requireEnv("AZURE_DEVOPS_ORG")), requireEnv("AZURE_DEVOPS_PROJECT"));
           const fix = await fixFailingChecks(pr, { ticketId, title: ticketResult.title ?? "" }, {
-            runAgent: context => runAgent(
-              wt.wtPath, ticketId, ticketName, context, linearDesc, linearUrl, linearState, false, agentOptions,
-            ),
+            runAgent: async context => {
+              await waitForSession();
+              return runAgent(wt.wtPath, ticketId, ticketName, context, linearDesc, linearUrl, linearState, false, agentOptions);
+            },
             commit: subject => {
               const outcome = commitWorktree(wt, subject, log);
               if (outcome !== "no_changes" && excludedPathsInBranch(wt).length > 0) throw new Error("CI fix touched excluded files; not pushing.");
@@ -312,7 +330,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
             },
             publish: () => updateAndCheckPR(target, wt.branch, wt.wtPath, { log }),
             fetchLogs: checks => fetchCiFailures(checks, logSource),
-            gateOpen: () => shouldAbort() === undefined,
+            gateOpen: () => weeklyGateReason() === undefined,
             log,
           });
           settleCi(ticketResult, fix);

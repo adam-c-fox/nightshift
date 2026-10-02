@@ -13,7 +13,14 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 export interface UsageSnapshot {
   weeklyPercent: number;
   resetInfo: string;
+  sessionPercent?: number;
+  sessionResetAt?: number;
 }
+
+export const SESSION_WAIT_PCT = 80;
+export const SESSION_ABORT_PCT = 98;
+const SESSION_RESET_MARGIN_MS = 60_000;
+const SESSION_UNKNOWN_RESET_WAIT_MS = 15 * 60_000;
 
 export function parseUsageOutput(output: string): UsageSnapshot {
   const weekLine = output.match(/^.*Current week \(all models\).*$/im)?.[0]
@@ -23,9 +30,11 @@ export function parseUsageOutput(output: string): UsageSnapshot {
     throw new Error("Could not find weekly usage in `claude -p /usage` output");
   }
   const reset = weekLine.match(/resets\s+(.+?)\s*$/i);
+  const session = output.match(/^.*Current session[^:\n]*:\s*(\d+(?:\.\d+)?)%\s*used/im);
   return {
     weeklyPercent: parseFloat(percent[1]),
     resetInfo: reset ? reset[1].trim() : "unknown",
+    ...(session ? { sessionPercent: parseFloat(session[1]) } : {}),
   };
 }
 
@@ -77,7 +86,15 @@ export function parseRateLimitHeaders(response: string): UsageSnapshot {
         timeZone: TIME_ZONE, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
       })} (${TIME_ZONE})`
     : "unknown";
-  return { weeklyPercent: Math.round(parseFloat(utilization) * 1000) / 10, resetInfo };
+  const toPercent = (fraction: string) => Math.round(parseFloat(fraction) * 1000) / 10;
+  const sessionUtilization = header("5h-utilization");
+  const sessionReset = header("5h-reset");
+  return {
+    weeklyPercent: toPercent(utilization),
+    resetInfo,
+    ...(sessionUtilization !== undefined ? { sessionPercent: toPercent(sessionUtilization) } : {}),
+    ...(sessionReset ? { sessionResetAt: Number(sessionReset) * 1000 } : {}),
+  };
 }
 
 function runUsageProbe(token: string): UsageCommandResult {
@@ -187,9 +204,47 @@ export function withCurrentUsage(budget: NightBudget, snapshot: UsageSnapshot): 
       currentPct: now,
       gateHit: remaining <= 0,
       resetInfo: snapshot.resetInfo,
+      sessionPercent: snapshot.sessionPercent,
     };
   }
-  return { ...budget, currentPct: now, gateHit: now >= budget.capPct, resetInfo: snapshot.resetInfo };
+  return { ...budget, currentPct: now, gateHit: now >= budget.capPct, resetInfo: snapshot.resetInfo, sessionPercent: snapshot.sessionPercent };
+}
+
+export function sessionWaitMs(snapshot: UsageSnapshot, now: number): number {
+  if (snapshot.sessionPercent === undefined || snapshot.sessionPercent < SESSION_WAIT_PCT) return 0;
+  if (snapshot.sessionResetAt === undefined) return SESSION_UNKNOWN_RESET_WAIT_MS;
+  return Math.max(snapshot.sessionResetAt - now, 0) + SESSION_RESET_MARGIN_MS;
+}
+
+export function sessionAbortReason(snapshot: Pick<UsageSnapshot, "sessionPercent">): string | undefined {
+  const pct = snapshot.sessionPercent;
+  return pct !== undefined && pct >= SESSION_ABORT_PCT
+    ? `5-hour session limit nearly reached (${pct}% ≥ ${SESSION_ABORT_PCT}%)`
+    : undefined;
+}
+
+export interface SessionWaitDeps {
+  snapshot: () => UsageSnapshot;
+  sleep: (ms: number) => Promise<void>;
+  log: (msg: string) => void;
+  now: () => number;
+}
+
+export async function waitForSessionCapacity(deps: SessionWaitDeps): Promise<void> {
+  for (;;) {
+    let snapshot: UsageSnapshot;
+    try {
+      snapshot = deps.snapshot();
+    } catch (e) {
+      deps.log(`  Could not read 5-hour session usage, continuing: ${(e as Error).message}`);
+      return;
+    }
+    const wait = sessionWaitMs(snapshot, deps.now());
+    if (wait === 0) return;
+    const until = new Date(deps.now() + wait).toLocaleTimeString("en-US", { timeZone: TIME_ZONE, hour: "numeric", minute: "2-digit" });
+    deps.log(`  5-hour session at ${snapshot.sessionPercent}%; waiting until ${until} for it to reset`);
+    await deps.sleep(wait);
+  }
 }
 
 export function startNightBudget(): NightBudget {
