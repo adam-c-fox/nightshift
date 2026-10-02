@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { pushBranch } from "../src/pr.js";
-import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, ticketBranchName, worktreePath, type WorktreeSpec } from "../src/worktree.js";
+import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, hasChangesVsBase, ticketBranchName, worktreeSnapshot, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -291,5 +291,54 @@ describe("createWorktree startFrom", () => {
     writeFileSync(join(wt.wtPath, "more.ts"), "export {};\n");
     commitWorktree(wt, "more", noop);
     expect(() => pushBranch(wt.wtPath, wt.branch, prBranch)).toThrow();
+  });
+});
+
+describe("worktreeSnapshot and hasChangesVsBase", () => {
+  let wt: ReturnType<typeof createWorktree>;
+  beforeEach(() => {
+    const env = makeRepo();
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop);
+  });
+
+  it("is stable while nothing changes", () => {
+    expect(worktreeSnapshot(wt)).toBe(worktreeSnapshot(wt));
+  });
+
+  it("changes when an untracked file is added or its content edited", () => {
+    const clean = worktreeSnapshot(wt);
+    writeFileSync(join(wt.wtPath, "new.ts"), "a");
+    const added = worktreeSnapshot(wt);
+    writeFileSync(join(wt.wtPath, "new.ts"), "b");
+    const edited = worktreeSnapshot(wt);
+    expect(new Set([clean, added, edited]).size).toBe(3);
+  });
+
+  it("changes when a tracked file is edited again after it was already dirty", () => {
+    writeFileSync(join(wt.wtPath, ".gitignore"), "node_modules/\nx\n");
+    const first = worktreeSnapshot(wt);
+    writeFileSync(join(wt.wtPath, ".gitignore"), "node_modules/\ny\n");
+    expect(worktreeSnapshot(wt)).not.toBe(first);
+  });
+
+  it("ignores node_modules", () => {
+    const clean = worktreeSnapshot(wt);
+    writeFileSync(join(wt.wtPath, "node_modules", "pkg.js"), "x");
+    expect(worktreeSnapshot(wt)).toBe(clean);
+  });
+
+  it("changes when HEAD moves", () => {
+    const clean = worktreeSnapshot(wt);
+    run(wt.wtPath, "-c", "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty", "-m", "x");
+    expect(worktreeSnapshot(wt)).not.toBe(clean);
+  });
+
+  it("reports changes vs base for uncommitted work and for commits, not for a clean tree", () => {
+    expect(hasChangesVsBase(wt)).toBe(false);
+    writeFileSync(join(wt.wtPath, "new.ts"), "a");
+    expect(hasChangesVsBase(wt)).toBe(true);
+    run(wt.wtPath, "add", "new.ts");
+    run(wt.wtPath, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "x");
+    expect(hasChangesVsBase(wt)).toBe(true);
   });
 });

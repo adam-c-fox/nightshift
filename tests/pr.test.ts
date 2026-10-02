@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildPrDescription, buildPrTitle, buildPrWebUrl, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
+import type { TicketResult } from "../src/types.js";
+import { buildPrDescription, buildPrTitle, buildPrWebUrl, prContent, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -288,5 +289,34 @@ describe("prAction", () => {
 
   it("holds when the PR has auto-complete set", () => {
     expect(prAction(existing(true), true)).toBe("hold");
+  });
+});
+
+describe("PR content", () => {
+  const result: TicketResult = {
+    ticket: { id: "ENG-1", name: "Export", context: [], repo: "main" },
+    linear: { id: "l", identifier: "ENG-1", name: "Export", description: "", state: "Todo", stateType: "unstarted", url: "https://linear.app/x/ENG-1" },
+    status: "needs_review", title: "feat: stream csv export", summary: "Streams rows to the response.",
+    filesCreated: [], filesModified: [], tests: [], verifyCommands: ["npx vitest run"],
+    notes: "Review found 2 issue(s); 1 fixed. Flaky reviewer note.",
+    worktreePath: "/w", branch: "b", durationSec: 1,
+    review: {
+      outcome: "reviewed",
+      findings: [{ id: "R1", severity: "blocker", file: "src/export.ts", issue: "Buffers everything in memory.", suggestion: "Use a stream." }],
+      resolutions: [{ id: "R1", status: "fixed", how: "Switched to a stream." }],
+    },
+  };
+
+  it("never carries review text into the title or description", () => {
+    const content = prContent(result);
+    const text = [
+      buildPrTitle(content.ticketId, content.title, content.summary),
+      buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl),
+    ].join("\n");
+    for (const leaked of ["Buffers everything", "Use a stream", "Switched to a stream", "R1", "blocker", "src/export.ts", "Review found", "Flaky reviewer", "review"]) {
+      expect(text).not.toContain(leaked);
+    }
+    expect(text).toContain("feat: stream csv export (ENG-1)");
+    expect(text).toContain("Streams rows to the response.");
   });
 });

@@ -26,6 +26,29 @@ export interface TestResult {
   result: "pass" | "fail";
 }
 
+export type Severity = "blocker" | "major" | "minor";
+
+export interface ReviewFinding {
+  id: string;
+  severity: Severity;
+  file: string;
+  issue: string;
+  suggestion: string;
+}
+
+export interface FixResolution {
+  id: string;
+  status: "fixed" | "not_fixed";
+  how: string;
+}
+
+export interface TicketReview {
+  outcome: "reviewed" | "skipped" | "failed";
+  reason?: string;
+  findings: ReviewFinding[];
+  resolutions: FixResolution[];
+}
+
 export type PipelineStatus = "succeeded" | "failed" | "unknown";
 
 export interface TicketResult {
@@ -45,6 +68,7 @@ export interface TicketResult {
   prUrl?: string;
   prId?: number;
   pipelineStatus?: PipelineStatus;
+  review?: TicketReview;
 }
 
 export interface NightBudget {

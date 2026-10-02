@@ -5,16 +5,17 @@ import { loadTickets } from "./tickets.js";
 import { REPOS } from "./repos.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, UsageUnavailableError } from "./budget.js";
 import { fetchTicket, markInProgress, shouldMarkInProgress } from "./linear.js";
-import { runAgent } from "./claude.js";
+import { runAgent, runFix, runReview, type TicketBrief } from "./claude.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, requireEnv } from "./env.js";
 import { deriveOutcome } from "./status.js";
-import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
+import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
 import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
+import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { writeReport } from "./report.js";
 import { localDate, TIME_ZONE } from "./time.js";
-import { createWorktree, ticketBranchName, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
+import { createWorktree, ticketBranchName, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
@@ -71,15 +72,9 @@ function applyPipelineStatus(result: TicketResult, pr: PRResult): void {
 }
 
 async function openPullRequest(result: TicketResult, baseBranch: string): Promise<PRResult> {
-  const { ticket, branch, worktreePath } = result;
+  const { branch, worktreePath } = result;
   log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
-  const pr = await createAndCheckPR(
-    {
-      ticketId: ticket.id, title: result.title ?? "", summary: result.summary,
-      verifyCommands: result.verifyCommands, ticketUrl: result.linear?.url,
-    },
-    branch, baseBranch, worktreePath, { log },
-  );
+  const pr = await createAndCheckPR(prContent(result), branch, baseBranch, worktreePath, { log });
   applyPipelineStatus(result, pr);
   return pr;
 }
@@ -133,6 +128,22 @@ async function startLinearTicket(linear: LinearTicket): Promise<void> {
   } catch (e) {
     log(`  Linear: could not move ${linear.identifier} to ${target.name}: ${(e as Error).message}`);
   }
+}
+
+function saveLog(name: string, text: string): void {
+  try {
+    mkdirSync(LOGS_DIR, { recursive: true });
+    writeFileSync(path.join(LOGS_DIR, name), text, "utf-8");
+  } catch (e) {
+    log(`  Could not save ${name}: ${(e as Error).message}`);
+  }
+}
+
+function applyReviewStage(result: TicketResult, stage: ReviewStageOutcome): void {
+  result.review = stage.review;
+  result.notes = [result.notes, ...stage.notes].filter(Boolean).join(" | ");
+  if (stage.needsReview) result.status = "needs_review";
+  if (stage.fixReport) Object.assign(result, mergeFixReport({ ...result, title: result.title ?? "" }, stage.fixReport));
 }
 
 function lookUpExistingPr(expectedBranch: string, repoPath: string): ExistingPr | null {
@@ -236,6 +247,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
   ticketResult.notes = [ticketResult.notes, ...outcome.notes].filter(Boolean).join(" | ");
 
   if (dryRun) {
+    log(`  [dry-run] Would review the change on ${wt.branch}, then fix any issues found`);
     const action = prAction(existing, true);
     log(action === "update"
       ? `  [dry-run] Would push to existing PR #${existing!.prId} branch ${existing!.sourceBranch}`
@@ -243,12 +255,27 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
         ? `  [dry-run] Would commit on ${wt.branch} but not push: PR #${existing!.prId} has auto-complete set`
         : `  [dry-run] Would commit, push ${wt.branch} and open a new Azure DevOps PR into ${wt.baseBranch}`);
   } else {
-    try {
-      mkdirSync(LOGS_DIR, { recursive: true });
-      writeFileSync(path.join(LOGS_DIR, `${ticketId}-output.txt`), result.rawOutput, "utf-8");
-    } catch (e) {
-      log(`  Could not save agent output: ${(e as Error).message}`);
-    }
+    saveLog(`${ticketId}-output.txt`, result.rawOutput);
+
+    const brief: TicketBrief = { ticketId, ticketName, context: agentContext, linearDesc, linearUrl, state: linearState };
+    const stage = await reviewAndFix(outcome.publish, {
+      hasChanges: () => hasChangesVsBase(wt),
+      snapshot: () => worktreeSnapshot(wt),
+      gateOpen: () => shouldAbort() === undefined,
+      review: () => runReview(wt.wtPath, brief, report, wt.baseRef, agentOptions),
+      fix: findings => runFix(wt.wtPath, brief, findings, agentOptions),
+      saveOutput: (name, raw) => saveLog(`${ticketId}-${name}.txt`, raw),
+      log,
+    }).catch((e): ReviewStageOutcome => {
+      const reason = errorMessage(e);
+      log(`  Review stage errored for ${ticketId}: ${reason}`);
+      return {
+        review: { outcome: "failed", reason, findings: [], resolutions: [] },
+        publish: false, needsReview: true, notes: [`Review stage errored: ${reason}; work kept on local branch, not pushed.`],
+      };
+    });
+    applyReviewStage(ticketResult, stage);
+    const publish = outcome.publish && stage.publish;
 
     try {
       const commit = commitWorktree(wt, buildPrTitle(ticketId, ticketResult.title ?? "", ticketResult.summary), log);
@@ -258,7 +285,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
         log(`  Not publishing ${wt.branch}: contains excluded files (${listed})`);
         ticketResult.status = "needs_review";
         ticketResult.notes = [ticketResult.notes, `Branch contains excluded files (${listed}); not pushed.`].filter(Boolean).join(" | ");
-      } else if (commit !== "no_changes" && outcome.publish) {
+      } else if (commit !== "no_changes" && publish) {
         const action = prAction(existing, wt.startedFromPr);
         let pr: PRResult | undefined;
         let pushedTo: ExistingPr | undefined;
@@ -291,7 +318,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
           settleCi(ticketResult, fix);
         }
       } else if (commit !== "no_changes") {
-        log(`  Not publishing ${wt.branch}: ${outcome.notes.join(" ")}`);
+        log(`  Not publishing ${wt.branch}: ${[...outcome.notes, ...stage.notes].join(" ")}`);
       }
     } catch (e) {
       const message = errorMessage(e);

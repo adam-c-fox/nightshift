@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { getEnv, requireEnv } from "./env.js";
-import type { PipelineStatus } from "./types.js";
+import type { PipelineStatus, TicketResult } from "./types.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -93,6 +93,13 @@ export interface PrContent {
   summary: string;
   verifyCommands: string[];
   ticketUrl?: string;
+}
+
+export function prContent(result: TicketResult): PrContent {
+  return {
+    ticketId: result.ticket.id, title: result.title ?? "", summary: result.summary,
+    verifyCommands: result.verifyCommands, ticketUrl: result.linear?.url,
+  };
 }
 
 export function buildPrDescription(ticketId: string, summary: string, verifyCommands: string[], ticketUrl?: string): string {

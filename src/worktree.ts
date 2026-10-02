@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import type { RepoKind } from "./types.js";
 
@@ -205,4 +206,27 @@ const isExcludedPath = (file: string): boolean =>
 
 export function excludedPathsInBranch(wt: Worktree): string[] {
   return git(["diff", "--name-only", `${wt.baseRef}..HEAD`], wt.wtPath).split("\n").filter(isExcludedPath);
+}
+
+export function hasChangesVsBase(wt: Worktree): boolean {
+  return git(["status", "--porcelain", ...PATHSPEC], wt.wtPath).trim() !== "" || commitsAhead(wt) > 0;
+}
+
+function fileFingerprint(filePath: string): Buffer | string {
+  const stat = lstatSync(filePath);
+  if (stat.isSymbolicLink()) return `link:${readlinkSync(filePath)}`;
+  return stat.isFile() ? readFileSync(filePath) : "other";
+}
+
+export function worktreeSnapshot(wt: Worktree): string {
+  const hash = createHash("sha256");
+  const untracked = git(["ls-files", "--others", "--exclude-standard", "-z", ...PATHSPEC], wt.wtPath).split("\0").filter(Boolean).sort();
+  hash.update(git(["rev-parse", "HEAD"], wt.wtPath));
+  hash.update(git(["status", "--porcelain", ...PATHSPEC], wt.wtPath));
+  hash.update(git(["diff", "HEAD", ...PATHSPEC], wt.wtPath));
+  for (const file of untracked) {
+    hash.update(`\0${file}\0`);
+    hash.update(fileFingerprint(path.join(wt.wtPath, file)));
+  }
+  return hash.digest("hex");
 }

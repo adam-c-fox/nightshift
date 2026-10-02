@@ -1,6 +1,6 @@
-import { writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import type { SessionResult, TicketResult } from "./types.js";
+import type { FixResolution, ReviewFinding, SessionResult, TicketResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 
 const REPORTS_DIR = path.resolve(import.meta.dirname, "..", "reports");
@@ -30,6 +30,35 @@ function prLinksHTML(t: TicketResult): string {
         <a href="${esc(t.prUrl)}" target="_blank" class="pr-link">Open PR${t.prId ? ` #${t.prId}` : ""} →</a>
         ${badge ? `<span class="ci-badge" style="background:${badge.color}">${badge.label}</span>` : ""}
       </div>`;
+}
+
+function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefined): string {
+  const resolved = resolution
+    ? `<div class="res res-${resolution.status}"><strong>${resolution.status === "fixed" ? "Fixed" : "Not fixed"}:</strong> ${esc(resolution.how)}</div>`
+    : "";
+  return `<li class="finding">
+           <div class="finding-head">
+             <span class="sev sev-${finding.severity}">${finding.severity}</span>
+             <span class="finding-id">${esc(finding.id)}</span>
+             <code class="finding-file">${esc(finding.file)}</code>
+           </div>
+           <div>${esc(finding.issue)}</div>
+           <div class="finding-suggestion">Suggestion: ${esc(finding.suggestion)}</div>
+           ${resolved}
+         </li>`;
+}
+
+function reviewHTML(t: TicketResult): string {
+  const review = t.review;
+  if (!review) return "";
+  if (review.outcome !== "reviewed") {
+    return `<div class="review review-${review.outcome}">Review ${review.outcome}: ${esc(review.reason ?? "")}</div>`;
+  }
+  if (review.findings.length === 0) {
+    return `<div class="review"><strong>Review: no issues found</strong></div>`;
+  }
+  const items = review.findings.map(f => findingHTML(f, review.resolutions.find(r => r.id === f.id))).join("");
+  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong><ul class="findings">${items}</ul></div>`;
 }
 
 function ticketCardHTML(t: TicketResult): string {
@@ -73,6 +102,7 @@ function ticketCardHTML(t: TicketResult): string {
       ${files ? `<ul class="files">${files}</ul>` : ""}
       ${tests}
       ${verify}
+      ${reviewHTML(t)}
       ${notes}
       <div class="meta">
         <span>Branch: <code>${esc(t.branch)}</code></span>
@@ -188,6 +218,21 @@ export function generateHTML(session: SessionResult): string {
   .verify ol { margin-left: 1.2rem; margin-top: 0.3rem; }
   .verify code { background: var(--bg); padding: 0.15rem 0.4rem; border-radius: 4px;
                  font-size: 0.85rem; display: inline-block; margin: 0.1rem 0; }
+  .review { font-size: 0.9rem; margin-bottom: 0.75rem; }
+  .review-skipped, .review-failed { color: var(--text-dim); }
+  .findings { list-style: none; margin-top: 0.4rem; }
+  .finding { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; }
+  .finding-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.2rem; }
+  .finding-id { font-weight: 700; font-family: ui-monospace, monospace; }
+  .finding-file { color: var(--text-dim); font-size: 0.8rem; }
+  .finding-suggestion { color: var(--text-dim); }
+  .sev { color: #fff; font-size: 0.65rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: 4px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .sev-blocker { background: #ef4444; }
+  .sev-major { background: #f97316; }
+  .sev-minor { background: #6b7280; }
+  .res { margin-top: 0.3rem; }
+  .res-fixed { color: #22c55e; }
+  .res-not_fixed { color: #ef4444; }
   .notes { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 0.75rem; }
   .meta { display: flex; gap: 1.5rem; font-size: 0.8rem; color: var(--text-dim);
           border-top: 1px solid var(--border); padding-top: 0.75rem; margin-top: 0.5rem; }
@@ -221,9 +266,17 @@ export function generateHTML(session: SessionResult): string {
 </html>`;
 }
 
+export function reportFilename(date: string, exists: (name: string) => boolean): string {
+  const base = `nightshift-${date}`;
+  if (!exists(`${base}.html`)) return `${base}.html`;
+  for (let n = 2; ; n++) {
+    if (!exists(`${base}-${n}.html`)) return `${base}-${n}.html`;
+  }
+}
+
 export function writeReport(session: SessionResult): string {
   mkdirSync(REPORTS_DIR, { recursive: true });
-  const filename = `nightshift-${session.date}.html`;
+  const filename = reportFilename(session.date, name => existsSync(path.join(REPORTS_DIR, name)));
   const filePath = path.join(REPORTS_DIR, filename);
   const html = generateHTML(session);
   writeFileSync(filePath, html, "utf-8");
