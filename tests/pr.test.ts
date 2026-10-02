@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrTitle, buildPrWebUrl, orgUrl, pickNightPr, policyListArgs, prAction, repoNameFromRemote, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrTitle, buildPrWebUrl, orgUrl, pickNightPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -43,6 +43,21 @@ describe("policyListArgs", () => {
   it("passes only flags the az command accepts", () => {
     expect(policyListArgs(42, "https://dev.azure.com/acme"))
       .toEqual(["repos", "pr", "policy", "list", "--id", "42", "--org", "https://dev.azure.com/acme"]);
+  });
+});
+
+describe("prCreateArgs", () => {
+  it("names the repository instead of relying on az detection", () => {
+    const args = prCreateArgs({
+      org: "https://dev.azure.com/acme", project: "Proj", repository: "Repo",
+      sourceBranch: "night/ENG-1", targetBranch: "main", title: "t", description: "d",
+    });
+    expect(args).toEqual([
+      "repos", "pr", "create",
+      "--org", "https://dev.azure.com/acme", "--project", "Proj", "--repository", "Repo",
+      "--source-branch", "night/ENG-1", "--target-branch", "main",
+      "--title", "t", "--description", "d",
+    ]);
   });
 });
 

@@ -228,6 +228,25 @@ function waitForPrPolicies(
   );
 }
 
+export interface PrCreateInput {
+  org: string;
+  project: string;
+  repository: string;
+  sourceBranch: string;
+  targetBranch: string;
+  title: string;
+  description: string;
+}
+
+export function prCreateArgs(pr: PrCreateInput): string[] {
+  return [
+    "repos", "pr", "create",
+    "--org", pr.org, "--project", pr.project, "--repository", pr.repository,
+    "--source-branch", pr.sourceBranch, "--target-branch", pr.targetBranch,
+    "--title", pr.title, "--description", pr.description,
+  ];
+}
+
 export function prShowArgs(prId: number, org: string): string[] {
   return ["repos", "pr", "show", "--id", String(prId), "--org", org];
 }
@@ -247,16 +266,15 @@ export async function createAndCheckPR(
 
   pushBranch(worktreePath, branch);
 
-  const created = az([
-    "repos", "pr", "create",
-    "--detect", "true",
-    "--org", org,
-    "--project", project,
-    "--source-branch", branch,
-    "--target-branch", targetBranch,
-    "--title", buildPrTitle(ticketId, summary),
-    "--description", buildPrDescription(ticketId, summary, verifyCommands),
-  ], worktreePath) as { pullRequestId: number; repository: { name: string } };
+  const created = az(prCreateArgs({
+    org,
+    project,
+    repository: repoNameFromRemote(originUrl(worktreePath)),
+    sourceBranch: branch,
+    targetBranch,
+    title: buildPrTitle(ticketId, summary),
+    description: buildPrDescription(ticketId, summary, verifyCommands),
+  }), worktreePath) as { pullRequestId: number; repository: { name: string } };
 
   const prId = created.pullRequestId;
   const url = buildPrWebUrl(org, project, created.repository.name, prId);
