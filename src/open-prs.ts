@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { getEnv } from "./env.js";
 import { REPOS } from "./repos.js";
 import { fetchTicket } from "./linear.js";
 import { findOpenTicketPr } from "./pr.js";
@@ -20,7 +21,7 @@ async function lookup(repo: RepoKind, id: string): Promise<object> {
     if (!repoPath) return { id, error: `unknown repo ${repo}` };
     const linear = await fetchTicket(id);
     if (!linear) return { id, error: `ticket ${id} not found in Linear` };
-    const pr = findOpenTicketPr(ticketBranchName(id, linear.name, linear.branchName), repoPath);
+    const pr = findOpenTicketPr(ticketBranchName(getEnv("BRANCH_PREFIX"), id, linear.name), repoPath);
     return { id, repo, pr: pr?.prId ?? null, branch: pr?.sourceBranch ?? null, ...(pr?.autoComplete ? { autoComplete: true } : {}) };
   } catch (e) {
     const firstLine = ((e as Error).message ?? String(e)).split("\n")[0];

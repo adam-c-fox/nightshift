@@ -33,20 +33,24 @@ function stderrOf(e: unknown): string {
   return err.stderr?.toString().trim() || err.message || String(e);
 }
 
-const FALLBACK_SLUG_MAX = 50;
+const SLUG_MAX = 32;
+const DANGLING_WORDS = new Set(["a", "an", "and", "the", "of", "for", "from", "to", "in", "on", "with", "by"]);
 
-export function fallbackBranchName(ticketId: string, ticketName: string): string {
-  const slug = ticketName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, FALLBACK_SLUG_MAX)
-    .replace(/-+$/, "");
-  return slug === "" ? ticketId.toLowerCase() : `${ticketId.toLowerCase()}-${slug}`;
+function slugWords(ticketName: string): string[] {
+  const words = ticketName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const kept: string[] = [];
+  for (const word of words) {
+    if ([...kept, word].join("-").length > SLUG_MAX) break;
+    kept.push(word);
+  }
+  while (kept.length > 1 && DANGLING_WORDS.has(kept[kept.length - 1])) kept.pop();
+  return kept;
 }
 
-export function ticketBranchName(ticketId: string, ticketName: string, linearBranchName: string | null | undefined): string {
-  return linearBranchName?.trim() || fallbackBranchName(ticketId, ticketName);
+export function ticketBranchName(prefix: string | undefined, ticketId: string, ticketName: string): string {
+  const name = [ticketId.toLowerCase(), ...slugWords(ticketName)].join("-");
+  const cleanPrefix = prefix?.trim().replace(/\/+$/, "");
+  return cleanPrefix ? `${cleanPrefix}/${name}` : name;
 }
 
 export function chooseBranchName(base: string, exists: (name: string) => boolean): string {

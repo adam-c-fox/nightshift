@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { pushBranch } from "../src/pr.js";
-import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, fallbackBranchName, ticketBranchName, worktreePath, type WorktreeSpec } from "../src/worktree.js";
+import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, ticketBranchName, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -30,23 +30,21 @@ export function makeRepo(): { root: string; repoPath: string; worktreesDir: stri
 const noop = () => {};
 
 describe("naming", () => {
-  it("uses Linear's branch name when it has one", () => {
-    expect(ticketBranchName("DEMO-500", "Export runs schema", "adamfox/demo-500-export-runs-schema")).toBe("adamfox/demo-500-export-runs-schema");
+  it("builds prefix/id-slug like a hand-made branch", () => {
+    expect(ticketBranchName("adamfox", "DEMO-500", "Export runs: schema & store!")).toBe("adamfox/demo-500-export-runs-schema-store");
   });
 
-  it("falls back to the lowercased id and a slug of the ticket name without Linear", () => {
-    expect(ticketBranchName("DEMO-500", "Export runs: schema & store!", null)).toBe("demo-500-export-runs-schema-store");
-    expect(fallbackBranchName("ENG-1", "  --Fix CSV export--  ")).toBe("eng-1-fix-csv-export");
+  it("cuts the slug at a word boundary and drops dangling small words", () => {
+    expect(ticketBranchName("adamfox", "DEMO-503", "export-generation: document path from download to upload"))
+      .toBe("adamfox/demo-503-export-generation-document-path");
   });
 
-  it("caps the fallback slug near 50 characters without a trailing dash", () => {
-    const name = fallbackBranchName("ENG-1", "word ".repeat(30));
-    expect(name.length).toBeLessThanOrEqual("eng-1-".length + 50);
-    expect(name.endsWith("-")).toBe(false);
+  it("omits the prefix when none is configured", () => {
+    expect(ticketBranchName(undefined, "ENG-1", "  --Fix CSV export--  ")).toBe("eng-1-fix-csv-export");
   });
 
   it("keeps the id alone when the name has no usable characters", () => {
-    expect(fallbackBranchName("ENG-1", "???")).toBe("eng-1");
+    expect(ticketBranchName("adamfox", "ENG-1", "???")).toBe("adamfox/eng-1");
   });
 
   it("chooses the first free numbered name when the base is taken", () => {

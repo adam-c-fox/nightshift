@@ -14,13 +14,15 @@ import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { writeReport } from "./report.js";
 import { localDate, TIME_ZONE } from "./time.js";
-import { createWorktree, fallbackBranchName, ticketBranchName, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
+import { createWorktree, ticketBranchName, commitWorktree, excludedPathsInBranch, worktreePath, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
 const LOGS_DIR = path.join(ROOT, "logs");
 
 const DRY_RUN = process.argv.includes("--dry-run");
+
+const BRANCH_PREFIX = getEnv("BRANCH_PREFIX");
 
 const claudeToken = getEnv(CLAUDE_TOKEN);
 if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
@@ -52,7 +54,7 @@ function placeholderResult(ticket: Ticket, status: TicketResult["status"], summa
     ticket, linear: null, status, summary,
     filesCreated: [], filesModified: [], tests: [],
     verifyCommands: [], notes: "",
-    worktreePath: "", branch: fallbackBranchName(ticket.id, ticket.name), durationSec: 0,
+    worktreePath: "", branch: ticketBranchName(BRANCH_PREFIX, ticket.id, ticket.name), durationSec: 0,
   };
 }
 
@@ -142,7 +144,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
   const startTime = Date.now();
   const plannedPath = worktreePath(WORKTREES_DIR, repo, ticketId);
   let wt: Worktree = {
-    wtPath: plannedPath, branch: fallbackBranchName(ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
+    wtPath: plannedPath, branch: ticketBranchName(BRANCH_PREFIX, ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
   };
 
   log(`\n── Ticket ${ticketId} – ${ticketName} [${repo}] ──`);
@@ -163,7 +165,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
     log(`  Linear fetch error: ${(e as Error).message}`);
   }
 
-  const branchBase = ticketBranchName(ticketId, ticketName, linear?.branchName);
+  const branchBase = ticketBranchName(BRANCH_PREFIX, ticketId, linear?.name ?? ticketName);
   wt.branch = branchBase;
   const existing = lookUpExistingPr(branchBase, repoPath);
   if (dryRun) {
