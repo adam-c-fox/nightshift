@@ -4,7 +4,7 @@ import type { Ticket, TicketResult, SessionResult, LinearTicket, NightBudget } f
 import { loadTickets } from "./tickets.js";
 import { REPOS } from "./repos.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, UsageUnavailableError } from "./budget.js";
-import { fetchTicket } from "./linear.js";
+import { fetchTicket, markInProgress, shouldMarkInProgress } from "./linear.js";
 import { runAgent } from "./claude.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, requireEnv } from "./env.js";
@@ -124,6 +124,17 @@ function holdForAutoComplete(result: TicketResult, existing: ExistingPr): void {
   result.notes = [result.notes, `PR #${existing.prId} has auto-complete set; not pushing agent commits to it.`].filter(Boolean).join(" | ");
 }
 
+async function startLinearTicket(linear: LinearTicket): Promise<void> {
+  const target = linear.inProgressState;
+  if (!target || !shouldMarkInProgress(linear.stateType)) return;
+  try {
+    await markInProgress(linear.id, target.id);
+    log(`  Linear: moved ${linear.identifier} to ${target.name}`);
+  } catch (e) {
+    log(`  Linear: could not move ${linear.identifier} to ${target.name}: ${(e as Error).message}`);
+  }
+}
+
 function lookUpExistingPr(expectedBranch: string, repoPath: string): ExistingPr | null {
   try {
     const existing = findOpenTicketPr(expectedBranch, repoPath);
@@ -158,6 +169,7 @@ async function processTicket(ticket: Ticket, dryRun: boolean, budgetRef: { curre
       linearUrl = linear.url;
       linearState = linear.state;
       log(`  Linear: ${linear.name} [${linear.state}]`);
+      if (!dryRun) await startLinearTicket(linear);
     } else {
       log(`  Linear: ticket ${ticketId} not found (using tonight.md context only)`);
     }

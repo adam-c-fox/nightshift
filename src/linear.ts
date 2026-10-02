@@ -5,14 +5,65 @@ export type { LinearTicket };
 
 const BASE_URL = "https://api.linear.app/graphql";
 
+export interface WorkflowState {
+  id: string;
+  name: string;
+  type: string;
+  position: number;
+}
+
 interface IssueResponse {
   data?: { issue?: {
     id: string; identifier: string; title: string;
     description: string | null;
-    state: { name: string } | null;
+    state: { name: string; type: string } | null;
+    team: { states: { nodes: WorkflowState[] } } | null;
     url: string;
   } | null };
   errors?: { message: string }[];
+}
+
+const NOT_STARTED_TYPES = ["backlog", "unstarted", "triage"];
+
+export function shouldMarkInProgress(stateType: string): boolean {
+  return NOT_STARTED_TYPES.includes(stateType);
+}
+
+export function pickInProgressState(states: WorkflowState[]): WorkflowState | undefined {
+  const started = states.filter(s => s.type === "started").sort((a, b) => a.position - b.position);
+  return started.find(s => s.name.toLowerCase() === "in progress") ?? started[0];
+}
+
+async function linearRequest<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  const res = await fetch(BASE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": authorizationHeader(requireEnv("LINEAR_API_KEY")),
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Linear API ${res.status}: ${body.slice(0, 200)}`);
+  }
+  return (await res.json()) as T;
+}
+
+export async function markInProgress(issueId: string, stateId: string): Promise<void> {
+  const mutation = `
+    mutation MarkInProgress($id: String!, $stateId: String!) {
+      issueUpdate(id: $id, input: { stateId: $stateId }) { success }
+    }
+  `;
+  const json = await linearRequest<{ data?: { issueUpdate?: { success: boolean } }; errors?: { message: string }[] }>(
+    mutation, { id: issueId, stateId },
+  );
+  if (!json.data?.issueUpdate?.success) {
+    const reason = json.errors?.map(e => e.message).join("; ") ?? "no error given";
+    throw new Error(`Linear issue ${issueId} not updated: ${reason.slice(0, 200)}`);
+  }
 }
 
 export function authorizationHeader(apiKey: string): string {
@@ -27,27 +78,14 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
         identifier
         title
         description
-        state { name }
+        state { name type }
+        team { states { nodes { id name type position } } }
         url
       }
     }
   `;
 
-  const res = await fetch(BASE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": authorizationHeader(requireEnv("LINEAR_API_KEY")),
-    },
-    body: JSON.stringify({ query, variables: { id: identifier } }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Linear API ${res.status}: ${body.slice(0, 200)}`);
-  }
-
-  const json = (await res.json()) as IssueResponse;
+  const json = await linearRequest<IssueResponse>(query, { id: identifier });
 
   if (json.errors?.length && !json.data?.issue) {
     const notFound = json.errors.every(e => /not found/i.test(e.message));
@@ -64,6 +102,8 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
     name: issue.title,
     description: issue.description ?? "",
     state: issue.state?.name ?? "unknown",
+    stateType: issue.state?.type ?? "unknown",
+    inProgressState: pickInProgressState(issue.team?.states.nodes ?? []),
     url: issue.url,
   };
 }
