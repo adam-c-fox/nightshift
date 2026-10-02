@@ -47,12 +47,25 @@ export interface ReviewRisk {
   risk: string;
 }
 
+export interface VerifyResult {
+  id: string;
+  status: "resolved" | "unresolved";
+  note: string;
+}
+
+export interface FixVerification {
+  outcome: "verified" | "skipped" | "failed";
+  reason?: string;
+  results: VerifyResult[];
+}
+
 export interface TicketReview {
   outcome: "reviewed" | "skipped" | "failed";
   reason?: string;
   findings: ReviewFinding[];
   resolutions: FixResolution[];
   risks?: ReviewRisk[];
+  verification?: FixVerification;
 }
 
 export interface CheckRecord {
@@ -65,6 +78,11 @@ export interface CheckRecord {
 
 export type PipelineStatus = "succeeded" | "failed" | "unknown";
 
+export interface Followup {
+  file: string;
+  note: string;
+}
+
 export interface TicketResult {
   ticket: Ticket;
   linear: LinearTicket | null;
@@ -76,6 +94,7 @@ export interface TicketResult {
   tests: TestResult[];
   verifyCommands: string[];
   notes: string;
+  followups: Followup[];
   worktreePath: string;
   branch: string;
   durationSec: number;
@@ -97,6 +116,22 @@ export interface NightBudget {
   sessionPercent?: number;
 }
 
+export interface PostmortemSuggestion {
+  id: string;
+  target: string;
+  tickets: string[];
+  problem: string;
+  cause: string;
+  change: string;
+}
+
+export interface SessionPostmortem {
+  outcome: "done" | "skipped" | "failed";
+  reason?: string;
+  suggestions: PostmortemSuggestion[];
+  file?: string;
+}
+
 export interface SessionResult {
   date: string;
   startedAt: string;
@@ -106,4 +141,5 @@ export interface SessionResult {
   gateHit: boolean;
   skipReason: string;
   noTasks: boolean;
+  postmortem?: SessionPostmortem;
 }

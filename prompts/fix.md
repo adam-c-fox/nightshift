@@ -24,7 +24,7 @@ The report `title` and `summary` describe the change as a whole, exactly as they
 
 ## 3 · Output contract
 
-Your final message must end with the `---REPORT---` block from the operating instructions §6, immediately followed by a `---FIXES---` block. The `---FIXES---` block is the last thing in the message; this overrides the operating instructions' statement that the report block is last. The report describes the whole change (files, tests, verify commands), not just the follow-up edits.
+Your final message must end with the `---REPORT---` block from the operating instructions §6, immediately followed by a `---FIXES---` block. The `---FIXES---` block is the last thing in the message; this overrides the operating instructions' statement that the report block is last. The report describes the whole change (files, tests, verify commands, `followups`), not just the follow-up edits: carry over the original `followups` and add any new ones.
 
 The `---FIXES---` block has one entry per issue id you were given, in the same order:
 

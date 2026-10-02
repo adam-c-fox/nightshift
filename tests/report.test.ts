@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { closedBudget, openNightBudget } from "../src/budget.js";
-import { generateHTML, reportFilename } from "../src/report.js";
+import { generateHTML, reportBase, reportFilename } from "../src/report.js";
 import type { SessionResult, TicketResult } from "../src/types.js";
 
 const session = (over: Partial<SessionResult>): SessionResult => ({
@@ -28,11 +28,25 @@ describe("report budget section", () => {
 
 const ticketResult = (over: Partial<TicketResult> = {}): TicketResult => ({
   ticket: { id: "ENG-1", name: "Export", context: [], repo: "main" }, linear: null, status: "done",
-  summary: "Did it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "",
+  summary: "Did it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [],
   worktreePath: "/w", branch: "b", durationSec: 1, ...over,
 });
 
 const reportFor = (ticket: TicketResult) => generateHTML(session({ tickets: [ticket] }));
+
+describe("report followups section", () => {
+  it("lists spotted problems escaped", () => {
+    const html = reportFor(ticketResult({ followups: [{ file: "src/<a>.ts", note: "Leaks <b>handle</b>." }] }));
+    expect(html).toContain("Spotted, not fixed");
+    expect(html).toContain("src/&lt;a&gt;.ts");
+    expect(html).toContain("Leaks &lt;b&gt;handle&lt;/b&gt;.");
+    expect(html).not.toContain("<b>handle</b>");
+  });
+
+  it("omits the section when there are none", () => {
+    expect(reportFor(ticketResult())).not.toContain("Spotted, not fixed");
+  });
+});
 
 describe("report review section", () => {
   const findings = [
@@ -111,5 +125,72 @@ describe("report checks and risks", () => {
     expect(html).toContain("Worth a closer look");
     expect(html).toContain("src/&lt;a&gt;.ts");
     expect(html).not.toContain("<b>this</b>");
+  });
+});
+
+describe("report fix verification", () => {
+  const findings = [
+    { id: "R1", severity: "blocker" as const, file: "a.ts", issue: "One.", suggestion: "s" },
+    { id: "R2", severity: "major" as const, file: "b.ts", issue: "Two.", suggestion: "s" },
+  ];
+
+  it("shows verified and still-open findings", () => {
+    const html = reportFor(ticketResult({ review: {
+      outcome: "reviewed", findings,
+      resolutions: [
+        { id: "R1", status: "fixed", how: "Streamed." },
+        { id: "R2", status: "not_fixed", how: "Added header; still open: <b>row 3</b> lacks it" },
+      ],
+      verification: { outcome: "verified", results: [
+        { id: "R1", status: "resolved", note: "ok" },
+        { id: "R2", status: "unresolved", note: "<b>row 3</b> lacks it" },
+      ] },
+    } }));
+    expect(html).toContain("Fixed · verified");
+    expect(html).toContain("Claimed fixed");
+    expect(html).toContain("&lt;b&gt;row 3&lt;/b&gt; lacks it");
+  });
+
+  it("shows a line when verification was skipped or failed", () => {
+    const base = { outcome: "reviewed" as const, findings, resolutions: [{ id: "R1", status: "fixed" as const, how: "Streamed." }] };
+    const skipped = reportFor(ticketResult({ review: { ...base, verification: { outcome: "skipped", reason: "budget cap reached", results: [] } } }));
+    expect(skipped).toContain("Fix verification skipped: budget cap reached");
+    expect(skipped).toContain("Fixed (unverified)");
+    expect(reportFor(ticketResult({ review: { ...base, verification: { outcome: "failed", reason: "no block <x>", results: [] } } })))
+      .toContain("Fix verification failed: no block &lt;x&gt;");
+  });
+});
+
+describe("reportBase", () => {
+  it("is the report filename without its extension", () => {
+    expect(reportBase("2026-10-01", name => name === "nightshift-2026-10-01.html")).toBe("nightshift-2026-10-01-2");
+  });
+});
+
+describe("report postmortem section", () => {
+  const sug = { id: "P1", target: "AGENTS.md", tickets: ["ENG-1"], problem: "Skipped <tests>", cause: "Vague step", change: "Add a line" };
+  const withPm = (postmortem: SessionResult["postmortem"]) => generateHTML(session({ tickets: [ticketResult()], postmortem }));
+
+  it("lists suggestions escaped with their fields and the file", () => {
+    const html = withPm({ outcome: "done", suggestions: [sug], file: "reports/x-postmortem.md" });
+    for (const text of ["Postmortem", "P1", "AGENTS.md", "ENG-1", "Skipped &lt;tests&gt;", "Vague step", "Add a line", "reports/x-postmortem.md"]) {
+      expect(html).toContain(text);
+    }
+    expect(html).not.toContain("Postmortem not run");
+  });
+  it("says when there are no suggestions", () => {
+    expect(withPm({ outcome: "done", suggestions: [] })).toContain("No suggestions");
+  });
+  it("flags a skipped postmortem prominently, also in the summary bar", () => {
+    const html = withPm({ outcome: "skipped", reason: "budget cap reached", suggestions: [] });
+    expect(html).toContain("Postmortem not run: budget cap reached");
+    expect(html).toContain("postmortem-flag");
+  });
+  it("flags a failed postmortem", () => {
+    expect(withPm({ outcome: "failed", reason: "claude exited with status 1", suggestions: [] }))
+      .toContain("Postmortem failed: claude exited with status 1");
+  });
+  it("shows nothing when no postmortem was attempted", () => {
+    expect(reportFor(ticketResult())).not.toContain("Postmortem");
   });
 });

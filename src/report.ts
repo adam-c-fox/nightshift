@@ -1,9 +1,9 @@
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import type { CheckRecord, FixResolution, ReviewFinding, SessionResult, TicketResult } from "./types.js";
+import type { CheckRecord, FixResolution, FixVerification, ReviewFinding, SessionPostmortem, SessionResult, TicketResult, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 
-const REPORTS_DIR = path.resolve(import.meta.dirname, "..", "reports");
+export const REPORTS_DIR = path.resolve(import.meta.dirname, "..", "reports");
 
 const STATUS_COLORS: Record<string, string> = {
   done: "#22c55e",
@@ -32,9 +32,15 @@ function prLinksHTML(t: TicketResult): string {
       </div>`;
 }
 
-function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefined): string {
+function resolutionLabel(resolution: FixResolution, verify: VerifyResult | undefined, verification: FixVerification | undefined): string {
+  if (resolution.status === "fixed") return verify ? "Fixed · verified" : verification ? "Fixed (unverified)" : "Fixed";
+  return verify?.status === "unresolved" ? "Claimed fixed" : "Not fixed";
+}
+
+function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefined, verification?: FixVerification): string {
+  const verify = verification?.results.find(r => r.id === finding.id);
   const resolved = resolution
-    ? `<div class="res res-${resolution.status}"><strong>${resolution.status === "fixed" ? "Fixed" : "Not fixed"}:</strong> ${esc(resolution.how)}</div>`
+    ? `<div class="res res-${resolution.status}"><strong>${resolutionLabel(resolution, verify, verification)}:</strong> ${esc(resolution.how)}</div>`
     : "";
   return `<li class="finding">
            <div class="finding-head">
@@ -80,8 +86,30 @@ function reviewHTML(t: TicketResult): string {
   if (review.findings.length === 0) {
     return `<div class="review"><strong>Review: no issues found</strong></div>${risksHTML(t)}`;
   }
-  const items = review.findings.map(f => findingHTML(f, review.resolutions.find(r => r.id === f.id))).join("");
-  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong><ul class="findings">${items}</ul></div>${risksHTML(t)}`;
+  const items = review.findings.map(f => findingHTML(f, review.resolutions.find(r => r.id === f.id), review.verification)).join("");
+  const v = review.verification;
+  const verifyLine = v && v.outcome !== "verified" ? `<div class="review review-${v.outcome}">Fix verification ${v.outcome}: ${esc(v.reason ?? "")}</div>` : "";
+  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong><ul class="findings">${items}</ul></div>${verifyLine}${risksHTML(t)}`;
+}
+
+const postmortemProblem = (pm: SessionPostmortem): string | undefined =>
+  pm.outcome === "skipped" ? `Postmortem not run: ${pm.reason}` : pm.outcome === "failed" ? `Postmortem failed: ${pm.reason}` : undefined;
+
+function postmortemHTML(pm: SessionPostmortem | undefined): string {
+  if (!pm) return "";
+  const problem = postmortemProblem(pm);
+  const body = problem
+    ? `<div class="postmortem-flag">⚠️ ${esc(problem)}</div>`
+    : pm.suggestions.length === 0
+      ? `<p class="hint">No suggestions.</p>`
+      : pm.suggestions.map(s => `<div class="finding">
+           <div class="finding-head"><span class="finding-id">${esc(s.id)}</span><code class="finding-file">${esc(s.target)}</code><span class="finding-file">${esc(s.tickets.join(", "))}</span></div>
+           <div>${esc(s.problem)}</div>
+           <div class="finding-suggestion">Cause: ${esc(s.cause)}</div>
+           <div class="finding-suggestion">Change: ${esc(s.change)}</div>
+         </div>`).join("");
+  const file = pm.file ? `<p class="hint">Suggestions saved to <code>${esc(pm.file)}</code>. Ask Claude to implement the ones you pick by id.</p>` : "";
+  return `<div class="postmortem" id="postmortem"><h2>Postmortem</h2>${body}${file}</div>`;
 }
 
 function ticketCardHTML(t: TicketResult): string {
@@ -110,6 +138,12 @@ function ticketCardHTML(t: TicketResult): string {
     ? `<div class="notes"><strong>Notes:</strong> ${esc(t.notes)}</div>`
     : "";
 
+  const followups = t.followups.length > 0
+    ? `<div class="followups"><strong>Spotted, not fixed:</strong><ul>${
+        t.followups.map(f => `<li><code>${esc(f.file)}</code> ${esc(f.note)}</li>`).join("")
+      }</ul></div>`
+    : "";
+
   return `
   <div class="card" id="ticket-${esc(t.ticket.id)}">
     <div class="card-header">
@@ -127,6 +161,7 @@ function ticketCardHTML(t: TicketResult): string {
       ${verify}
       ${checksHTML(t)}
       ${reviewHTML(t)}
+      ${followups}
       ${notes}
       <div class="meta">
         <span>Branch: <code>${esc(t.branch)}</code></span>
@@ -148,6 +183,10 @@ export function generateHTML(session: SessionResult): string {
   const startWidth = Math.min(Math.max(0, b.startPct), 100);
   const capLeft = Math.min(b.capPct, 100);
 
+  const pmProblem = session.postmortem && postmortemProblem(session.postmortem);
+  const pmStat = !session.postmortem ? "" : pmProblem
+    ? `<div class="stat postmortem-flag"><a href="#postmortem" style="color:inherit"><strong>⚠️</strong>${esc(pmProblem)}</a></div>`
+    : `<div class="stat"><a href="#postmortem" style="color:inherit"><strong>${session.postmortem.suggestions.length}</strong>postmortem suggestions</a></div>`;
   const gateBanner = session.gateHit ? `<div class="gate-hit">⛔ ${esc(session.skipReason)}</div>` : "";
   const budgetBar = b.unavailable
     ? `
@@ -264,6 +303,11 @@ export function generateHTML(session: SessionResult): string {
   .res { margin-top: 0.3rem; }
   .res-fixed { color: #22c55e; }
   .res-not_fixed { color: #ef4444; }
+  .postmortem { margin-top: 2rem; }
+  .postmortem h2 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+  .postmortem-flag { color: #ef4444; font-weight: 600; margin-bottom: 0.5rem; }
+  .followups { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 0.75rem; }
+  .followups ul { padding-left: 1.25rem; }
   .notes { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 0.75rem; }
   .meta { display: flex; gap: 1.5rem; font-size: 0.8rem; color: var(--text-dim);
           border-top: 1px solid var(--border); padding-top: 0.75rem; margin-top: 0.5rem; }
@@ -286,11 +330,14 @@ export function generateHTML(session: SessionResult): string {
     <div class="stat"><strong style="color:#eab308">${partial}</strong>partial</div>
     <div class="stat"><strong style="color:#f97316">${review}</strong>review</div>
     <div class="stat"><strong style="color:#6b7280">${skipped}</strong>skipped</div>
+    ${pmStat}
   </div>
 
   ${budgetBar}
 
   ${ticketsHTML}
+
+  ${postmortemHTML(session.postmortem)}
 
   <div class="footer">Generated by nightshift · ${new Date().toISOString()}</div>
 </body>
@@ -305,11 +352,13 @@ export function reportFilename(date: string, exists: (name: string) => boolean):
   }
 }
 
-export function writeReport(session: SessionResult): string {
+export function reportBase(date: string, exists: (name: string) => boolean): string {
+  return reportFilename(date, exists).replace(/\.html$/, "");
+}
+
+export function writeReport(session: SessionResult, base = reportBase(session.date, name => existsSync(path.join(REPORTS_DIR, name)))): string {
   mkdirSync(REPORTS_DIR, { recursive: true });
-  const filename = reportFilename(session.date, name => existsSync(path.join(REPORTS_DIR, name)));
-  const filePath = path.join(REPORTS_DIR, filename);
-  const html = generateHTML(session);
-  writeFileSync(filePath, html, "utf-8");
+  const filePath = path.join(REPORTS_DIR, `${base}.html`);
+  writeFileSync(filePath, generateHTML(session), "utf-8");
   return filePath;
 }

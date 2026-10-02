@@ -22,6 +22,11 @@ verify:
   - "npx vitest run tests/export.spec.ts"
   - "npx tsc --noEmit -p tsconfig.base.json"
 notes: Touched shared util.
+followups:
+  - file: src/legacy.ts
+    note: "Swallows errors: add logging"
+  - file: src/other.ts
+    note: Dead branch.
 ---
 `;
 
@@ -39,7 +44,17 @@ describe("parseReportBlock", () => {
       ],
       verifyCommands: ["npx vitest run tests/export.spec.ts", "npx tsc --noEmit -p tsconfig.base.json"],
       notes: "Touched shared util.",
+      followups: [
+        { file: "src/legacy.ts", note: "Swallows errors: add logging" },
+        { file: "src/other.ts", note: "Dead branch." },
+      ],
     });
+  });
+
+  it("defaults followups to an empty list when absent or empty", () => {
+    const withoutKey = block.replace(/followups:[\s\S]*?\n---/, "---");
+    expect(parseReportBlock(withoutKey).followups).toEqual([]);
+    expect(parseReportBlock(block.replace(/followups:[\s\S]*?\n---/, "followups: []\n---")).followups).toEqual([]);
   });
 
   it("leaves the title empty when the report has none", () => {

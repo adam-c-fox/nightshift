@@ -4,7 +4,7 @@ import { deriveOutcome } from "../src/status.js";
 
 const report = (over: Partial<AgentReport> = {}): AgentReport => ({
   status: "done", title: "", summary: "s", filesCreated: [], filesModified: [],
-  tests: [{ name: "t", file: "f", result: "pass" }], verifyCommands: [], notes: "", ...over,
+  tests: [{ name: "t", file: "f", result: "pass" }], verifyCommands: [], notes: "", followups: [], ...over,
 });
 const ok = (over: Partial<ClaudeResult> = {}): ClaudeResult => ({ success: true, rawOutput: "", report: report(), ...over });
 

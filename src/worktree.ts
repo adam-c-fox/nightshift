@@ -208,6 +208,10 @@ export function excludedPathsInBranch(wt: Worktree): string[] {
   return git(["diff", "--name-only", `${wt.baseRef}..HEAD`], wt.wtPath).split("\n").filter(isExcludedPath);
 }
 
+export function branchDiff(wt: Worktree): string {
+  return git(["diff", `${wt.baseRef}..HEAD`], wt.wtPath);
+}
+
 export function hasChangesVsBase(wt: Worktree): boolean {
   return git(["status", "--porcelain", ...PATHSPEC], wt.wtPath).trim() !== "" || commitsAhead(wt) > 0;
 }

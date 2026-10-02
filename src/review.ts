@@ -1,6 +1,6 @@
 import { deriveOutcome } from "./status.js";
-import type { AgentReport, FixRunResult, ReviewRunResult } from "./claude.js";
-import type { FixResolution, ReviewFinding, TestResult, TicketReview } from "./types.js";
+import type { AgentReport, FixRunResult, ReviewRunResult, VerifyRunResult } from "./claude.js";
+import type { Followup, FixResolution, FixVerification, ReviewFinding, TestResult, TicketReview } from "./types.js";
 
 export interface ReviewDeps {
   hasChanges(): boolean;
@@ -10,7 +10,8 @@ export interface ReviewDeps {
   fix(findings: ReviewFinding[]): Promise<FixRunResult>;
   regressions?: ReviewFinding[];
   recheck?(): Promise<ReviewFinding[]>;
-  saveOutput(stage: "review" | "fix", raw: string): void;
+  verify?(findings: ReviewFinding[], resolutions: FixResolution[]): Promise<VerifyRunResult>;
+  saveOutput(stage: "review" | "fix" | "verify", raw: string): void;
   log(msg: string): void;
 }
 
@@ -28,9 +29,16 @@ interface Refinable {
   filesCreated: string[];
   filesModified: string[];
   tests: TestResult[];
+  followups: Followup[];
 }
 
 const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
+
+const unionFollowups = (a: Followup[], b: Followup[]): Followup[] => {
+  const seen = new Map<string, Followup>();
+  for (const f of [...a, ...b]) seen.set(`${f.file}\0${f.note}`, seen.get(`${f.file}\0${f.note}`) ?? f);
+  return [...seen.values()];
+};
 
 export function mergeFixReport(base: Refinable, fix: AgentReport): Refinable {
   const refined = new Map(fix.tests.map(t => [t.name, t]));
@@ -42,6 +50,7 @@ export function mergeFixReport(base: Refinable, fix: AgentReport): Refinable {
     filesCreated: union(base.filesCreated, fix.filesCreated),
     filesModified: union(base.filesModified, fix.filesModified),
     tests: [...replaced, ...added],
+    followups: unionFollowups(base.followups, fix.followups),
   };
 }
 
@@ -58,6 +67,51 @@ function settle(
   const blocking = open.some(f => f.severity === "blocker");
   const major = open.some(f => f.severity === "major");
   return { publish: !blocking, needsReview: extraNeedsReview || blocking || major, notes };
+}
+
+interface Verified {
+  resolutions: FixResolution[];
+  verification?: FixVerification;
+  notes: string[];
+  needsReview: boolean;
+  publish: boolean;
+}
+
+async function verifyFixes(findings: ReviewFinding[], resolutions: FixResolution[], deps: ReviewDeps): Promise<Verified> {
+  const claimed = findings.filter(f => resolutions.find(r => r.id === f.id)?.status === "fixed");
+  const unchanged: Verified = { resolutions, notes: [], needsReview: false, publish: true };
+  if (!deps.verify || claimed.length === 0) return unchanged;
+  const unverified = (outcome: "skipped" | "failed", reason: string, note: string, needsReview: boolean, publish = true): Verified =>
+    ({ ...unchanged, verification: { outcome, reason, results: [] }, notes: [note], needsReview, publish });
+
+  if (!deps.gateOpen()) {
+    return unverified("skipped", "budget cap reached", "Fixes unverified: budget cap reached.", claimed.some(f => f.severity !== "minor"));
+  }
+
+  const before = deps.snapshot();
+  deps.log("  Verifying fixes");
+  const run = await deps.verify(findings, resolutions);
+  deps.saveOutput("verify", run.rawOutput);
+  if (deps.snapshot() !== before) {
+    const reason = "the verification run modified the worktree";
+    deps.log(`  Verification failed: ${reason}; not publishing`);
+    return unverified("failed", reason, `Fix verification failed: ${reason}; work kept on local branch, not pushed.`, true, false);
+  }
+  const failure = run.failure ?? run.parseError;
+  if (failure || !run.results) {
+    const reason = failure ?? "no verification reported";
+    deps.log(`  Verification failed: ${reason}`);
+    return unverified("failed", reason, `Fix verification failed: ${reason}`, true);
+  }
+
+  const results = claimed.map(f => run.results!.find(r => r.id === f.id) ?? { id: f.id, status: "unresolved" as const, note: "not verified" });
+  const open = results.filter(r => r.status === "unresolved");
+  const corrected = resolutions.map((r): FixResolution => {
+    const result = open.find(o => o.id === r.id);
+    return result ? { ...r, status: "not_fixed", how: `${r.how}; still open: ${result.note}` } : r;
+  });
+  const notes = open.length > 0 ? [`Fix verification: ${open.length} claimed fix(es) still open (${open.map(o => o.id).join(", ")}).`] : [];
+  return { resolutions: corrected, verification: { outcome: "verified", results }, notes, needsReview: false, publish: true };
 }
 
 function failedReview(reason: string, publish: boolean, notes: string[], regressions: ReviewFinding[] = []): ReviewStageOutcome {
@@ -134,15 +188,19 @@ export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Prom
   const fixedCount = resolutions.filter(r => r.status === "fixed").length;
   const remaining = deps.recheck ? await deps.recheck() : [];
   const stillFailing = remaining.length > 0 ? [`Checks still failing after the fix: ${regressionNames(remaining)}.`] : [];
+  const verified = await verifyFixes(findings, resolutions, deps);
   const notes = [
     `Review found ${findings.length} issue(s); ${fixedCount} fixed.`,
     ...(fix.fixesError ? [`Fix run gave no usable fixes list: ${fix.fixesError}`] : []),
     ...agent.notes,
     ...stillFailing,
+    ...verified.notes,
   ];
+  const settled = settle(findings, verified.resolutions, notes, agent.status === "needs_review" || remaining.length > 0 || verified.needsReview);
   return {
-    review: { outcome: "reviewed", findings, resolutions, risks },
+    review: { outcome: "reviewed", findings, resolutions: verified.resolutions, risks, ...(verified.verification && { verification: verified.verification }) },
     fixReport: fix.report,
-    ...settle(findings, resolutions, notes, agent.status === "needs_review" || remaining.length > 0),
+    ...settled,
+    publish: settled.publish && verified.publish,
   };
 }

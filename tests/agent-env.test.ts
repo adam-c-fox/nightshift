@@ -59,6 +59,14 @@ describe("buildAgentSettings", () => {
     expect(s.permissions.deny).toEqual(expect.arrayContaining([`Read(/${root}/logs)`, `Read(/${root}/logs/**)`]));
   });
 
+  it("lets the postmortem read logs but still not .env", () => {
+    const s = JSON.parse(buildAgentSettings("main", root, { readLogs: true }));
+    expect(s.sandbox.filesystem.denyRead).not.toContain(`${root}/logs`);
+    expect(s.permissions.deny).not.toContain(`Read(/${root}/logs/**)`);
+    expect(s.sandbox.filesystem.denyRead).toContain(`${root}/.env`);
+    expect(s.permissions.deny).toContain(`Read(/${root}/.env)`);
+  });
+
   it("denies web and connector tools that run outside the sandbox", () => {
     const s = JSON.parse(buildAgentSettings("main", root));
     expect(s.permissions.deny).toEqual(expect.arrayContaining([

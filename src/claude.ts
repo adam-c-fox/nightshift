@@ -2,12 +2,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { runWithWatchdog } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
-import type { FixResolution, ReviewFinding, ReviewRisk, Severity, TestResult } from "./types.js";
+import type { Followup, FixResolution, ReviewFinding, ReviewRisk, Severity, TestResult, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const AGENTS_MD = path.join(ROOT, "AGENTS.md");
 const REVIEW_MD = path.join(ROOT, "prompts", "review.md");
 const FIX_MD = path.join(ROOT, "prompts", "fix.md");
+const VERIFY_MD = path.join(ROOT, "prompts", "verify.md");
 
 export interface TicketBrief {
   ticketId: string;
@@ -128,16 +129,40 @@ export function buildFixPrompt(brief: TicketBrief, findings: ReviewFinding[]): s
   ].join("\n");
 }
 
+export function buildVerifyPrompt(
+  brief: TicketBrief, baseRef: string, findings: ReviewFinding[], resolutions: FixResolution[],
+): string {
+  const claimed = findings.flatMap(f => {
+    const r = resolutions.find(x => x.id === f.id);
+    return r?.status === "fixed"
+      ? [[`- id: ${f.id}`, `  severity: ${f.severity}`, `  file: ${f.file}`, `  issue: ${f.issue}`, `  fixer says: ${r.how}`].join("\n")]
+      : [];
+  });
+  return [
+    ...ticketSection(brief),
+    `**Base ref:** \`${baseRef}\``,
+    `Inspect the current change with \`git diff ${baseRef}\` and \`git status --porcelain\` (untracked files are not in the diff; read them directly).`,
+    ``,
+    `The fixer claims these issues are now fixed:`,
+    ``,
+    ...claimed,
+    ``,
+    `Check each one against the current code. Do not modify any file. End your final message with the ---VERIFY--- block.`,
+  ].join("\n");
+}
+
 export interface AgentReport {
   status: string; title: string; summary: string;
   filesCreated: string[]; filesModified: string[];
   tests: TestResult[]; verifyCommands: string[]; notes: string;
+  followups: Followup[];
 }
 
 const VALID_STATUSES = ["done", "partial", "needs_review"];
 const REPORT_START = "---REPORT---";
 const REVIEW_START = "---REVIEW---";
 const FIXES_START = "---FIXES---";
+const VERIFY_START = "---VERIFY---";
 const BLOCK_END = "---";
 const SEVERITIES: Severity[] = ["blocker", "major", "minor"];
 
@@ -203,7 +228,11 @@ function parseTests(lines: string[] | undefined): TestResult[] {
   return tests;
 }
 
-function extractBlock(output: string, marker: string): string[] {
+function parseFollowups(lines: string[] | undefined): Followup[] {
+  return parseRecords(lines, ["file", "note"]).filter(r => r.note).map(r => ({ file: r.file ?? "", note: r.note }));
+}
+
+export function extractBlock(output: string, marker: string): string[] {
   const lines = output.split(/\r?\n/);
   const startIdx = lines.map(l => l.trim()).lastIndexOf(marker);
   if (startIdx === -1) {
@@ -214,7 +243,7 @@ function extractBlock(output: string, marker: string): string[] {
   return endIdx === -1 ? body : body.slice(0, endIdx);
 }
 
-function parseRecords(lines: string[] | undefined, fields: string[]): Record<string, string>[] {
+export function parseRecords(lines: string[] | undefined, fields: string[]): Record<string, string>[] {
   const records: Record<string, string>[] = [];
   let current: Record<string, string> | undefined;
   for (const raw of lines ?? []) {
@@ -263,6 +292,12 @@ export function parseFixesBlock(output: string): FixResolution[] {
     .map(r => ({ id: r.id, status: r.status === "fixed" ? "fixed" : "not_fixed", how: r.how ?? "" }));
 }
 
+export function parseVerifyBlock(output: string): VerifyResult[] {
+  return parseRecords(extractBlock(output, VERIFY_START), ["id", "status", "note"])
+    .filter(r => r.id)
+    .map(r => ({ id: r.id, status: r.status === "resolved" ? "resolved" : "unresolved", note: r.note ?? "" }));
+}
+
 export function parseReportBlock(output: string): AgentReport {
   const groups = groupByTopLevelKey(extractBlock(output, REPORT_START));
 
@@ -277,6 +312,7 @@ export function parseReportBlock(output: string): AgentReport {
     tests: parseTests(groups.get("tests")),
     verifyCommands: listItems(groups.get("verify")),
     notes: scalar(groups.get("notes")),
+    followups: parseFollowups(groups.get("followups")),
   };
 }
 
@@ -331,7 +367,18 @@ export const REVIEW_PROFILE: ToolProfile = {
   enforceAllowList: true,
 };
 
-export function buildClaudeArgs(operatingInstructions: string, profile: ToolProfile = EDIT_PROFILE): string[] {
+export const POSTMORTEM_PROFILE: ToolProfile = {
+  permissionMode: "default",
+  allowedTools: [
+    "Read", "Grep", "Glob",
+    "Bash(git log *)", "Bash(git diff *)", "Bash(git show *)",
+    "Bash(grep *)", "Bash(rg *)", "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)",
+  ],
+  disallowedTools: ["Edit", "Write", "NotebookEdit", "Bash(git * --output*)", ...NEVER_PUBLISH],
+  enforceAllowList: true,
+};
+
+export function buildClaudeArgs(operatingInstructions: string, profile: ToolProfile = EDIT_PROFILE, addDirs: string[] = []): string[] {
   return [
     "-p",
     "--max-turns", String(MAX_TURNS),
@@ -339,6 +386,7 @@ export function buildClaudeArgs(operatingInstructions: string, profile: ToolProf
     "--allowedTools", profile.allowedTools.join(","),
     "--disallowedTools", profile.disallowedTools.join(","),
     "--append-system-prompt", operatingInstructions,
+    ...addDirs.flatMap(dir => ["--add-dir", dir]),
   ];
 }
 
@@ -360,17 +408,17 @@ export interface RunAgentOptions {
   settings: string;
 }
 
-interface ClaudeRun {
+export interface ClaudeRun {
   stdout: string;
   rawOutput: string;
   failure?: string;
   abortReason?: string;
 }
 
-async function execClaude(
-  worktreePath: string, prompt: string, systemPrompt: string, profile: ToolProfile, options: RunAgentOptions,
+export async function execClaude(
+  worktreePath: string, prompt: string, systemPrompt: string, profile: ToolProfile, options: RunAgentOptions, addDirs: string[] = [],
 ): Promise<ClaudeRun> {
-  const args = agentRunArgs(buildClaudeArgs(systemPrompt, profile), options.settings, profile);
+  const args = agentRunArgs(buildClaudeArgs(systemPrompt, profile, addDirs), options.settings, profile);
   const proc = await runWithWatchdog("claude", args, {
     cwd: worktreePath,
     input: prompt,
@@ -391,7 +439,7 @@ async function execClaude(
   return { stdout: proc.stdout, rawOutput, failure, abortReason: proc.abortReason };
 }
 
-function parseOrError<T>(stdout: string, failure: string | undefined, parse: (output: string) => T): { value?: T; error?: string } {
+export function parseOrError<T>(stdout: string, failure: string | undefined, parse: (output: string) => T): { value?: T; error?: string } {
   try {
     return { value: parse(stdout) };
   } catch (e) {
@@ -417,7 +465,7 @@ export async function runAgent(
     console.log(`  [dry-run] Prompt:\n${prompt.slice(0, 500)}...`);
     return { success: true, rawOutput: "", report: {
       status: "done", title: "", summary: "dry run", filesCreated: [], filesModified: [],
-      tests: [], verifyCommands: [], notes: "dry run – no changes",
+      tests: [], verifyCommands: [], notes: "dry run – no changes", followups: [],
     }};
   }
 
@@ -465,4 +513,23 @@ export async function runFix(
     fixes: parsedFixes.value, fixesError: parsedFixes.error,
     failure: run.failure, abortReason: run.abortReason,
   };
+}
+
+export interface VerifyRunResult {
+  success: boolean;
+  rawOutput: string;
+  results?: VerifyResult[];
+  parseError?: string;
+  failure?: string;
+  abortReason?: string;
+}
+
+export async function runVerify(
+  worktreePath: string, brief: TicketBrief, baseRef: string, findings: ReviewFinding[], resolutions: FixResolution[], options: RunAgentOptions,
+): Promise<VerifyRunResult> {
+  const prompt = buildVerifyPrompt(brief, baseRef, findings, resolutions);
+  const systemPrompt = [readFileSync(REVIEW_MD, "utf-8"), readFileSync(VERIFY_MD, "utf-8")].join("\n\n---\n\n");
+  const run = await execClaude(worktreePath, prompt, systemPrompt, REVIEW_PROFILE, options);
+  const { value: results, error: parseError } = parseOrError(run.stdout, run.failure, parseVerifyBlock);
+  return { success: run.failure === undefined, rawOutput: run.rawOutput, results, parseError, failure: run.failure, abortReason: run.abortReason };
 }

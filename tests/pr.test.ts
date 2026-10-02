@@ -315,6 +315,7 @@ describe("PR content", () => {
     status: "needs_review", title: "feat: stream csv export", summary: "Streams rows to the response.",
     filesCreated: [], filesModified: [], tests: [], verifyCommands: ["npx vitest run"],
     notes: "Review found 2 issue(s); 1 fixed. Flaky reviewer note.",
+    followups: [],
     worktreePath: "/w", branch: "b", durationSec: 1,
     review: {
       outcome: "reviewed",

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { agentRunArgs, buildClaudeArgs, REVIEW_PROFILE } from "../src/claude.js";
+import { agentRunArgs, buildClaudeArgs, POSTMORTEM_PROFILE, REVIEW_PROFILE } from "../src/claude.js";
 
 describe("agent instructions", () => {
   const agentsMd = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf-8");
@@ -107,5 +107,26 @@ describe("review and fix prompts", () => {
     for (const name of ["review.md", "fix.md"]) {
       expect(read(name)).toMatch(/nightshift/i);
     }
+  });
+});
+
+describe("postmortem run args", () => {
+  const args = buildClaudeArgs("x", POSTMORTEM_PROFILE, ["/wt"]);
+  const value = (flag: string) => args[args.indexOf(flag) + 1];
+
+  it("is read-only with the allow list enforced", () => {
+    const allowed = value("--allowedTools").split(",");
+    expect(allowed).toEqual(expect.arrayContaining(["Read", "Grep", "Glob", "Bash(git log *)", "Bash(git diff *)", "Bash(cat *)"]));
+    expect(allowed.some(t => /npm|npx|terraform|Edit|Write/.test(t))).toBe(false);
+    for (const tool of ["Edit", "Write", "NotebookEdit"]) expect(value("--disallowedTools").split(",")).toContain(tool);
+    expect(POSTMORTEM_PROFILE.enforceAllowList).toBe(true);
+  });
+
+  it("adds the worktrees directory", () => {
+    expect(args[args.indexOf("--add-dir") + 1]).toBe("/wt");
+  });
+
+  it("adds no directories by default", () => {
+    expect(buildClaudeArgs("x", POSTMORTEM_PROFILE)).not.toContain("--add-dir");
   });
 });

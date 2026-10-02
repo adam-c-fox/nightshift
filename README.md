@@ -13,10 +13,12 @@ Cron starts the runner at 23:00. It reads `tickets/tonight.md` and works the tic
 1. **Fetches the Linear ticket** and moves it to In Progress.
 2. **Creates a worktree** off `origin/main`. If the ticket already has an open PR, it continues on that PR's branch instead.
 3. **Runs the repo's checks** (tests, typecheck, lint, or `terraform validate` and `fmt`) to get a baseline.
-4. **Runs the agent** with the ticket, your context bullets and [`AGENTS.md`](AGENTS.md). The agent works test-first and ends with a structured report.
+4. **Runs the agent** with the ticket, your context bullets and [`AGENTS.md`](AGENTS.md). The agent works test-first and ends with a structured report, including anything it spotted but didn't fix ("Spotted, not fixed" in the report).
 5. **Re-runs the checks** against the baseline, so only failures the change introduced count as regressions.
-6. **Reviews the diff** with a separate read-only agent ([`prompts/review.md`](prompts/review.md)), then has an agent fix the findings ([`prompts/fix.md`](prompts/fix.md)).
+6. **Reviews the diff** with a separate read-only agent ([`prompts/review.md`](prompts/review.md)), then has an agent fix the findings ([`prompts/fix.md`](prompts/fix.md)), and re-checks the claimed fixes with a second read-only pass ([`prompts/verify.md`](prompts/verify.md)).
 7. **Commits and opens or updates the PR.** If CI fails, it pulls the failure logs and makes up to two attempts to fix them. It won't push to a PR that has auto-complete set.
+
+8. **Runs a postmortem after the last ticket.** A read-only agent ([`.claude/skills/postmortem/SKILL.md`](.claude/skills/postmortem/SKILL.md)) reviews the night's logs and suggests changes to the instructions and workflow. It never edits anything. It's skipped on a dry run, when no ticket was worked, or when usage has run out, and the report says so.
 
 Anything that can't be finished cleanly stays on a local branch, marked `needs_review`, with notes saying why.
 
@@ -67,6 +69,10 @@ npm run run:dry
 ```
 
 The report lands in `reports/nightshift-<date>.html`. Agent output and run logs go to `logs/`.
+
+## Each morning
+
+Read `reports/nightshift-<date>.html`. The Postmortem section at the bottom lists suggested fixes to the instructions, also saved in `reports/nightshift-<date>-postmortem.md`. Ask Claude to implement the ones you pick by id, for example "implement P1 and P3". `/postmortem [date]` re-runs the postmortem by hand.
 
 ## Development
 

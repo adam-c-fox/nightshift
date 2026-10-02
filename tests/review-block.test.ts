@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFixesBlock, parseReviewBlock } from "../src/claude.js";
+import { parseFixesBlock, parseReviewBlock, parseVerifyBlock } from "../src/claude.js";
 
 describe("parseReviewBlock", () => {
   it("parses every field of each finding", () => {
@@ -110,5 +110,34 @@ summary: Streams the export.
 
   it("throws when there is no block", () => {
     expect(() => parseFixesBlock("---REPORT---\nstatus: done\n---\n")).toThrow(/---FIXES---/);
+  });
+});
+
+describe("parseVerifyBlock", () => {
+  const output = `Checked.
+
+---VERIFY---
+- id: R1
+  status: resolved
+  note: Rows now stream.
+- id: R2
+  status: unresolved
+  note: "Header is still missing: see line 4."
+- id: R3
+  status: maybe
+  note: unclear
+---
+`;
+
+  it("parses each result and treats anything but resolved as unresolved", () => {
+    expect(parseVerifyBlock(output)).toEqual([
+      { id: "R1", status: "resolved", note: "Rows now stream." },
+      { id: "R2", status: "unresolved", note: "Header is still missing: see line 4." },
+      { id: "R3", status: "unresolved", note: "unclear" },
+    ]);
+  });
+
+  it("throws when there is no block", () => {
+    expect(() => parseVerifyBlock("---REVIEW---\nfindings: []\n---\n")).toThrow(/---VERIFY---/);
   });
 });

@@ -1,11 +1,11 @@
-import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import type { Ticket, TicketResult, SessionResult, LinearTicket, NightBudget } from "./types.js";
+import type { Ticket, TicketResult, SessionResult, SessionPostmortem, LinearTicket, NightBudget } from "./types.js";
 import { loadTickets } from "./tickets.js";
 import { REPOS } from "./repos.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, markInProgress, shouldMarkInProgress } from "./linear.js";
-import { runAgent, runFix, runReview, type TicketBrief } from "./claude.js";
+import { runAgent, runFix, runReview, runVerify, type TicketBrief } from "./claude.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, requireEnv } from "./env.js";
 import { deriveOutcome } from "./status.js";
@@ -13,12 +13,13 @@ import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTi
 import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
-import { writeReport } from "./report.js";
+import { reportBase, REPORTS_DIR, writeReport } from "./report.js";
+import { postmortemMarkdown, postmortemSkipReason, runPostmortem, sessionLogData, type UsageGate } from "./postmortem.js";
 import { checkCommands, classifyChecks, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
 import { relatedTickets, type ProcessedTicket } from "./related.js";
 import { startTestDb } from "./test-db.js";
 import { localDate, TIME_ZONE } from "./time.js";
-import { createWorktree, ticketBranchName, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
+import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
@@ -66,7 +67,7 @@ function placeholderResult(ticket: Ticket, status: TicketResult["status"], summa
   return {
     ticket, linear: null, status, summary,
     filesCreated: [], filesModified: [], tests: [],
-    verifyCommands: [], notes: "",
+    verifyCommands: [], notes: "", followups: [],
     worktreePath: "", branch: ticketBranchName(BRANCH_PREFIX, ticket.id, ticket.name), durationSec: 0,
   };
 }
@@ -151,6 +152,19 @@ function saveLog(name: string, text: string): void {
   }
 }
 
+function weeklyGate(budgetRef: { current: NightBudget }, when: string): string | undefined {
+  try {
+    budgetRef.current = checkGate(budgetRef.current, 1);
+  } catch (e) {
+    log(`  Mid-ticket usage check failed: ${(e as Error).message}`);
+    logUsageFailure(e, "    ");
+    return undefined;
+  }
+  return budgetRef.current.gateHit
+    ? `budget cap reached ${when} (${budgetRef.current.currentPct}% ≥ ${budgetRef.current.capPct}%)`
+    : undefined;
+}
+
 function applyReviewStage(result: TicketResult, stage: ReviewStageOutcome): void {
   result.review = stage.review;
   result.notes = [result.notes, ...stage.notes].filter(Boolean).join(" | ");
@@ -225,18 +239,7 @@ async function processTicket(
   const continuing = existing !== null && (dryRun || wt.startedFromPr);
   const agentContext = continuing ? [continuingPrContext(existing.prId), ...context] : context;
 
-  const weeklyGateReason = () => {
-    try {
-      budgetRef.current = checkGate(budgetRef.current, 1);
-    } catch (e) {
-      log(`  Mid-ticket usage check failed: ${(e as Error).message}`);
-      logUsageFailure(e, "    ");
-      return undefined;
-    }
-    return budgetRef.current.gateHit
-      ? `budget cap reached mid-ticket (${budgetRef.current.currentPct}% ≥ ${budgetRef.current.capPct}%)`
-      : undefined;
-  };
+  const weeklyGateReason = () => weeklyGate(budgetRef, "mid-ticket");
   const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
   const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(repo, ROOT) };
   const commands = dryRun ? [] : checkCommands(repo, repo === "main" ? discoverWorkspaces(wt.wtPath) : []);
@@ -259,6 +262,7 @@ async function processTicket(
     tests: report?.tests ?? [],
     verifyCommands: report?.verifyCommands ?? [],
     notes: report?.notes ?? "",
+    followups: report?.followups ?? [],
     worktreePath: wt.wtPath,
     branch: wt.branch,
     durationSec: 0,
@@ -306,6 +310,10 @@ async function processTicket(
       fix: async findings => {
         await waitForSession();
         return runFix(wt.wtPath, brief, findings, agentOptions);
+      },
+      verify: async (findings, resolutions) => {
+        await waitForSession();
+        return runVerify(wt.wtPath, brief, wt.baseRef, findings, resolutions, agentOptions);
       },
       saveOutput: (name, raw) => saveLog(`${ticketId}-${name}.txt`, raw),
       log,
@@ -371,11 +379,57 @@ async function processTicket(
       ticketResult.status = "needs_review";
       ticketResult.notes = [ticketResult.notes, `Commit/PR failed: ${message}`].filter(Boolean).join(" | ");
     }
+    try {
+      saveLog(`${ticketId}-diff.txt`, branchDiff(wt));
+    } catch (e) {
+      log(`  Could not save the diff for ${ticketId}: ${errorMessage(e)}`);
+    }
   }
 
   ticketResult.durationSec = Math.round((Date.now() - startTime) / 1000);
   log(`  Result: ${ticketResult.status} (${ticketResult.durationSec}s)`);
   return ticketResult;
+}
+
+function freshGate(budgetRef: { current: NightBudget }): UsageGate {
+  try {
+    budgetRef.current = checkGate(budgetRef.current);
+    return budgetRef.current.gateHit ? "hit" : "open";
+  } catch (e) {
+    logUsageFailure(e, "  ");
+    return "unreadable";
+  }
+}
+
+async function nightPostmortem(session: SessionResult, budgetRef: { current: NightBudget }, base: string): Promise<SessionPostmortem> {
+  const { date } = session;
+  try {
+    saveLog(`session-${date}.json`, JSON.stringify(sessionLogData(session, name => existsSync(path.join(LOGS_DIR, name))), null, 2));
+    const reason = postmortemSkipReason({ dryRun: DRY_RUN, tickets: session.tickets, gate: () => freshGate(budgetRef) });
+    if (reason) {
+      log(`Postmortem skipped: ${reason}`);
+      return { outcome: "skipped", reason, suggestions: [] };
+    }
+    log("Running postmortem");
+    await waitForSession();
+    const shouldAbort = () => weeklyGate(budgetRef, "during the postmortem") ?? sessionAbortReason(budgetRef.current);
+    const { rawOutput, outcome } = await runPostmortem(ROOT, date, [WORKTREES_DIR], {
+      shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("main", ROOT, { readLogs: true }),
+    });
+    saveLog(`postmortem-${date}.txt`, rawOutput);
+    if (outcome.outcome !== "done") {
+      log(`Postmortem failed: ${outcome.reason}`);
+      return outcome;
+    }
+    const file = path.join(REPORTS_DIR, `${base}-postmortem.md`);
+    writeFileSync(file, postmortemMarkdown(date, outcome.suggestions), "utf-8");
+    log(`Postmortem: ${outcome.suggestions.length} suggestion(s) in ${file}`);
+    return { ...outcome, file: path.relative(ROOT, file) };
+  } catch (e) {
+    const reason = errorMessage(e);
+    log(`Postmortem errored: ${reason}`);
+    return { outcome: "failed", reason, suggestions: [] };
+  }
 }
 
 async function main() {
@@ -453,27 +507,31 @@ async function main() {
     testDb?.stop();
   }
 
-  try {
-    if (!closedAtStart) budgetRef.current = checkGate(budgetRef.current);
-  } catch (e) {
-    log(`Final usage check failed: ${(e as Error).message}`);
-    logUsageFailure(e, "  ");
-  }
-  const endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
-
   const session: SessionResult = {
     date,
     startedAt,
-    endedAt,
+    endedAt: new Date().toLocaleString("en-US", { timeZone: TIME_ZONE }),
     tickets: results,
     budget: budgetRef.current,
     gateHit,
     skipReason,
     noTasks: tickets.length === 0 && !ticketError,
   };
+  mkdirSync(REPORTS_DIR, { recursive: true });
+  const base = reportBase(date, name => existsSync(path.join(REPORTS_DIR, name)));
+  session.postmortem = await nightPostmortem(session, budgetRef, base);
+
+  try {
+    if (!closedAtStart) budgetRef.current = checkGate(budgetRef.current);
+  } catch (e) {
+    log(`Final usage check failed: ${(e as Error).message}`);
+    logUsageFailure(e, "  ");
+  }
+  session.budget = budgetRef.current;
+  session.endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
 
   // Write report
-  const reportPath = writeReport(session);
+  const reportPath = writeReport(session, base);
   log(`\n═══ Report written: ${reportPath} ═══`);
   log(`Open in browser: file://${reportPath}`);
 }

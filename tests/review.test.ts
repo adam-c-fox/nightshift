@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { AgentReport, FixRunResult, ReviewRunResult } from "../src/claude.js";
+import type { AgentReport, FixRunResult, ReviewRunResult, VerifyRunResult } from "../src/claude.js";
 import { mergeFixReport, reviewAndFix, type ReviewDeps } from "../src/review.js";
-import type { FixResolution, ReviewFinding } from "../src/types.js";
+import type { FixResolution, ReviewFinding, VerifyResult } from "../src/types.js";
 
 const finding = (id: string, severity: ReviewFinding["severity"] = "major"): ReviewFinding => ({
   id, severity, file: "src/a.ts", issue: `Problem ${id}.`, suggestion: `Fix ${id}.`,
@@ -10,7 +10,7 @@ const finding = (id: string, severity: ReviewFinding["severity"] = "major"): Rev
 const reviewed = (...findings: ReviewFinding[]): ReviewRunResult => ({ success: true, rawOutput: "review out", findings });
 
 const report = (over: Partial<AgentReport> = {}): AgentReport => ({
-  status: "done", title: "", summary: "Fixed it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", ...over,
+  status: "done", title: "", summary: "Fixed it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [], ...over,
 });
 
 const fixed = (fixes: FixResolution[], over: Partial<FixRunResult> = {}): FixRunResult =>
@@ -208,7 +208,7 @@ describe("reviewAndFix", () => {
 describe("mergeFixReport", () => {
   const base = {
     title: "feat: export", summary: "Adds export.", filesCreated: ["a.ts"], filesModified: ["b.ts"],
-    tests: [{ name: "t1", file: "a.test.ts", result: "fail" as const }],
+    tests: [{ name: "t1", file: "a.test.ts", result: "fail" as const }], followups: [{ file: "x.ts", note: "old" }],
   };
 
   it("takes the refined title and summary when present", () => {
@@ -218,6 +218,11 @@ describe("mergeFixReport", () => {
 
   it("keeps the original title and summary when the fix report has none", () => {
     expect(mergeFixReport(base, report({ summary: "" }))).toMatchObject({ title: "feat: export", summary: "Adds export." });
+  });
+
+  it("unions followups, deduping by file and note", () => {
+    const merged = mergeFixReport(base, report({ followups: [{ file: "x.ts", note: "old" }, { file: "x.ts", note: "new" }, { file: "y.ts", note: "old" }] }));
+    expect(merged.followups).toEqual([{ file: "x.ts", note: "old" }, { file: "x.ts", note: "new" }, { file: "y.ts", note: "old" }]);
   });
 
   it("unions files and lets the fix run's test results replace same-named ones", () => {
@@ -292,5 +297,117 @@ describe("reviewAndFix with risks", () => {
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
     expect(outcome.review.risks).toEqual(risks);
+  });
+});
+
+describe("reviewAndFix verification", () => {
+  const verdict = (id: string, status: VerifyResult["status"] = "resolved", note = `note ${id}`): VerifyResult => ({ id, status, note });
+  const verified = (...results: VerifyResult[]): VerifyRunResult => ({ success: true, rawOutput: "verify out", results });
+  const withVerify = (verify: ReviewDeps["verify"], over: Partial<ReviewDeps> = {}) => {
+    const seen: { findings: ReviewFinding[]; resolutions: FixResolution[] }[] = [];
+    const h = harness({
+      review: async () => reviewed(finding("R1", "blocker"), finding("R2", "major"), finding("R3", "minor")),
+      verify: async (findings, resolutions) => { seen.push({ findings, resolutions }); return verify!(findings, resolutions); },
+      ...over,
+    });
+    return { ...h, seen };
+  };
+
+  it("verifies the claimed-fixed findings only and records the results", async () => {
+    const { calls, seen, run } = withVerify(
+      async () => verified(verdict("R1"), verdict("R3")),
+      { fix: async findings => fixed(findings.map(f => resolution(f.id, f.id === "R2" ? "not_fixed" : "fixed"))) },
+    );
+    const outcome = await run();
+    expect(seen[0].resolutions.filter(r => r.status === "fixed").map(r => r.id)).toEqual(["R1", "R3"]);
+    expect(outcome.review.verification).toEqual({ outcome: "verified", results: [verdict("R1"), verdict("R3")] });
+    expect(outcome.review.resolutions.map(r => r.status)).toEqual(["fixed", "not_fixed", "fixed"]);
+    expect(calls.saved).toContain("verify:verify out");
+  });
+
+  it("turns an unresolved claim into not_fixed and blocks publishing on a blocker", async () => {
+    const { run } = withVerify(async () => verified(verdict("R1", "unresolved", "still buffers"), verdict("R2"), verdict("R3")));
+    const outcome = await run();
+    expect(outcome.review.resolutions[0]).toEqual({ id: "R1", status: "not_fixed", how: "how R1; still open: still buffers" });
+    expect(outcome).toMatchObject({ publish: false, needsReview: true });
+  });
+
+  it("flags needs_review but still publishes when an unresolved claim is a major", async () => {
+    const { run } = withVerify(async () => verified(verdict("R1"), verdict("R2", "unresolved", "nope"), verdict("R3")));
+    expect(await run()).toMatchObject({ publish: true, needsReview: true });
+  });
+
+  it("treats a claimed id missing from the verification as unresolved", async () => {
+    const { run } = withVerify(async () => verified(verdict("R1"), verdict("R3")));
+    const outcome = await run();
+    expect(outcome.review.resolutions[1]).toMatchObject({ id: "R2", status: "not_fixed", how: "how R2; still open: not verified" });
+    expect(outcome.review.verification?.results).toContainEqual(verdict("R2", "unresolved", "not verified"));
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("skips verification with a note when the gate closes, flagging a claimed blocker or major", async () => {
+    let open = true;
+    let verifyCalls = 0;
+    const { run } = withVerify(async () => { verifyCalls++; return verified(); }, {
+      gateOpen: () => open,
+      fix: async findings => { open = false; return fixed(findings.map(f => resolution(f.id))); },
+    });
+    const outcome = await run();
+    expect(verifyCalls).toBe(0);
+    expect(outcome.review.verification).toEqual({ outcome: "skipped", reason: "budget cap reached", results: [] });
+    expect(outcome.notes.join(" ")).toContain("Fixes unverified: budget cap reached.");
+    expect(outcome).toMatchObject({ needsReview: true, publish: true });
+  });
+
+  it("does not flag needs_review for a skipped verification of only minors", async () => {
+    let open = true;
+    const { run } = withVerify(async () => verified(), {
+      review: async () => reviewed(finding("R3", "minor")),
+      gateOpen: () => open,
+      fix: async findings => { open = false; return fixed(findings.map(f => resolution(f.id))); },
+    });
+    expect((await run()).needsReview).toBe(false);
+  });
+
+  it("keeps the fixer's claims and flags needs_review when the verify run fails", async () => {
+    const { run } = withVerify(async () => ({ success: false, rawOutput: "boom", failure: "claude exited with status 1" }));
+    const outcome = await run();
+    expect(outcome.review.verification).toMatchObject({ outcome: "failed", reason: "claude exited with status 1" });
+    expect(outcome.review.resolutions.every(r => r.status === "fixed")).toBe(true);
+    expect(outcome).toMatchObject({ needsReview: true, publish: true });
+    expect(outcome.notes.join(" ")).toMatch(/verification failed/i);
+  });
+
+  it("keeps the fixer's claims and flags needs_review when the verify output cannot be parsed", async () => {
+    const { run } = withVerify(async () => ({ success: true, rawOutput: "x", parseError: "No ---VERIFY--- block found" }));
+    const outcome = await run();
+    expect(outcome.review.verification).toMatchObject({ outcome: "failed", reason: "No ---VERIFY--- block found" });
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("refuses to publish when the verify run modified the worktree", async () => {
+    let snap = "same";
+    const { run } = withVerify(async () => { snap = "changed"; return verified(verdict("R1"), verdict("R2"), verdict("R3")); }, { snapshot: () => snap });
+    const outcome = await run();
+    expect(outcome.review.verification).toMatchObject({ outcome: "failed", reason: expect.stringMatching(/modified/i) });
+    expect(outcome).toMatchObject({ publish: false, needsReview: true });
+    expect(outcome.review.resolutions.every(r => r.status === "fixed")).toBe(true);
+  });
+
+  it("does not verify when nothing was claimed fixed", async () => {
+    let verifyCalls = 0;
+    const { run } = withVerify(async () => { verifyCalls++; return verified(); }, {
+      fix: async findings => fixed(findings.map(f => resolution(f.id, "not_fixed"))),
+    });
+    const outcome = await run();
+    expect(verifyCalls).toBe(0);
+    expect(outcome.review.verification).toBeUndefined();
+  });
+
+  it("does not verify when the fix run crashed", async () => {
+    let verifyCalls = 0;
+    const { run } = withVerify(async () => { verifyCalls++; return verified(); }, { fix: async () => ({ success: false, rawOutput: "x", failure: "died" }) });
+    await run();
+    expect(verifyCalls).toBe(0);
   });
 });

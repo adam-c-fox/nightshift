@@ -107,6 +107,7 @@ These rules exist so the machine doesn't burn through the weekly budget.
 - Never mention nightshift, automation, "night run" or anything similar in
   code, comments, commit text, your `title` or your `summary`. Everything you
   write must read as if a developer wrote it by hand.
+- Do NOT fix problems outside the ticket's scope. Record each in `followups` (§6).
 - Do NOT create branches, PRs, or change git config.
 - Do NOT run `npm install` unless you added a new dependency AND the ticket
   requires it. `node_modules` is pre-populated via symlink.
@@ -149,6 +150,9 @@ verify:
   - "npm test -w services/export"
   - "npm run build && npm run typecheck"
 notes: <anything the reviewer must know. Empty string if nothing.>
+followups:
+  - file: src/legacy/parse.ts
+    note: <one line: problem noticed outside this ticket>
 ---
 ```
 
@@ -165,6 +169,10 @@ automation.
 
 **`verify`** – the exact commands to run in the worktree to confirm the
 change works. The reviewer will copy-paste these.
+
+**`followups`** – optional. Problems you noticed outside the ticket's scope
+and deliberately did not fix. One concrete line each, with the file. Omit or
+use `followups: []` when there are none.
 
 **`files_created`** / **`files_modified`** – repo-relative paths. No `./`,
 no absolute paths.

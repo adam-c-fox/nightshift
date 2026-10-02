@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, type TicketBrief } from "../src/claude.js";
+import { buildReviewPrompt, buildVerifyPrompt, type TicketBrief } from "../src/claude.js";
 import type { ClassifiedCheck } from "../src/checks.js";
 
 const brief: TicketBrief = { ticketId: "ENG-12", ticketName: "Poll", context: [], linearDesc: "", linearUrl: "u", state: "Todo" };
@@ -43,5 +43,31 @@ describe("buildReviewPrompt", () => {
     const prompt = buildReviewPrompt(brief, undefined, "origin/main", { related: [{ ticketId: "ENG-10", branch: "feat/eng-10-x" }, { ticketId: "ENG-11", branch: "feat/eng-11-y" }] });
     expect(prompt).toContain("Related ticket ENG-10 was implemented earlier this session on branch feat/eng-10-x. Check that both sides of any shared contract agree: `git diff origin/main...feat/eng-10-x`.");
     expect(prompt).toContain("`git diff origin/main...feat/eng-11-y`");
+  });
+});
+
+describe("buildVerifyPrompt", () => {
+  const findings = [
+    { id: "R1", severity: "blocker" as const, file: "src/a.ts", issue: "Buffers rows.", suggestion: "Stream." },
+    { id: "R2", severity: "major" as const, file: "src/b.ts", issue: "No header.", suggestion: "Add it." },
+  ];
+  const resolutions = [
+    { id: "R1", status: "fixed" as const, how: "Streamed rows." },
+    { id: "R2", status: "not_fixed" as const, how: "Disagree." },
+  ];
+  const prompt = buildVerifyPrompt(brief, "origin/main", findings, resolutions);
+
+  it("names the ticket and base ref and asks for the VERIFY block", () => {
+    expect(prompt).toContain("ENG-12");
+    expect(prompt).toContain("git diff origin/main");
+    expect(prompt).toContain("---VERIFY---");
+    expect(prompt).toMatch(/Do not modify any file/);
+  });
+
+  it("lists only claimed-fixed findings with the fixer's account", () => {
+    expect(prompt).toContain("id: R1");
+    expect(prompt).toContain("issue: Buffers rows.");
+    expect(prompt).toContain("fixer says: Streamed rows.");
+    expect(prompt).not.toContain("R2");
   });
 });

@@ -16,14 +16,14 @@ const ALLOWED_DOMAINS: Record<RepoKind, string[]> = {
   terraform: ["registry.terraform.io", "releases.hashicorp.com"],
 };
 
-export function buildAgentSettings(repo: RepoKind, nightshiftRoot: string): string {
-  const secretFiles = [`${nightshiftRoot}/.env`, `${nightshiftRoot}/logs`];
+export function buildAgentSettings(repo: RepoKind, nightshiftRoot: string, { readLogs = false } = {}): string {
+  const secretFiles = [`${nightshiftRoot}/.env`, ...(readLogs ? [] : [`${nightshiftRoot}/logs`])];
   const denyRead = [...secretFiles, ...DENY_READ];
   return JSON.stringify({
     permissions: {
       deny: [
         ...secretFiles.map(f => `Read(/${f})`),
-        `Read(/${nightshiftRoot}/logs/**)`,
+        ...(readLogs ? [] : [`Read(/${nightshiftRoot}/logs/**)`]),
         "WebFetch", "WebSearch", "mcp__claude_ai_Linear", "mcp__claude_ai_Notion",
       ],
     },
