@@ -5,3 +5,4 @@ reports/
 logs/
 *.log
 .DS_Store
+tickets/tonight.md
