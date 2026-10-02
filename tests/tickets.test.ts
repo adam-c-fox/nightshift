@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadTickets, parseTickets } from "../src/tickets.js";
+import { archiveTickets, loadTickets, parseTickets, ticketsHeader } from "../src/tickets.js";
 
 describe("parseTickets", () => {
   it("parses headings, repo and context bullets", () => {
@@ -51,5 +51,32 @@ describe("loadTickets", () => {
     const file = join(dir, "tonight.md");
     writeFileSync(file, "## ENG-9 – Thing\n");
     expect(loadTickets(file)).toMatchObject([{ id: "ENG-9" }]);
+  });
+});
+
+describe("ticketsHeader", () => {
+  it("keeps everything before the first ticket, including commented-out ones", () => {
+    const header = "# Tonight\n\n<!--\n## ENG-1 – commented out\n-->\n\n";
+    expect(ticketsHeader(`${header}## ENG-2 – Real\n- context\n`)).toBe(header);
+  });
+
+  it("keeps the whole file when it has no tickets", () => {
+    expect(ticketsHeader("# Tonight\n")).toBe("# Tonight\n");
+  });
+});
+
+describe("archiveTickets", () => {
+  it("copies the file to the archive and leaves only the header behind", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nightshift-tickets-"));
+    const file = join(dir, "tonight.md");
+    const dest = join(dir, "reports", "2026-10-02-tonight.md");
+    const raw = "# Tonight\n\n## ENG-9 – Thing\n- context\n";
+    writeFileSync(file, raw);
+
+    archiveTickets(dest, file);
+
+    expect(readFileSync(dest, "utf-8")).toBe(raw);
+    expect(readFileSync(file, "utf-8")).toBe("# Tonight\n\n");
+    expect(loadTickets(file)).toEqual([]);
   });
 });

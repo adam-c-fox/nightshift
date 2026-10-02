@@ -1,8 +1,10 @@
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Ticket, RepoKind } from "./types.js";
 
 const TICKETS_FILE = path.resolve(import.meta.dirname, "..", "tickets", "tonight.md");
+const COMMENT = /<!--[\s\S]*?-->/g;
+const HEADING = /^##\s+([A-Z]+-\d+)\s*[–-]\s*(.*)/;
 
 export function loadTickets(file = TICKETS_FILE): Ticket[] {
   let raw: string;
@@ -16,7 +18,7 @@ export function loadTickets(file = TICKETS_FILE): Ticket[] {
 }
 
 export function parseTickets(raw: string): Ticket[] {
-  const lines = raw.replace(/<!--[\s\S]*?-->/g, "").split(/\r?\n/);
+  const lines = raw.replace(COMMENT, "").split(/\r?\n/);
   const tickets: Ticket[] = [];
   let current: Omit<Ticket, "context"> | null = null;
   let contextLines: string[] = [];
@@ -33,7 +35,7 @@ export function parseTickets(raw: string): Ticket[] {
     const trimmed = line.trim();
 
     // New ticket heading: "## ENG-142 – Some name"
-    const headingMatch = trimmed.match(/^##\s+([A-Z]+-\d+)\s*[–-]\s*(.*)/);
+    const headingMatch = trimmed.match(HEADING);
     if (headingMatch) {
       flush();
       current = {
@@ -61,4 +63,20 @@ export function parseTickets(raw: string): Ticket[] {
 
   flush();
   return tickets;
+}
+
+export function ticketsHeader(raw: string): string {
+  const masked = raw.replace(COMMENT, c => c.replace(/[^\n]/g, " "));
+  let offset = 0;
+  for (const line of masked.split("\n")) {
+    if (HEADING.test(line.trim())) return raw.slice(0, offset);
+    offset += line.length + 1;
+  }
+  return raw;
+}
+
+export function archiveTickets(dest: string, file = TICKETS_FILE): void {
+  mkdirSync(path.dirname(dest), { recursive: true });
+  copyFileSync(file, dest);
+  writeFileSync(file, ticketsHeader(readFileSync(file, "utf-8")), "utf-8");
 }

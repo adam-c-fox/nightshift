@@ -68,7 +68,7 @@ Preview the night without changing anything:
 npm run run:dry
 ```
 
-The report lands in `reports/nightshift-<date>.html`. Agent output and run logs go to `logs/`.
+The report lands in `reports/nightshift-<date>.html`. Agent output and run logs go to `logs/`. The runner then moves the night's tickets to `reports/nightshift-<date>-tonight.md`, leaving only the header in `tickets/tonight.md`, so the next night doesn't rerun them.
 
 ## Each morning
 

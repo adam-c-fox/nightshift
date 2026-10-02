@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, SessionPostmortem, LinearTicket, NightBudget } from "./types.js";
-import { loadTickets } from "./tickets.js";
+import { archiveTickets, loadTickets } from "./tickets.js";
 import { REPOS } from "./repos.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, markInProgress, shouldMarkInProgress } from "./linear.js";
@@ -534,6 +534,12 @@ async function main() {
   const reportPath = writeReport(session, base);
   log(`\n═══ Report written: ${reportPath} ═══`);
   log(`Open in browser: file://${reportPath}`);
+
+  if (!DRY_RUN && tickets.length > 0) {
+    const archivePath = path.join(REPORTS_DIR, `${base}-tonight.md`);
+    archiveTickets(archivePath);
+    log(`Tickets archived: ${archivePath}`);
+  }
 }
 
 main().catch(err => {
