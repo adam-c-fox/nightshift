@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import type { Ticket, TicketResult, SessionResult, SessionPostmortem, LinearTicket, NightBudget } from "./types.js";
+import type { Ticket, TicketResult, SessionResult, SessionPostmortem, LinearComment, LinearTicket, NightBudget } from "./types.js";
 import { archiveTickets, loadTickets } from "./tickets.js";
 import { REPOS } from "./repos.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
@@ -212,10 +212,12 @@ async function processTicket(
 
   let linear: LinearTicket | null = null;
   let linearDesc = "", linearUrl = "", linearState = "";
+  let linearComments: LinearComment[] = [];
   try {
     linear = await fetchTicket(ticketId);
     if (linear) {
       linearDesc = linear.description;
+      linearComments = linear.comments;
       linearUrl = linear.url;
       linearState = linear.state;
       log(`  Linear: ${linear.name} [${linear.state}]`);
@@ -247,7 +249,7 @@ async function processTicket(
   if (!dryRun) await waitForSession();
   const result = await runAgent(
     wt.wtPath, ticketId, ticketName, agentContext,
-    linearDesc, linearUrl, linearState, dryRun, agentOptions,
+    linearDesc, linearComments, linearUrl, linearState, dryRun, agentOptions,
   );
 
   const report = result.report;
@@ -290,7 +292,7 @@ async function processTicket(
   } else {
     saveLog(`${ticketId}-output.txt`, result.rawOutput);
 
-    const brief: TicketBrief = { ticketId, ticketName, context: agentContext, linearDesc, linearUrl, state: linearState };
+    const brief: TicketBrief = { ticketId, ticketName, context: agentContext, linearDesc, linearComments, linearUrl, state: linearState };
     const after = outcome.publish && hasChangesVsBase(wt) ? await runLoggedChecks("after the change", wt.wtPath, commands) : undefined;
     let checks = after && classifyChecks(baseline, after);
     const related = relatedTickets(ticketId, repo, [...agentContext, linearDesc], processed);
@@ -356,7 +358,7 @@ async function processTicket(
           const fix = await fixFailingChecks(pr, { ticketId, title: ticketResult.title ?? "" }, {
             runAgent: async context => {
               await waitForSession();
-              return runAgent(wt.wtPath, ticketId, ticketName, context, linearDesc, linearUrl, linearState, false, agentOptions);
+              return runAgent(wt.wtPath, ticketId, ticketName, context, linearDesc, linearComments, linearUrl, linearState, false, agentOptions);
             },
             commit: subject => {
               const outcome = commitWorktree(wt, subject, log);

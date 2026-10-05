@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildReviewPrompt, buildVerifyPrompt, type TicketBrief } from "../src/claude.js";
 import type { ClassifiedCheck } from "../src/checks.js";
 
-const brief: TicketBrief = { ticketId: "ENG-12", ticketName: "Poll", context: [], linearDesc: "", linearUrl: "u", state: "Todo" };
+const brief: TicketBrief = { ticketId: "ENG-12", ticketName: "Poll", context: [], linearDesc: "", linearComments: [], linearUrl: "u", state: "Todo" };
 
 const check = (command: string, status: ClassifiedCheck["status"], passed: boolean, outputTail = ""): ClassifiedCheck =>
   ({ name: command, command, status, passed, durationSec: 7, outputTail });
@@ -43,6 +43,20 @@ describe("buildReviewPrompt", () => {
     const prompt = buildReviewPrompt(brief, undefined, "origin/main", { related: [{ ticketId: "ENG-10", branch: "feat/eng-10-x" }, { ticketId: "ENG-11", branch: "feat/eng-11-y" }] });
     expect(prompt).toContain("Related ticket ENG-10 was implemented earlier this session on branch feat/eng-10-x. Check that both sides of any shared contract agree: `git diff origin/main...feat/eng-10-x`.");
     expect(prompt).toContain("`git diff origin/main...feat/eng-11-y`");
+  });
+});
+
+describe("ticket section", () => {
+  it("leaves out the comments heading when the ticket has none", () => {
+    expect(buildReviewPrompt(brief, undefined, "origin/main")).not.toMatch(/Linear comments/);
+  });
+
+  it("lists every comment with its author and date, keeping multi-line bodies indented", () => {
+    const prompt = buildReviewPrompt({ ...brief, linearComments: [
+      { author: "Adam", createdAt: "2026-10-01T09:00:00.000Z", body: "Skip empty files.\nMark them read." },
+      { author: "Sam", createdAt: "2026-10-02T09:00:00.000Z", body: "Agreed." },
+    ] }, undefined, "origin/main");
+    expect(prompt).toContain("**Linear comments (oldest first):**\n  - Adam, 2026-10-01: Skip empty files.\n    Mark them read.\n  - Sam, 2026-10-02: Agreed.");
   });
 });
 

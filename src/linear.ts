@@ -1,7 +1,7 @@
 import { requireEnv } from "./env.js";
-import type { LinearTicket } from "./types.js";
+import type { LinearComment, LinearTicket } from "./types.js";
 
-export type { LinearTicket };
+export type { LinearComment, LinearTicket };
 
 const BASE_URL = "https://api.linear.app/graphql";
 
@@ -19,6 +19,7 @@ interface IssueResponse {
     state: { name: string; type: string } | null;
     team: { states: { nodes: WorkflowState[] } } | null;
     url: string;
+    comments: { nodes: { body: string; createdAt: string; user: { name: string } | null }[] } | null;
   } | null };
   errors?: { message: string }[];
 }
@@ -81,6 +82,7 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
         state { name type }
         team { states { nodes { id name type position } } }
         url
+        comments(first: 100) { nodes { body createdAt user { name } } }
       }
     }
   `;
@@ -101,6 +103,9 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
     identifier: issue.identifier,
     name: issue.title,
     description: issue.description ?? "",
+    comments: (issue.comments?.nodes ?? [])
+      .map(c => ({ author: c.user?.name ?? "integration", createdAt: c.createdAt, body: c.body }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
     state: issue.state?.name ?? "unknown",
     stateType: issue.state?.type ?? "unknown",
     inProgressState: pickInProgressState(issue.team?.states.nodes ?? []),

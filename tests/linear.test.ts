@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { markInProgress, pickInProgressState, shouldMarkInProgress } from "../src/linear.js";
+import { fetchTicket, markInProgress, pickInProgressState, shouldMarkInProgress } from "../src/linear.js";
 
 describe("pickInProgressState", () => {
   const states = [
@@ -53,5 +53,35 @@ describe("markInProgress", () => {
 
     vi.stubGlobal("fetch", respond(false));
     await expect(markInProgress("issue-1", "progress")).rejects.toThrow(/not updated/);
+  });
+});
+
+describe("fetchTicket", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  const issue = (comments: unknown[]) => ({
+    id: "issue-1", identifier: "ENG-1", title: "Poll", description: "Desc",
+    state: { name: "Todo", type: "unstarted" }, team: { states: { nodes: [] } }, url: "u",
+    comments: { nodes: comments },
+  });
+
+  it("returns the comments oldest first with their author", async () => {
+    vi.stubEnv("LINEAR_API_KEY", "lin_api_x");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: { issue: issue([
+      { body: "Second", createdAt: "2026-10-02T09:00:00.000Z", user: { name: "Sam" } },
+      { body: "First", createdAt: "2026-10-01T09:00:00.000Z", user: { name: "Adam" } },
+      { body: "Linked a PR", createdAt: "2026-10-03T09:00:00.000Z", user: null },
+    ]) } }))));
+
+    const ticket = await fetchTicket("ENG-1");
+
+    expect(ticket?.comments).toEqual([
+      { author: "Adam", createdAt: "2026-10-01T09:00:00.000Z", body: "First" },
+      { author: "Sam", createdAt: "2026-10-02T09:00:00.000Z", body: "Second" },
+      { author: "integration", createdAt: "2026-10-03T09:00:00.000Z", body: "Linked a PR" },
+    ]);
   });
 });

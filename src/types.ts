@@ -7,11 +7,18 @@ export interface Ticket {
   repo: RepoKind;
 }
 
+export interface LinearComment {
+  author: string;
+  createdAt: string;
+  body: string;
+}
+
 export interface LinearTicket {
   id: string;
   identifier: string;
   name: string;
   description: string;
+  comments: LinearComment[];
   state: string;
   stateType: string;
   inProgressState?: { id: string; name: string };

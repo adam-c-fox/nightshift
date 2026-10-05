@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { runWithWatchdog } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
-import type { Followup, FixResolution, ReviewFinding, ReviewRisk, Severity, TestResult, VerifyResult } from "./types.js";
+import type { Followup, FixResolution, LinearComment, ReviewFinding, ReviewRisk, Severity, TestResult, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const AGENTS_MD = path.join(ROOT, "AGENTS.md");
@@ -15,8 +15,15 @@ export interface TicketBrief {
   ticketName: string;
   context: string[];
   linearDesc: string;
+  linearComments: LinearComment[];
   linearUrl: string;
   state: string;
+}
+
+function commentLines(comments: LinearComment[]): string[] {
+  if (comments.length === 0) return [];
+  const items = comments.map(c => `  - ${c.author}, ${c.createdAt.slice(0, 10)}: ${c.body.replace(/\n/g, "\n    ")}`);
+  return [`**Linear comments (oldest first):**`, ...items, ``];
 }
 
 function ticketSection(brief: TicketBrief): string[] {
@@ -29,6 +36,7 @@ function ticketSection(brief: TicketBrief): string[] {
     `**Linear description:**`,
     `  ${brief.linearDesc || "(no description)"}`,
     ``,
+    ...commentLines(brief.linearComments),
     `**Additional context from the operator:**`,
     ctx,
     ``,
@@ -453,12 +461,13 @@ export async function runAgent(
   ticketName: string,
   context: string[],
   linearDesc: string,
+  linearComments: LinearComment[],
   linearUrl: string,
   linearState: string,
   dryRun: boolean,
   options: RunAgentOptions,
 ): Promise<ClaudeResult> {
-  const prompt = buildPrompt({ ticketId, ticketName, context, linearDesc, linearUrl, state: linearState });
+  const prompt = buildPrompt({ ticketId, ticketName, context, linearDesc, linearComments, linearUrl, state: linearState });
 
   if (dryRun) {
     console.log(`  [dry-run] Would run: claude ${buildClaudeArgs("<AGENTS.md>").slice(0, -2).join(" ")} (in ${worktreePath})`);

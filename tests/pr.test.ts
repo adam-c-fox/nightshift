@@ -311,7 +311,7 @@ describe("prAction", () => {
 describe("PR content", () => {
   const result: TicketResult = {
     ticket: { id: "ENG-1", name: "Export", context: [], repo: "main" },
-    linear: { id: "l", identifier: "ENG-1", name: "Export", description: "", state: "Todo", stateType: "unstarted", url: "https://linear.app/x/ENG-1" },
+    linear: { id: "l", identifier: "ENG-1", name: "Export", description: "", comments: [], state: "Todo", stateType: "unstarted", url: "https://linear.app/x/ENG-1" },
     status: "needs_review", title: "feat: stream csv export", summary: "Streams rows to the response.",
     filesCreated: [], filesModified: [], tests: [], verifyCommands: ["npx vitest run"],
     notes: "Review found 2 issue(s); 1 fixed. Flaky reviewer note.",
