@@ -54,6 +54,8 @@ Schedule it:
 
 ## Each evening
 
+Prep tickets one at a time with `/prep <ID>` in Claude Code. It checks the ticket against the code, asks you about anything the agent would have to guess, and writes your answers into the Linear description. The agent also gets the comments, but as a raw thread, so settled decisions belong in the description.
+
 Draft `tickets/tonight.md` from your Linear Todo list by running `/tonight` in Claude Code, or write it by hand following [`tickets/tonight.example.md`](tickets/tonight.example.md):
 
 ```md

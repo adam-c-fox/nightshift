@@ -24,14 +24,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
 4. For each picked ticket, fetch the full issue with `get_issue` and its comments with `list_comments`.
    Done when every picked ticket has both.
 
-5. Check each picked ticket for real gaps, one line each:
-   - acceptance criteria that are missing, vague or untestable;
-   - edge cases with no stated behaviour (empty or invalid input, errors, permissions, concurrency);
-   - for anything that runs repeatedly (a poller, a queue consumer, a retry): the end state of each input it skips, rejects or fails on;
-   - contradictions between the description and the comments;
-   - contracts shared with another picked ticket that neither defines.
-
-   No padding; "no gaps" is a fine answer.
+5. Check each picked ticket against every item in `.claude/skills/prep/gaps.md`. Tickets prepped with `/prep` carry their decisions in the description under `## Decisions`; count those as answered.
    Show all tickets' gaps in one numbered message. Ask Adam to answer each with a decision, "your call", or drop the ticket. Write "your call" as a bullet like "Your call on X; state the choice in notes". A dropped ticket leaves tonight's set for the remaining steps.
    Done when every gap has an answer or its ticket is dropped.
 

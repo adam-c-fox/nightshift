@@ -14,7 +14,7 @@ Review one nightshift night and suggest changes to the instructions that would h
 
 For each ticket that went wrong: status `needs_review`, `partial` or `error`, review findings (each one is a mistake the implementer made), fixes `not_fixed` or still open after verification, check regressions, CI fix attempts, budget aborts, skipped or failed stages.
 
-For each, find the instruction-level root cause: which part of `AGENTS.md`, `prompts/review.md`, `prompts/fix.md`, `prompts/verify.md`, `.claude/skills/tonight/SKILL.md` (gap-finding and context bullets) or the runner's behaviour was missing, vague or misleading, so that the agent did what it did. Read those files and the relevant log lines before concluding.
+For each, find the instruction-level root cause: which part of `AGENTS.md`, `prompts/review.md`, `prompts/fix.md`, `prompts/verify.md`, `.claude/skills/prep/gaps.md` (gap-finding), `.claude/skills/prep/SKILL.md` (ticket descriptions), `.claude/skills/tonight/SKILL.md` (context bullets) or the runner's behaviour was missing, vague or misleading, so that the agent did what it did. Read those files and the relevant log lines before concluding.
 
 ## Rules
 
