@@ -80,3 +80,34 @@ describe("archiveTickets", () => {
     expect(loadTickets(file)).toEqual([]);
   });
 });
+
+describe("base", () => {
+  const section = (id: string, ...lines: string[]) => [`## ${id} – Name ${id}`, ...lines, ""].join("\n");
+
+  it("parses base case-insensitively and leaves it unset otherwise", () => {
+    const [a, b] = parseTickets(section("ENG-1", "repo: main") + section("ENG-2", "BASE: ENG-1", "- ctx"));
+    expect(a.base).toBeUndefined();
+    expect(b).toMatchObject({ id: "ENG-2", base: "ENG-1", context: ["ctx"] });
+  });
+
+  it("allows chains where each ticket names its direct parent", () => {
+    const tickets = parseTickets(section("ENG-1") + section("ENG-2", "base: ENG-1") + section("ENG-3", "base: ENG-2"));
+    expect(tickets.map(t => t.base)).toEqual([undefined, "ENG-1", "ENG-2"]);
+  });
+
+  it("rejects a base listed later in the file", () => {
+    expect(() => parseTickets(section("ENG-2", "base: ENG-1") + section("ENG-1"))).toThrow(/ENG-2.*ENG-1.*earlier/);
+  });
+
+  it("rejects a base that is not in the file", () => {
+    expect(() => parseTickets(section("ENG-2", "base: ENG-9"))).toThrow(/ENG-2.*ENG-9.*earlier/);
+  });
+
+  it("rejects a base in another repo", () => {
+    expect(() => parseTickets(section("ENG-1", "repo: terraform") + section("ENG-2", "base: ENG-1"))).toThrow(/ENG-2.*ENG-1.*same repo/);
+  });
+
+  it("rejects a ticket based on itself", () => {
+    expect(() => parseTickets(section("ENG-1", "base: ENG-1"))).toThrow(/ENG-1.*itself/);
+  });
+});

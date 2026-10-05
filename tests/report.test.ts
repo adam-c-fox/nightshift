@@ -194,3 +194,11 @@ describe("report postmortem section", () => {
     expect(reportFor(ticketResult())).not.toContain("Postmortem");
   });
 });
+
+describe("report stacked tickets", () => {
+  it("shows the parent ticket on a stacked card only", () => {
+    const stacked = reportFor(ticketResult({ ticket: { id: "ENG-2", name: "Child", context: [], repo: "main", base: "ENG-1" } }));
+    expect(stacked).toContain("Stacked on <code>ENG-1</code>");
+    expect(reportFor(ticketResult())).not.toContain("Stacked on");
+  });
+});

@@ -165,6 +165,7 @@ function ticketCardHTML(t: TicketResult): string {
       ${notes}
       <div class="meta">
         <span>Branch: <code>${esc(t.branch)}</code></span>
+        ${t.ticket.base ? `<span>Stacked on <code>${esc(t.ticket.base)}</code></span>` : ""}
         <span>Worktree: <code>${esc(t.worktreePath)}</code></span>
       </div>
     </div>

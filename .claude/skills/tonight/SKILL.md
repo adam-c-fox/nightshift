@@ -19,6 +19,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
    Done when you hold every Todo ticket assigned to Adam.
 
 3. Show a numbered list: ID, title, team, priority, estimate. Ask which to run tonight, as numbers or IDs, in priority order, and tell him the runner works tickets in file order, so order is priority.
+   When a picked ticket depends on another picked ticket's unmerged code, order it after its parent and add `base: <ID>` under `repo:`. Both must be in the same repo.
    Done when Adam has named an ordered set.
 
 4. For each picked ticket, fetch the full issue with `get_issue` and its comments with `list_comments`.

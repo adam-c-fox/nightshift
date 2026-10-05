@@ -1,8 +1,14 @@
 import type { RepoKind } from "./types.js";
 
+export interface PushedBranch {
+  branch: string;
+  prId: number;
+}
+
 export interface ProcessedTicket {
   branch: string;
   repo: RepoKind;
+  pushed?: PushedBranch;
 }
 
 const TICKET_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g;

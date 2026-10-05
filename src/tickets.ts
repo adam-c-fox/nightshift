@@ -53,6 +53,12 @@ export function parseTickets(raw: string): Ticket[] {
       continue;
     }
 
+    const baseMatch = trimmed.match(/^base:\s*([A-Z]+-\d+)\s*$/i);
+    if (baseMatch && current) {
+      current.base = baseMatch[1].toUpperCase();
+      continue;
+    }
+
     // Bullet line → context
     const bulletMatch = trimmed.match(/^-\s+(.+)/);
     if (bulletMatch && current) {
@@ -62,7 +68,19 @@ export function parseTickets(raw: string): Ticket[] {
   }
 
   flush();
+  validateBases(tickets);
   return tickets;
+}
+
+function validateBases(tickets: Ticket[]): void {
+  tickets.forEach((ticket, i) => {
+    if (!ticket.base) return;
+    const fail = (reason: string) => { throw new Error(`Ticket ${ticket.id}: base ${ticket.base} ${reason}`); };
+    if (ticket.base === ticket.id) fail("cannot be the ticket itself");
+    const parent = tickets.slice(0, i).find(t => t.id === ticket.base);
+    if (!parent) fail("must be a ticket listed earlier in the file");
+    else if (parent.repo !== ticket.repo) fail("must be in the same repo");
+  });
 }
 
 export function ticketsHeader(raw: string): string {

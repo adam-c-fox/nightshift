@@ -215,6 +215,44 @@ describe("excludedPathsInBranch", () => {
   });
 });
 
+describe("createWorktree stackedOn", () => {
+  const parent = "adamfox/eng-1-parent";
+  let env: ReturnType<typeof makeRepo>;
+  let spec: WorktreeSpec;
+  beforeEach(() => {
+    env = makeRepo();
+    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-2", repo: "main", branchBase: "adamfox/eng-2-child" };
+  });
+
+  const pushParent = () => {
+    run(env.repoPath, "checkout", "-q", "-b", parent);
+    writeFileSync(join(env.repoPath, "parent.ts"), "export {};\n");
+    run(env.repoPath, "add", "parent.ts");
+    run(env.repoPath, "commit", "-q", "-m", "parent work");
+    run(env.repoPath, "push", "-q", "origin", parent);
+    run(env.repoPath, "checkout", "-q", "main");
+  };
+
+  it("branches from the parent branch and targets it", () => {
+    pushParent();
+    const wt = createWorktree({ ...spec, stackedOn: parent }, noop);
+    expect(existsSync(join(wt.wtPath, "parent.ts"))).toBe(true);
+    expect(wt).toMatchObject({ baseRef: `origin/${parent}`, baseBranch: parent, startedFromPr: false, branch: "adamfox/eng-2-child" });
+    expect(commitWorktree(wt, "nothing", noop)).toBe("no_changes");
+  });
+
+  it("throws instead of falling back to main when the parent branch is missing", () => {
+    expect(() => createWorktree({ ...spec, stackedOn: parent }, noop)).toThrow(parent);
+  });
+
+  it("keeps resuming an existing PR branch over the stack base", () => {
+    pushParent();
+    run(env.repoPath, "push", "-q", "origin", `main:refs/heads/${spec.branchBase}`);
+    const wt = createWorktree({ ...spec, stackedOn: parent, startFrom: { branch: spec.branchBase, baseBranch: parent } }, noop);
+    expect(wt).toMatchObject({ baseRef: `origin/${spec.branchBase}`, baseBranch: parent, startedFromPr: true });
+  });
+});
+
 describe("createWorktree startFrom", () => {
   const prBranch = "adamfox/eng-1-fix";
   let env: ReturnType<typeof makeRepo>;

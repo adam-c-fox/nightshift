@@ -13,6 +13,7 @@ export interface WorktreeSpec {
   repo: RepoKind;
   branchBase: string;
   startFrom?: { branch: string; baseBranch: string };
+  stackedOn?: string;
 }
 
 export interface Worktree {
@@ -85,6 +86,12 @@ function resolveBaseRef(repoPath: string, log: Log): string {
   throw new Error(`No base branch found in ${repoPath} (tried ${candidates.join(", ")})`);
 }
 
+function stackBaseRef(repoPath: string, parentBranch: string): string {
+  const ref = `origin/${parentBranch}`;
+  if (!refExists(repoPath, ref)) throw new Error(`Base branch ${ref} not found after fetching origin; not falling back to main`);
+  return ref;
+}
+
 function refExists(repoPath: string, ref: string): boolean {
   try {
     git(["rev-parse", "--verify", "--quiet", ref], repoPath);
@@ -142,12 +149,13 @@ function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: str
 }
 
 export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
-  const { repoPath, worktreesDir, ticketId, repo, branchBase, startFrom } = spec;
+  const { repoPath, worktreesDir, ticketId, repo, branchBase, startFrom, stackedOn } = spec;
   const wtPath = worktreePath(worktreesDir, repo, ticketId);
 
   removeStaleWorktree(repoPath, worktreesDir, wtPath, ticketId, log);
 
-  const freshBaseRef = resolveBaseRef(repoPath, log);
+  const defaultBaseRef = resolveBaseRef(repoPath, log);
+  const freshBaseRef = stackedOn ? stackBaseRef(repoPath, stackedOn) : defaultBaseRef;
   const prRef = startFrom ? `origin/${startFrom.branch}` : null;
   const fallbackCause = prRef === null ? null
     : !refExists(repoPath, prRef) ? "not available locally (fetch failed?)"

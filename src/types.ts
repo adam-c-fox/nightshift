@@ -5,6 +5,7 @@ export interface Ticket {
   name: string;          // e.g. "CSV export fix"
   context: string[];     // bullet lines from tonight.md
   repo: RepoKind;
+  base?: string;         // ID of an earlier ticket this one is stacked on
 }
 
 export interface LinearComment {

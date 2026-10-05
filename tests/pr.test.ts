@@ -120,6 +120,12 @@ describe("buildPrDescription", () => {
     expect(text).not.toContain("closer look");
   });
 
+  it("says which PR to merge first when stacked", () => {
+    const stacked = buildPrDescription("ENG-2", "Done.", [], undefined, [], { ticketId: "ENG-1", prId: 41 });
+    expect(stacked).toContain("Stacked on PR #41 (ENG-1); merge that first.");
+    expect(text).not.toContain("Stacked on");
+  });
+
   it("keeps the 4000 character cap with many risks", () => {
     const risks = Array.from({ length: 200 }, (_, i) => ({ file: `f${i}.ts`, risk: "x".repeat(100) }));
     expect(buildPrDescription("ENG-1", "Done.", [], undefined, risks).length).toBe(4000);

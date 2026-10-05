@@ -94,6 +94,7 @@ export interface PrContent {
   verifyCommands: string[];
   ticketUrl?: string;
   risks: ReviewRisk[];
+  stackedOn?: { ticketId: string; prId: number };
 }
 
 export function prContent(result: TicketResult): PrContent {
@@ -106,6 +107,7 @@ export function prContent(result: TicketResult): PrContent {
 
 export function buildPrDescription(
   ticketId: string, summary: string, verifyCommands: string[], ticketUrl?: string, risks: ReviewRisk[] = [],
+  stackedOn?: { ticketId: string; prId: number },
 ): string {
   const ticket = ticketUrl ? `[${ticketId}](${ticketUrl})` : ticketId;
   const worthALook = risks.length > 0
@@ -114,7 +116,8 @@ export function buildPrDescription(
   const verify = verifyCommands.length > 0
     ? ["", "To verify locally:", ...verifyCommands.map(c => `- \`${c}\``)]
     : [];
-  return [`Ticket: ${ticket}`, "", summary, ...worthALook, ...verify].join("\n").slice(0, 4000);
+  const stacked = stackedOn ? [`Stacked on PR #${stackedOn.prId} (${stackedOn.ticketId}); merge that first.`, ""] : [];
+  return [`Ticket: ${ticket}`, "", ...stacked, summary, ...worthALook, ...verify].join("\n").slice(0, 4000);
 }
 
 function azEnv(): NodeJS.ProcessEnv {
@@ -319,7 +322,7 @@ export async function createAndCheckPR(
     sourceBranch: branch,
     targetBranch,
     title: buildPrTitle(content.ticketId, content.title, content.summary),
-    description: buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl, content.risks),
+    description: buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl, content.risks, content.stackedOn),
   }), worktreePath) as { pullRequestId: number; repository: { name: string } };
 
   const prId = created.pullRequestId;

@@ -56,6 +56,8 @@ Schedule it:
 
 Prep tickets one at a time with `/prep <ID>` in Claude Code. It checks the ticket against the code, asks you about anything the agent would have to guess, and writes your answers into the Linear description. The agent also gets the comments, but as a raw thread, so settled decisions belong in the description.
 
+A ticket that needs the unmerged code of another ticket in tonight's file can name it with `base: <ID>` (an earlier ticket in the same repo). It branches from that ticket's branch and opens its PR into it, and is skipped if the base wasn't pushed.
+
 Draft `tickets/tonight.md` from your Linear Todo list by running `/tonight` in Claude Code, or write it by hand following [`tickets/tonight.example.md`](tickets/tonight.example.md):
 
 ```md

@@ -9,14 +9,15 @@ import { runAgent, runFix, runReview, runVerify, type TicketBrief } from "./clau
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, requireEnv } from "./env.js";
 import { deriveOutcome } from "./status.js";
-import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult } from "./pr.js";
+import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
 import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { reportBase, REPORTS_DIR, writeReport } from "./report.js";
 import { postmortemMarkdown, postmortemSkipReason, runPostmortem, sessionLogData, type UsageGate } from "./postmortem.js";
 import { checkCommands, classifyChecks, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
-import { relatedTickets, type ProcessedTicket } from "./related.js";
+import { relatedTickets, type ProcessedTicket, type PushedBranch } from "./related.js";
+import { stackDecision, stackedContext } from "./stack.js";
 import { startTestDb } from "./test-db.js";
 import { localDate, TIME_ZONE } from "./time.js";
 import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
@@ -84,10 +85,10 @@ function applyPipelineStatus(result: TicketResult, pr: PRResult): void {
   }
 }
 
-async function openPullRequest(result: TicketResult, baseBranch: string): Promise<PRResult> {
+async function openPullRequest(result: TicketResult, baseBranch: string, stackedOn?: PrContent["stackedOn"]): Promise<PRResult> {
   const { branch, worktreePath } = result;
   log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
-  const pr = await createAndCheckPR(prContent(result), branch, baseBranch, worktreePath, { log });
+  const pr = await createAndCheckPR({ ...prContent(result), stackedOn }, branch, baseBranch, worktreePath, { log });
   applyPipelineStatus(result, pr);
   return pr;
 }
@@ -203,6 +204,12 @@ async function processTicket(
   const { id: ticketId, name: ticketName, context, repo } = ticket;
   const repoPath = REPOS[repo];
   const startTime = Date.now();
+  const stack = stackDecision(ticket, processed);
+  if (stack.kind === "skip") {
+    log(`  ${ticketId}: ${stack.reason}`);
+    return placeholderResult(ticket, "skipped", stack.reason);
+  }
+  const parent = stack.kind === "stacked" ? stack.parent : undefined;
   const plannedPath = worktreePath(WORKTREES_DIR, repo, ticketId);
   let wt: Worktree = {
     wtPath: plannedPath, branch: ticketBranchName(BRANCH_PREFIX, ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
@@ -234,12 +241,13 @@ async function processTicket(
   const existing = lookUpExistingPr(branchBase, repoPath);
   if (dryRun) {
     log(`  [dry-run] Would create worktree at ${wt.wtPath} on ${wt.branch}`);
+    if (parent) log(`  [dry-run] Would branch from origin/${parent.branch}`);
   } else {
     const startFrom = existing ? { branch: existing.sourceBranch, baseBranch: existing.targetBranch } : undefined;
-    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, branchBase, startFrom }, log);
+    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, branchBase, startFrom, stackedOn: parent?.branch }, log);
   }
   const continuing = existing !== null && (dryRun || wt.startedFromPr);
-  const agentContext = continuing ? [continuingPrContext(existing.prId), ...context] : context;
+  const agentContext = [...(continuing ? [continuingPrContext(existing.prId)] : []), ...(parent ? [stackedContext(parent)] : []), ...context];
 
   const weeklyGateReason = () => weeklyGate(budgetRef, "mid-ticket");
   const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
@@ -281,9 +289,11 @@ async function processTicket(
   ticketResult.status = outcome.status;
   ticketResult.notes = [ticketResult.notes, ...outcome.notes].filter(Boolean).join(" | ");
 
+  let pushed: PushedBranch | undefined;
   if (dryRun) {
     log(`  [dry-run] Would review the change on ${wt.branch}, then fix any issues found`);
     const action = prAction(existing, true);
+    if (action !== "hold") pushed = { branch: action === "update" ? existing!.sourceBranch : wt.branch, prId: existing?.prId ?? 0 };
     log(action === "update"
       ? `  [dry-run] Would push to existing PR #${existing!.prId} branch ${existing!.sourceBranch}`
       : action === "hold"
@@ -349,9 +359,10 @@ async function processTicket(
         } else if (action === "hold") {
           holdForAutoComplete(ticketResult, existing!);
         } else {
-          pr = await openPullRequest(ticketResult, wt.baseBranch);
+          pr = await openPullRequest(ticketResult, wt.baseBranch, parent && { ticketId: parent.ticketId, prId: parent.prId });
           pushedTo = { prId: pr.prId, sourceBranch: wt.branch, targetBranch: wt.baseBranch, autoComplete: false };
         }
+        if (pushedTo) pushed = { branch: pushedTo.sourceBranch, prId: pushedTo.prId };
         if (pr?.pipelineStatus === "failed" && pushedTo) {
           const target = pushedTo;
           const logSource = azCiSource(orgUrl(requireEnv("AZURE_DEVOPS_ORG")), requireEnv("AZURE_DEVOPS_PROJECT"));
@@ -390,6 +401,7 @@ async function processTicket(
 
   ticketResult.durationSec = Math.round((Date.now() - startTime) / 1000);
   log(`  Result: ${ticketResult.status} (${ticketResult.durationSec}s)`);
+  processed.set(ticketId, { branch: wt.branch, repo, pushed });
   return ticketResult;
 }
 
@@ -499,7 +511,6 @@ async function main() {
       try {
         const r = await processTicket(ticket, DRY_RUN, budgetRef, processed);
         results.push(r);
-        if (!DRY_RUN && r.worktreePath) processed.set(ticket.id, { branch: r.branch, repo: ticket.repo });
       } catch (e) {
         log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
         results.push(placeholderResult(ticket, "error", (e as Error).message));
