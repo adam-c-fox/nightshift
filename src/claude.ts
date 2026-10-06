@@ -73,6 +73,7 @@ export interface RelatedBranch {
 const CHECK_LABELS: Record<ClassifiedCheck["status"], string> = {
   passed: "passed", regression: "REGRESSION (passed before the change, fails now)",
   "pre-existing": "pre-existing failure (failed before the change too)", new: "new check",
+  "not-run": "DID NOT RUN (failed without starting; the tests it covers are unproven)",
 };
 const OUTPUT_CHARS = 4000;
 

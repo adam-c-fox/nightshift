@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { TicketResult } from "../src/types.js";
-import { buildPrDescription, buildPrTitle, buildPrWebUrl, prContent, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrDescription, buildPrTitle, buildPrWebUrl, prContent, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, mainBuildDefinitions, pipelineRunArgs, pipelineRunShowArgs, repoShowArgs, mainPolicyListArgs, summarizeRuns, waitForBranchBuilds, DEFAULT_BASE_BRANCH, type BuildDefinition, type PipelineRun, type PolicyConfiguration, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -350,5 +350,118 @@ describe("PR content", () => {
     expect(buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl, content.risks))
       .toContain("- `src/export.ts`: Confirm the batch size.");
     expect(prContent(result).risks).toEqual([]);
+  });
+});
+
+describe("mainBuildDefinitions", () => {
+  const config = (id: number | undefined, name: string, over: Partial<PolicyConfiguration> = {}): PolicyConfiguration => ({
+    isEnabled: true, isBlocking: true, type: { displayName: "Build" }, settings: { buildDefinitionId: id, displayName: name }, ...over,
+  });
+
+  it("keeps enabled blocking build policies with their definition id and name", () => {
+    expect(mainBuildDefinitions([config(7, "ci"), config(9, "lint")])).toEqual([{ id: 7, name: "ci" }, { id: 9, name: "lint" }]);
+  });
+
+  it("drops disabled, non-blocking, non-build and id-less policies", () => {
+    expect(mainBuildDefinitions([
+      config(1, "off", { isEnabled: false }),
+      config(2, "soft", { isBlocking: false }),
+      config(3, "reviewers", { type: { displayName: "Minimum number of reviewers" } }),
+      config(undefined, "no-id"),
+    ])).toEqual([]);
+  });
+
+  it("deduplicates definitions queued by several policies", () => {
+    expect(mainBuildDefinitions([config(7, "ci"), config(7, "ci")])).toEqual([{ id: 7, name: "ci" }]);
+  });
+
+  it("falls back to a generic name", () => {
+    expect(mainBuildDefinitions([config(4, "")])).toEqual([{ id: 4, name: "build 4" }]);
+  });
+});
+
+describe("az argument builders for branch builds", () => {
+  it("builds the repo, policy, run and run show commands", () => {
+    expect(repoShowArgs("o", "p", "repo")).toEqual(["repos", "show", "--org", "o", "--project", "p", "--repository", "repo"]);
+    expect(mainPolicyListArgs("o", "p", "rid")).toEqual(["repos", "policy", "list", "--org", "o", "--project", "p", "--repository-id", "rid", "--branch", DEFAULT_BASE_BRANCH]);
+    expect(pipelineRunArgs("o", "p", 7, "feat/x")).toEqual(["pipelines", "run", "--org", "o", "--project", "p", "--id", "7", "--branch", "feat/x"]);
+    expect(pipelineRunShowArgs("o", "p", 42)).toEqual(["pipelines", "runs", "show", "--org", "o", "--project", "p", "--id", "42"]);
+  });
+});
+
+describe("summarizeRuns", () => {
+  it("is pending until every run has completed", () => {
+    expect(summarizeRuns([{ status: "completed", result: "succeeded" }, { status: "inProgress" }])).toBe("pending");
+    expect(summarizeRuns([{ status: "notStarted" }])).toBe("pending");
+  });
+
+  it("succeeds only when every run succeeded", () => {
+    expect(summarizeRuns([{ status: "completed", result: "succeeded" }, { status: "completed", result: "succeeded" }])).toBe("succeeded");
+  });
+
+  it("treats partiallySucceeded, failed and canceled as failed", () => {
+    for (const result of ["partiallySucceeded", "failed", "canceled"]) {
+      expect(summarizeRuns([{ status: "completed", result: "succeeded" }, { status: "completed", result }])).toBe("failed");
+    }
+  });
+});
+
+describe("waitForBranchBuilds", () => {
+  const defs: BuildDefinition[] = [{ id: 7, name: "ci" }, { id: 9, name: "lint" }];
+  const base = { timeoutMs: 1000, intervalMs: 1 };
+  const done = (result: string): PipelineRun => ({ status: "completed", result });
+
+  it("queues each definition once and succeeds when all runs succeed", async () => {
+    const queued: number[] = [];
+    const queueRun = (d: BuildDefinition) => { queued.push(d.id); return d.id * 10; };
+    const fetchRun = () => done("succeeded");
+    await expect(waitForBranchBuilds(defs, { ...base, queueRun, fetchRun })).resolves.toEqual({ status: "succeeded", failedChecks: [] });
+    expect(queued).toEqual([7, 9]);
+  });
+
+  it("waits through pending polls", async () => {
+    let polls = 0;
+    const fetchRun = (): PipelineRun => (polls++ < 3 ? { status: "inProgress" } : done("succeeded"));
+    await expect(waitForBranchBuilds([defs[0]], { ...base, queueRun: () => 1, fetchRun })).resolves.toMatchObject({ status: "succeeded" });
+  });
+
+  it("carries the definition name and run id of failed runs", async () => {
+    const fetchRun = (id: number) => (id === 90 ? done("partiallySucceeded") : done("succeeded"));
+    await expect(waitForBranchBuilds(defs, { ...base, queueRun: d => d.id * 10, fetchRun }))
+      .resolves.toEqual({ status: "failed", failedChecks: [{ name: "lint", buildId: 90 }] });
+  });
+
+  it("is unknown when the runs do not finish in time", async () => {
+    const result = await waitForBranchBuilds(defs, { timeoutMs: 20, intervalMs: 1, queueRun: () => 1, fetchRun: () => ({ status: "inProgress" }) });
+    expect(result).toMatchObject({ status: "unknown", failedChecks: [] });
+    expect(result.unknownReason).toMatch(/branch build/);
+  });
+
+  it("is unknown when a run cannot be queued", async () => {
+    const logged: string[] = [];
+    const queueRun = () => { throw new Error("TF401019: no permission"); };
+    const result = await waitForBranchBuilds(defs, { ...base, queueRun, fetchRun: () => done("succeeded"), log: m => logged.push(m) });
+    expect(result.status).toBe("unknown");
+    expect(result.unknownReason).toMatch(/branch build/);
+    expect(logged.join("\n")).toMatch(/no permission/);
+  });
+
+  it("recovers from transient poll errors", async () => {
+    let calls = 0;
+    const fetchRun = (): PipelineRun => { if (calls++ < 2) throw new Error("hiccup"); return done("succeeded"); };
+    await expect(waitForBranchBuilds([defs[0]], { ...base, queueRun: () => 1, fetchRun })).resolves.toMatchObject({ status: "succeeded" });
+  });
+
+  it("gives up as unknown after repeated poll errors", async () => {
+    const fetchRun = (): PipelineRun => { throw new Error("az down"); };
+    const result = await waitForBranchBuilds(defs, { ...base, maxConsecutiveErrors: 3, queueRun: () => 1, fetchRun });
+    expect(result.status).toBe("unknown");
+    expect(result.unknownReason).toMatch(/branch build/);
+  });
+
+  it("is unknown with its own reason when main has no build policy", async () => {
+    const result = await waitForBranchBuilds([], { ...base, queueRun: () => 1, fetchRun: () => done("succeeded") });
+    expect(result.status).toBe("unknown");
+    expect(result.unknownReason).toMatch(/no build policy/);
   });
 });

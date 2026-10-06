@@ -14,7 +14,7 @@ export interface CheckResult extends CheckCommand {
   outputTail: string;
 }
 
-export type CheckStatus = "passed" | "regression" | "pre-existing" | "new";
+export type CheckStatus = "passed" | "regression" | "pre-existing" | "new" | "not-run";
 
 export interface ClassifiedCheck extends CheckResult {
   status: CheckStatus;
@@ -136,10 +136,15 @@ export async function runChecks(
   return results;
 }
 
+const NEVER_STARTED_PATTERNS = [/No workspaces found/i, /npm error missing script/i, /ERR_MODULE_NOT_FOUND[^\n]*(vitest|\.config\.)/i, /: command not found/i, /\bspawn \S+ ENOENT/i];
+
+export const didNotRun = (check: CheckResult): boolean =>
+  !check.passed && (check.durationSec === 0 || NEVER_STARTED_PATTERNS.some(p => p.test(check.outputTail)));
+
 export function classifyChecks(baseline: CheckResult[], after: CheckResult[]): ClassifiedCheck[] {
   return after.map((check): ClassifiedCheck => {
     const before = baseline.find(b => b.command === check.command);
-    const status: CheckStatus = !before ? "new" : check.passed ? "passed" : before.passed ? "regression" : "pre-existing";
+    const status: CheckStatus = !before ? (didNotRun(check) ? "not-run" : "new") : check.passed ? "passed" : before.passed ? "regression" : didNotRun(check) ? "not-run" : "pre-existing";
     return { ...check, status };
   });
 }

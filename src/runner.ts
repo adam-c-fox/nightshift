@@ -81,7 +81,7 @@ function applyPipelineStatus(result: TicketResult, pr: PRResult): void {
 
   if (pr.pipelineStatus === "unknown") {
     result.status = "needs_review";
-    result.notes = [result.notes, "CI status unknown after waiting (timed out or no policies)."].filter(Boolean).join(" | ");
+    result.notes = [result.notes, pr.unknownReason ? `CI status unknown: ${pr.unknownReason}.` : "CI status unknown after waiting (timed out or no policies)."].filter(Boolean).join(" | ");
   }
 }
 
@@ -339,6 +339,9 @@ async function processTicket(
     });
     applyReviewStage(ticketResult, stage);
     if (checks) ticketResult.checks = checkRecords(checks);
+    const notRun = checks?.filter(c => c.status === "not-run") ?? [];
+    for (const c of notRun) log(`  Check did not run: ${c.command}`);
+    if (notRun.length > 0) ticketResult.notes = [ticketResult.notes, `Checks that did not run: ${notRun.map(c => c.name).join(", ")}.`].filter(Boolean).join(" | ");
     const publish = outcome.publish && stage.publish;
 
     try {

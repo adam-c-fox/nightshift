@@ -8,6 +8,7 @@ const NO_POLICY_GRACE_MS = 60_000;
 const FRESHNESS_GRACE_MS = 60_000;
 const AZ_TIMEOUT_MS = 60_000;
 const CI_POLICY_TYPES = ["build", "status"];
+export const DEFAULT_BASE_BRANCH = "main";
 
 export interface FailedCheck {
   name: string;
@@ -19,12 +20,14 @@ export interface PRResult {
   url: string;
   pipelineStatus: PipelineStatus;
   failedChecks: FailedCheck[];
+  unknownReason?: string;
   durationSec: number;
 }
 
 export interface PolicyWaitResult {
   status: PipelineStatus;
   failedChecks: FailedCheck[];
+  unknownReason?: string;
 }
 
 export interface PolicyEvaluation {
@@ -191,6 +194,47 @@ export function findOpenTicketPr(expectedBranch: string, repoPath: string): Exis
   return pickTicketPr(prs, expectedBranch);
 }
 
+export interface PolicyConfiguration {
+  isEnabled?: boolean;
+  isBlocking?: boolean;
+  type?: { displayName?: string };
+  settings?: { buildDefinitionId?: number; displayName?: string };
+}
+
+export interface BuildDefinition { id: number; name: string }
+export interface PipelineRun { status: string; result?: string }
+
+export function mainBuildDefinitions(policies: PolicyConfiguration[]): BuildDefinition[] {
+  const byId = new Map<number, BuildDefinition>();
+  for (const p of policies) {
+    const id = p.settings?.buildDefinitionId;
+    if (id === undefined || p.isEnabled === false || p.isBlocking !== true || p.type?.displayName?.toLowerCase() !== "build") continue;
+    if (!byId.has(id)) byId.set(id, { id, name: p.settings?.displayName || `build ${id}` });
+  }
+  return [...byId.values()];
+}
+
+export const repoShowArgs = (org: string, project: string, repository: string): string[] =>
+  ["repos", "show", "--org", org, "--project", project, "--repository", repository];
+
+export const mainPolicyListArgs = (org: string, project: string, repositoryId: string): string[] =>
+  ["repos", "policy", "list", "--org", org, "--project", project, "--repository-id", repositoryId, "--branch", DEFAULT_BASE_BRANCH];
+
+export const pipelineRunArgs = (org: string, project: string, definitionId: number, branch: string): string[] =>
+  ["pipelines", "run", "--org", org, "--project", project, "--id", String(definitionId), "--branch", branch];
+
+export const pipelineRunShowArgs = (org: string, project: string, runId: number): string[] =>
+  ["pipelines", "runs", "show", "--org", org, "--project", project, "--id", String(runId)];
+
+export function summarizeRuns(runs: PipelineRun[]): "pending" | "succeeded" | "failed" {
+  if (!runs.every(r => r.status.toLowerCase() === "completed")) return "pending";
+  return runs.every(r => r.result?.toLowerCase() === "succeeded") ? "succeeded" : "failed";
+}
+
+const NO_MAIN_BUILD_POLICY = "no build policy on main to run for the branch";
+const BRANCH_BUILD_UNFINISHED = "branch build did not finish or could not be queued";
+const MAIN_POLICY_LOOKUP_FAILED = "could not look up main's build policies";
+
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 const MAX_CONSECUTIVE_POLICY_ERRORS = 5;
@@ -245,6 +289,50 @@ export async function waitForPolicies(
   return { status: "unknown", failedChecks: [] };
 }
 
+export async function waitForBranchBuilds(
+  definitions: BuildDefinition[],
+  opts: {
+    queueRun: (definition: BuildDefinition) => number;
+    fetchRun: (runId: number) => PipelineRun;
+    timeoutMs: number;
+    intervalMs: number;
+    maxConsecutiveErrors?: number;
+    log?: (msg: string) => void;
+  },
+): Promise<PolicyWaitResult> {
+  const log = opts.log ?? (() => {});
+  const maxErrors = opts.maxConsecutiveErrors ?? MAX_CONSECUTIVE_POLICY_ERRORS;
+  const unknown = (unknownReason: string): PolicyWaitResult => ({ status: "unknown", failedChecks: [], unknownReason });
+  if (definitions.length === 0) return unknown(NO_MAIN_BUILD_POLICY);
+  const start = Date.now();
+  const queued: { definition: BuildDefinition; runId: number }[] = [];
+  try {
+    for (const definition of definitions) queued.push({ definition, runId: opts.queueRun(definition) });
+  } catch (e) {
+    log(`  Queueing branch build failed: ${errorText(e)}`);
+    return unknown(BRANCH_BUILD_UNFINISHED);
+  }
+  let consecutiveErrors = 0;
+  while (Date.now() - start < opts.timeoutMs) {
+    try {
+      const runs = queued.map(q => opts.fetchRun(q.runId));
+      consecutiveErrors = 0;
+      const verdict = summarizeRuns(runs);
+      if (verdict === "succeeded") return { status: "succeeded", failedChecks: [] };
+      if (verdict === "failed") {
+        const failed = queued.filter((_, i) => runs[i].result?.toLowerCase() !== "succeeded").map(q => ({ name: q.definition.name, buildId: q.runId }));
+        return { status: "failed", failedChecks: failed };
+      }
+    } catch (e) {
+      consecutiveErrors++;
+      log(`  Branch build check failed (${consecutiveErrors}/${maxErrors}): ${errorText(e)}`);
+      if (consecutiveErrors >= maxErrors) return unknown(BRANCH_BUILD_UNFINISHED);
+    }
+    await sleep(opts.intervalMs);
+  }
+  return unknown(BRANCH_BUILD_UNFINISHED);
+}
+
 export async function waitForPrCommit(
   fetchCommit: () => string | undefined,
   sha: string,
@@ -277,6 +365,26 @@ function waitForPrPolicies(
       log: options.log,
     },
   );
+}
+
+function waitForBranchPipelines(
+  branch: string, org: string, project: string, repoPath: string, options: PolicyWaitOptions, timeoutMs?: number,
+): Promise<PolicyWaitResult> {
+  let definitions: BuildDefinition[];
+  try {
+    const repo = az(repoShowArgs(org, project, repoNameFromRemote(originUrl(repoPath)))) as { id: string };
+    definitions = mainBuildDefinitions((az(mainPolicyListArgs(org, project, repo.id)) ?? []) as PolicyConfiguration[]);
+  } catch (e) {
+    options.log?.(`  Looking up main's build policies failed: ${errorText(e)}`);
+    return Promise.resolve({ status: "unknown", failedChecks: [], unknownReason: MAIN_POLICY_LOOKUP_FAILED });
+  }
+  return waitForBranchBuilds(definitions, {
+    queueRun: d => (az(pipelineRunArgs(org, project, d.id, branch)) as { id: number }).id,
+    fetchRun: id => az(pipelineRunShowArgs(org, project, id)) as PipelineRun,
+    timeoutMs: timeoutMs ?? options.timeoutMs ?? POLL_TIMEOUT_MS,
+    intervalMs: options.intervalMs ?? POLL_INTERVAL_MS,
+    log: options.log,
+  });
 }
 
 export interface PrCreateInput {
@@ -327,9 +435,11 @@ export async function createAndCheckPR(
 
   const prId = created.pullRequestId;
   const url = buildPrWebUrl(org, project, created.repository.name, prId);
-  const { status: pipelineStatus, failedChecks } = await waitForPrPolicies(prId, org, options);
+  const { status: pipelineStatus, failedChecks, unknownReason } = targetBranch === DEFAULT_BASE_BRANCH
+    ? await waitForPrPolicies(prId, org, options)
+    : await waitForBranchPipelines(branch, org, project, worktreePath, options);
 
-  return { prId, url, pipelineStatus, failedChecks, durationSec: Math.round((Date.now() - start) / 1000) };
+  return { prId, url, pipelineStatus, failedChecks, unknownReason, durationSec: Math.round((Date.now() - start) / 1000) };
 }
 
 export function existingPrWebUrl(existing: ExistingPr, repoPath: string): string {
@@ -345,6 +455,7 @@ export async function updateAndCheckPR(
   options: PolicyWaitOptions = {},
 ): Promise<PRResult> {
   const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
+  const project = requireEnv("AZURE_DEVOPS_PROJECT");
   const start = Date.now();
 
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktreePath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -358,9 +469,12 @@ export async function updateAndCheckPR(
     { timeoutMs, intervalMs: options.intervalMs ?? POLL_INTERVAL_MS, log: options.log },
   );
   const remaining = Math.max(0, timeoutMs - (Date.now() - start));
-  const { status: pipelineStatus, failedChecks }: PolicyWaitResult = seen
-    ? await waitForPrPolicies(existing.prId, org, options, { timeoutMs: remaining, requireFreshEvaluation: true })
-    : { status: "unknown", failedChecks: [] };
+  const waited: PolicyWaitResult = !seen
+    ? { status: "unknown", failedChecks: [] }
+    : existing.targetBranch === DEFAULT_BASE_BRANCH
+      ? await waitForPrPolicies(existing.prId, org, options, { timeoutMs: remaining, requireFreshEvaluation: true })
+      : await waitForBranchPipelines(existing.sourceBranch, org, project, worktreePath, options, remaining);
+  const { status: pipelineStatus, failedChecks, unknownReason } = waited;
 
-  return { prId: existing.prId, url, pipelineStatus, failedChecks, durationSec: Math.round((Date.now() - start) / 1000) };
+  return { prId: existing.prId, url, pipelineStatus, failedChecks, unknownReason, durationSec: Math.round((Date.now() - start) / 1000) };
 }

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildReviewPrompt, buildVerifyPrompt, type TicketBrief } from "../src/claude.js";
 import type { ClassifiedCheck } from "../src/checks.js";
@@ -26,6 +27,17 @@ describe("buildReviewPrompt", () => {
     expect(prompt).toMatch(/`npm run lint`: REGRESSION/);
     expect(prompt).toMatch(/`npm run format`: pre-existing failure/);
     expect(prompt).toMatch(/`npx vitest run`: new check, passed/);
+  });
+
+  it("labels a check that did not run so the reviewer treats it as unproven", () => {
+    const prompt = buildReviewPrompt(brief, undefined, "origin/main", { checks: [check("npm test -w services/a", "not-run", false, "No workspaces found")] });
+    expect(prompt).toContain("`npm test -w services/a`: DID NOT RUN (failed without starting; the tests it covers are unproven) (7s)");
+  });
+
+  it("tells the reviewer a check that did not run is not pre-existing", () => {
+    const reviewMd = readFileSync(new URL("../prompts/review.md", import.meta.url), "utf-8");
+    expect(reviewMd).toMatch(/is not pre-existing: it did not run/);
+    expect(reviewMd).toMatch(/step 6 applies/);
   });
 
   it("includes output only for the checks that did not pass", () => {

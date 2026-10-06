@@ -62,7 +62,7 @@ function risksHTML(t: TicketResult): string {
 }
 
 const CHECK_RESULTS: Record<NonNullable<CheckRecord["status"]>, string> = {
-  passed: "passed", regression: "regression", "pre-existing": "failed (pre-existing)", new: "new",
+  passed: "passed", regression: "regression", "pre-existing": "failed (pre-existing)", new: "new", "not-run": "did not run",
 };
 
 function checkResult(c: CheckRecord): string {

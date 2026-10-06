@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  checkCommands, classifyChecks, discoverWorkspaces, firstFailingLine, regressionFindings, runChecks,
+  checkCommands, classifyChecks, didNotRun, discoverWorkspaces, firstFailingLine, regressionFindings, runChecks,
   type CheckExec, type CheckResult,
 } from "../src/checks.js";
 
@@ -120,6 +120,57 @@ describe("classifyChecks", () => {
     expect(classifyChecks(baseline, after).map(c => [c.command, c.status])).toEqual([
       ["a", "passed"], ["b", "regression"], ["c", "pre-existing"], ["d", "passed"], ["e", "new"],
     ]);
+  });
+
+  const timed = (command: string, passed: boolean, durationSec: number, outputTail = ""): CheckResult => ({ ...result(command, passed, outputTail), durationSec });
+
+  it("marks a check that failed in 0s on both sides as not-run, not pre-existing", () => {
+    expect(classifyChecks([timed("a", false, 0)], [timed("a", false, 0)])[0].status).toBe("not-run");
+  });
+
+  it("keeps a slow failure with real assertion output as pre-existing", () => {
+    const output = "FAIL tests/poll.test.ts\nAssertionError: expected 1 to be 2";
+    expect(classifyChecks([timed("a", false, 40, output)], [timed("a", false, 40, output)])[0].status).toBe("pre-existing");
+  });
+
+  it("marks a check whose output shows it never started as not-run", () => {
+    expect(classifyChecks([timed("a", false, 3, "npm error No workspaces found")], [timed("a", false, 3, "npm error No workspaces found")])[0].status).toBe("not-run");
+  });
+
+  it("marks a new check that did not run as not-run", () => {
+    expect(classifyChecks([], [timed("a", false, 0)])[0].status).toBe("not-run");
+  });
+
+  it("keeps a check the change stopped from starting as a regression", () => {
+    expect(classifyChecks([timed("a", true, 5)], [timed("a", false, 0)])[0].status).toBe("regression");
+  });
+
+  it("keeps a pass as passed even when it failed to start on the base", () => {
+    expect(classifyChecks([timed("a", false, 0)], [timed("a", true, 5)])[0].status).toBe("passed");
+  });
+});
+
+describe("didNotRun", () => {
+  const fails = (outputTail: string, durationSec = 5): CheckResult => ({ ...result("a", false, outputTail), durationSec });
+
+  it.each([
+    "npm error No workspaces found:\n  --workspace=services/x",
+    "npm error Missing script: \"test\"",
+    "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/w/vitest.config.ts'",
+    "sh: vitest: command not found",
+    "Error: spawn npm ENOENT",
+  ])("recognises never-started output: %s", output => expect(didNotRun(fails(output))).toBe(true));
+
+  it.each([
+    "FAIL tests/a.test.ts > parses\nAssertionError: expected 'x' to be 'y'",
+    "Error: Cannot find module './missing.js' imported from tests/a.test.ts",
+    "Error: ENOENT: no such file or directory, open 'fixtures/a.json'",
+    "1 failed | 12 passed",
+  ])("does not treat ordinary failure output as never-started: %s", output => expect(didNotRun(fails(output))).toBe(false));
+
+  it("treats a failure in 0s as not run and never a pass", () => {
+    expect(didNotRun(fails("", 0))).toBe(true);
+    expect(didNotRun({ ...result("a", true), durationSec: 0 })).toBe(false);
   });
 });
 

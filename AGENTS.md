@@ -123,6 +123,10 @@ Stop working on the current ticket (and mark `needs_review`) if:
 - A test in an unrelated package starts failing (regression risk).
 - You realise the ticket is actually a feature request, not a fix.
 
+Checks that fail the same way on the base for environment reasons don't by
+themselves make a ticket `needs_review`; name them in `notes`. A test you
+wrote or changed that couldn't run does.
+
 In all cases: **leave what you have in the worktree** (the runner commits it),
 write a clear `notes` field, and mark the status. Delete scratch files you
 created that aren't part of the change.

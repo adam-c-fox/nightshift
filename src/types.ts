@@ -1,3 +1,5 @@
+import type { CheckStatus } from "./checks.js";
+
 export type RepoKind = "main" | "terraform";
 
 export interface Ticket {
@@ -81,7 +83,7 @@ export interface CheckRecord {
   command: string;
   passed: boolean;
   durationSec: number;
-  status?: "passed" | "regression" | "pre-existing" | "new";
+  status?: CheckStatus;
 }
 
 export type PipelineStatus = "succeeded" | "failed" | "unknown";
