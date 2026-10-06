@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { RepoKind } from "./types.js";
 
@@ -33,6 +33,24 @@ export function git(args: string[], cwd: string): string {
 function stderrOf(e: unknown): string {
   const err = e as { stderr?: string | Buffer; message?: string };
   return err.stderr?.toString().trim() || err.message || String(e);
+}
+
+const STDERR_TAIL_LINES = 20;
+
+function npmCi(wtPath: string): void {
+  execFileSync("npm", ["ci", "--prefer-offline", "--no-audit"], {
+    cwd: wtPath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15 * 60 * 1000, maxBuffer: 10 * 1024 * 1024,
+  });
+}
+
+function installDependencies(wtPath: string, install: (wtPath: string) => void, log: Log): void {
+  log(`Installing node_modules in ${wtPath} (npm ci)`);
+  try {
+    install(wtPath);
+  } catch (e) {
+    throw new Error(`npm ci failed in ${wtPath}: ${stderrOf(e).split("\n").slice(-STDERR_TAIL_LINES).join("\n")}`);
+  }
+  log(`Installed node_modules in ${wtPath}`);
 }
 
 const SLUG_MAX = 32;
@@ -148,7 +166,7 @@ function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: str
   }
 }
 
-export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
+export function createWorktree(spec: WorktreeSpec, log: Log, install: (wtPath: string) => void = npmCi): Worktree {
   const { repoPath, worktreesDir, ticketId, repo, branchBase, startFrom, stackedOn } = spec;
   const wtPath = worktreePath(worktreesDir, repo, ticketId);
 
@@ -172,14 +190,7 @@ export function createWorktree(spec: WorktreeSpec, log: Log): Worktree {
   git(["worktree", "add", "-b", branch, wtPath, baseRef], repoPath);
   log(`Worktree created: ${wtPath} (branch: ${branch} from ${baseRef})`);
 
-  if (repo === "main") {
-    const srcNM = path.join(repoPath, "node_modules");
-    const dstNM = path.join(wtPath, "node_modules");
-    if (existsSync(srcNM) && !existsSync(dstNM)) {
-      symlinkSync(srcNM, dstNM, "dir");
-      log(`Symlinked node_modules → ${dstNM}`);
-    }
-  }
+  if (repo === "main") installDependencies(wtPath, install, log);
 
   return { wtPath, branch, baseRef, baseBranch, startedFromPr };
 }

@@ -110,7 +110,7 @@ These rules exist so the machine doesn't burn through the weekly budget.
 - Do NOT fix problems outside the ticket's scope. Record each in `followups` (§6).
 - Do NOT create branches, PRs, or change git config.
 - Do NOT run `npm install` unless you added a new dependency AND the ticket
-  requires it. `node_modules` is pre-populated via symlink.
+  requires it. `node_modules` is installed from this branch's lockfile.
 - Do NOT modify `.env`, `.github/`, `pipelines/`, `compose.yml`, or
   `package.json` `"engines"` unless the ticket says to.
 

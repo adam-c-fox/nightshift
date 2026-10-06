@@ -1,4 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
+import { existsSync, globSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import type { RepoKind, ReviewFinding } from "./types.js";
 
 export interface CheckCommand {
@@ -54,13 +56,42 @@ export function checkCommands(repo: RepoKind, workspaces: string[]): CheckComman
   ];
 }
 
-export function discoverWorkspaces(cwd: string, query: (cwd: string) => string = npmQuery): string[] {
+const insideCwd = (cwd: string, loc: string): boolean => {
+  const rel = path.relative(cwd, path.resolve(cwd, loc));
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+};
+
+function queriedWorkspaces(cwd: string, query: (cwd: string) => string): string[] {
   try {
     const entries = JSON.parse(query(cwd)) as { location?: unknown }[];
-    return entries.map(e => e.location).filter((l): l is string => typeof l === "string" && l !== "");
+    return entries
+      .map(e => e.location)
+      .filter((l): l is string => typeof l === "string" && insideCwd(cwd, l))
+      .map(l => path.relative(cwd, path.resolve(cwd, l)));
   } catch {
     return [];
   }
+}
+
+function declaredWorkspaceGlobs(cwd: string): string[] | null {
+  const manifestPath = path.join(cwd, "package.json");
+  if (!existsSync(manifestPath)) return null;
+  const { workspaces } = JSON.parse(readFileSync(manifestPath, "utf-8")) as { workspaces?: string[] | { packages?: string[] } };
+  if (!workspaces) return null;
+  return Array.isArray(workspaces) ? workspaces : workspaces.packages ?? [];
+}
+
+const isPackageDir = (cwd: string, dir: string): boolean =>
+  statSync(path.join(cwd, dir)).isDirectory() && existsSync(path.join(cwd, dir, "package.json"));
+
+export function discoverWorkspaces(cwd: string, query: (cwd: string) => string = npmQuery): string[] {
+  const queried = queriedWorkspaces(cwd, query);
+  if (queried.length > 0) return queried;
+  const globs = declaredWorkspaceGlobs(cwd);
+  if (globs === null) return [];
+  const expanded = [...new Set(globs.flatMap(g => globSync(g, { cwd })).filter(d => insideCwd(cwd, d) && isPackageDir(cwd, d)))].sort();
+  if (expanded.length === 0) throw new Error(`workspace discovery broken in ${cwd}`);
+  return expanded;
 }
 
 const npmQuery = (cwd: string) =>

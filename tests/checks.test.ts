@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   checkCommands, classifyChecks, discoverWorkspaces, firstFailingLine, regressionFindings, runChecks,
   type CheckExec, type CheckResult,
@@ -24,14 +27,52 @@ describe("checkCommands", () => {
 });
 
 describe("discoverWorkspaces", () => {
-  it("reads locations from npm query output", () => {
-    expect(discoverWorkspaces("/w", () => JSON.stringify([{ name: "a", location: "services/a" }, { name: "b", location: "packages/b" }])))
-      .toEqual(["services/a", "packages/b"]);
+  const roots: string[] = [];
+  const project = (pkg: unknown, dirs: string[] = []) => {
+    const root = mkdtempSync(join(tmpdir(), "nightshift-ws-"));
+    roots.push(root);
+    if (pkg !== undefined) writeFileSync(join(root, "package.json"), JSON.stringify(pkg));
+    for (const d of dirs) {
+      mkdirSync(join(root, d), { recursive: true });
+      writeFileSync(join(root, d, "package.json"), "{}");
+    }
+    return root;
+  };
+  const query = (...locations: string[]) => () => JSON.stringify(locations.map(location => ({ location })));
+  const broken = () => { throw new Error("npm broke"); };
+  afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
+
+  it("keeps in-tree locations from npm query output", () => {
+    const root = project({ workspaces: ["services/*"] });
+    expect(discoverWorkspaces(root, query("services/a", "packages/b"))).toEqual(["services/a", "packages/b"]);
   });
 
-  it("returns none when the query fails or prints junk", () => {
-    expect(discoverWorkspaces("/w", () => { throw new Error("npm broke"); })).toEqual([]);
-    expect(discoverWorkspaces("/w", () => "not json")).toEqual([]);
+  it("drops locations outside the worktree and falls back to the workspaces globs", () => {
+    const root = project({ workspaces: ["services/*"] }, ["services/b", "services/a"]);
+    expect(discoverWorkspaces(root, query("../../../other/services/a", "/abs/x", ".")))
+      .toEqual(["services/a", "services/b"]);
+  });
+
+  it("falls back to the globs when the query fails or prints junk", () => {
+    const root = project({ workspaces: ["packages/*"] }, ["packages/x"]);
+    expect(discoverWorkspaces(root, broken)).toEqual(["packages/x"]);
+    expect(discoverWorkspaces(root, () => "not json")).toEqual(["packages/x"]);
+  });
+
+  it("expands the object form and skips matches without a package.json", () => {
+    const root = project({ workspaces: { packages: ["packages/*", "services/*"] } }, ["packages/x", "services/y"]);
+    mkdirSync(join(root, "packages", "empty"));
+    writeFileSync(join(root, "packages", "file.txt"), "x");
+    expect(discoverWorkspaces(root, broken)).toEqual(["packages/x", "services/y"]);
+  });
+
+  it("returns none when package.json declares no workspaces", () => {
+    expect(discoverWorkspaces(project({ name: "x" }), broken)).toEqual([]);
+  });
+
+  it("throws when workspaces are declared but none resolve inside the worktree", () => {
+    const root = project({ workspaces: ["packages/*"] });
+    expect(() => discoverWorkspaces(root, query("../outside/a"))).toThrow("workspace discovery broken");
   });
 });
 

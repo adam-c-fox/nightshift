@@ -28,6 +28,7 @@ export function makeRepo(): { root: string; repoPath: string; worktreesDir: stri
 }
 
 const noop = () => {};
+const noInstall = () => {};
 
 describe("naming", () => {
   it("builds prefix/id-slug like a hand-made branch", () => {
@@ -66,16 +67,29 @@ describe("createWorktree", () => {
     spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" };
   });
 
-  it("creates the ticket branch from origin/main and symlinks node_modules", () => {
-    const wt = createWorktree(spec, noop);
+  it("creates the ticket branch from origin/main and installs instead of symlinking node_modules", () => {
+    const installed: string[] = [];
+    const wt = createWorktree(spec, noop, p => installed.push(p));
     expect(wt).toMatchObject({ branch: "adamfox/eng-1-fix", baseRef: "origin/main", baseBranch: "main" });
     expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("adamfox/eng-1-fix");
-    expect(existsSync(join(wt.wtPath, "node_modules"))).toBe(true);
+    expect(installed).toEqual([wt.wtPath]);
+    expect(existsSync(join(wt.wtPath, "node_modules"))).toBe(false);
+  });
+
+  it("aborts when the install fails", () => {
+    const failing = () => { throw Object.assign(new Error("x"), { stderr: "ERESOLVE boom" }); };
+    expect(() => createWorktree(spec, noop, failing)).toThrow(/npm ci failed.*ERESOLVE boom/);
+  });
+
+  it("does not install for terraform", () => {
+    const installed: string[] = [];
+    createWorktree({ ...spec, repo: "terraform" }, noop, p => installed.push(p));
+    expect(installed).toEqual([]);
   });
 
   it("replaces a worktree left over from a previous run on the next free branch", () => {
-    createWorktree(spec, noop);
-    const wt = createWorktree(spec, noop);
+    createWorktree(spec, noop, noInstall);
+    const wt = createWorktree(spec, noop, noInstall);
     expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("adamfox/eng-1-fix-2");
   });
 
@@ -83,26 +97,26 @@ describe("createWorktree", () => {
     const stale = worktreePath(env.worktreesDir, "main", "ENG-1");
     mkdirSync(stale);
     writeFileSync(join(stale, "junk.txt"), "x");
-    const wt = createWorktree(spec, noop);
+    const wt = createWorktree(spec, noop, noInstall);
     expect(existsSync(join(wt.wtPath, "junk.txt"))).toBe(false);
     expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("adamfox/eng-1-fix");
   });
 
   it("salvages uncommitted work from an interrupted run before replacing its worktree", () => {
-    const first = createWorktree(spec, noop);
+    const first = createWorktree(spec, noop, noInstall);
     writeFileSync(join(first.wtPath, "half-done.ts"), "export {};\n");
-    createWorktree(spec, noop);
+    createWorktree(spec, noop, noInstall);
     expect(run(env.repoPath, "log", "-1", "--format=%s", first.branch)).toBe("wip: salvage uncommitted work (ENG-1)");
     expect(run(env.repoPath, "show", "--name-only", "--format=", first.branch)).toBe("half-done.ts");
   });
 
   it("never resets a surviving branch: the next run gets a numbered one and the first keeps its tip", () => {
-    const first = createWorktree(spec, noop);
+    const first = createWorktree(spec, noop, noInstall);
     writeFileSync(join(first.wtPath, "work.txt"), "x");
     run(first.wtPath, "add", "work.txt");
     run(first.wtPath, "commit", "-q", "-m", "wip");
     const tip = run(env.repoPath, "rev-parse", first.branch);
-    const second = createWorktree(spec, noop);
+    const second = createWorktree(spec, noop, noInstall);
     expect(second.branch).toBe("adamfox/eng-1-fix-2");
     expect(run(env.repoPath, "rev-parse", first.branch)).toBe(tip);
   });
@@ -110,7 +124,7 @@ describe("createWorktree", () => {
   it("skips a name that exists on origin only", () => {
     run(env.repoPath, "push", "-q", "origin", "main:refs/heads/adamfox/eng-1-fix");
     run(env.repoPath, "push", "-q", "origin", "main:refs/heads/adamfox/eng-1-fix-2");
-    expect(createWorktree(spec, noop).branch).toBe("adamfox/eng-1-fix-3");
+    expect(createWorktree(spec, noop, noInstall).branch).toBe("adamfox/eng-1-fix-3");
   });
 });
 
@@ -118,7 +132,7 @@ describe("commitWorktree", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop);
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   const committedFiles = () => run(wt.wtPath, "diff", "--name-only", `${wt.baseRef}..HEAD`).split("\n").filter(Boolean);
@@ -129,7 +143,7 @@ describe("commitWorktree", () => {
     expect(run(wt.wtPath, "log", "-1", "--format=%B")).toBe("fix: handle empty rows (ENG-1)");
   });
 
-  it("reports no changes when only the node_modules symlink exists", () => {
+  it("reports no changes when nothing was changed", () => {
     expect(commitWorktree(wt, "nothing", noop)).toBe("no_changes");
   });
 
@@ -192,7 +206,7 @@ describe("excludedPathsInBranch", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop);
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   it("returns excluded paths the agent committed itself", () => {
@@ -235,20 +249,20 @@ describe("createWorktree stackedOn", () => {
 
   it("branches from the parent branch and targets it", () => {
     pushParent();
-    const wt = createWorktree({ ...spec, stackedOn: parent }, noop);
+    const wt = createWorktree({ ...spec, stackedOn: parent }, noop, noInstall);
     expect(existsSync(join(wt.wtPath, "parent.ts"))).toBe(true);
     expect(wt).toMatchObject({ baseRef: `origin/${parent}`, baseBranch: parent, startedFromPr: false, branch: "adamfox/eng-2-child" });
     expect(commitWorktree(wt, "nothing", noop)).toBe("no_changes");
   });
 
   it("throws instead of falling back to main when the parent branch is missing", () => {
-    expect(() => createWorktree({ ...spec, stackedOn: parent }, noop)).toThrow(parent);
+    expect(() => createWorktree({ ...spec, stackedOn: parent }, noop, noInstall)).toThrow(parent);
   });
 
   it("keeps resuming an existing PR branch over the stack base", () => {
     pushParent();
     run(env.repoPath, "push", "-q", "origin", `main:refs/heads/${spec.branchBase}`);
-    const wt = createWorktree({ ...spec, stackedOn: parent, startFrom: { branch: spec.branchBase, baseBranch: parent } }, noop);
+    const wt = createWorktree({ ...spec, stackedOn: parent, startFrom: { branch: spec.branchBase, baseBranch: parent } }, noop, noInstall);
     expect(wt).toMatchObject({ baseRef: `origin/${spec.branchBase}`, baseBranch: parent, startedFromPr: true });
   });
 });
@@ -273,7 +287,7 @@ describe("createWorktree startFrom", () => {
 
   it("starts from the PR branch, counts only new commits and avoids the local branch of the same name", () => {
     pushPrBranch();
-    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop);
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop, noInstall);
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(true);
     expect(wt).toMatchObject({ baseRef: `origin/${prBranch}`, baseBranch: "main", startedFromPr: true, branch: `${prBranch}-2` });
     expect(commitWorktree(wt, "nothing", noop)).toBe("no_changes");
@@ -281,7 +295,7 @@ describe("createWorktree startFrom", () => {
 
   it("falls back to origin/main when the PR branch is gone", () => {
     const logs: string[] = [];
-    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m));
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m), noInstall);
     expect(wt).toMatchObject({ baseRef: "origin/main", baseBranch: "main", startedFromPr: false });
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(false);
     expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main (not available locally (fetch failed?))`))).toBe(true);
@@ -293,7 +307,7 @@ describe("createWorktree startFrom", () => {
     run(join(env.root, "origin.git"), "branch", "-D", prBranch);
     expect(run(env.repoPath, "rev-parse", "--verify", `origin/${prBranch}`)).not.toBe("");
     const logs: string[] = [];
-    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m));
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m), noInstall);
     expect(wt).toMatchObject({ baseRef: "origin/main", startedFromPr: false });
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(false);
     expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main (deleted on origin)`))).toBe(true);
@@ -304,17 +318,17 @@ describe("createWorktree startFrom", () => {
     run(env.repoPath, "fetch", "-q", "origin");
     const origin = join(env.root, "origin.git");
     run(origin, "branch", "-m", prBranch, `other/${prBranch}`);
-    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop);
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop, noInstall);
     expect(wt.startedFromPr).toBe(false);
   });
 
   it("is not started from a PR without startFrom", () => {
-    expect(createWorktree(spec, noop).startedFromPr).toBe(false);
+    expect(createWorktree(spec, noop, noInstall).startedFromPr).toBe(false);
   });
 
   it("fast-forwards the remote PR branch and rejects a non-fast-forward push", () => {
     pushPrBranch();
-    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop);
+    const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop, noInstall);
     writeFileSync(join(wt.wtPath, "tonight.ts"), "export {};\n");
     expect(commitWorktree(wt, "tonight", noop)).toBe("committed");
     pushBranch(wt.wtPath, wt.branch, prBranch);
@@ -336,7 +350,7 @@ describe("worktreeSnapshot and hasChangesVsBase", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop);
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   it("is stable while nothing changes", () => {
@@ -361,6 +375,7 @@ describe("worktreeSnapshot and hasChangesVsBase", () => {
 
   it("ignores node_modules", () => {
     const clean = worktreeSnapshot(wt);
+    mkdirSync(join(wt.wtPath, "node_modules"));
     writeFileSync(join(wt.wtPath, "node_modules", "pkg.js"), "x");
     expect(worktreeSnapshot(wt)).toBe(clean);
   });
