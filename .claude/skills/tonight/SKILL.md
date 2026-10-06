@@ -26,7 +26,8 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
    Done when every picked ticket has both.
 
 5. Check each picked ticket against every item in `.claude/skills/prep/gaps.md`. Tickets prepped with `/prep` carry their decisions in the description under `## Decisions`; count those as answered.
-   Show all tickets' gaps in one numbered message. Ask Adam to answer each with a decision, "your call", or drop the ticket. Write "your call" as a bullet like "Your call on X; state the choice in notes". A dropped ticket leaves tonight's set for the remaining steps.
+   First list all tickets' gaps as short numbered titles, grouped by ticket, so Adam sees how many there are. Then ask about them one at a time with `AskUserQuestion` (load it with ToolSearch if it's deferred), one question per call, in the listed order, with the ticket ID as the header. Each question states the gap and what the ticket and comments show. Put your recommended answer first, labelled "(Recommended)", then at most one real alternative, then "Your call" and "Drop ticket" (the tool allows four options). Adam can type his own answer through "Other". Wait for each answer before you ask the next, and let it change later questions: drop a gap it settles, and reword one it affects.
+   Write "your call" as a bullet like "Your call on X; state the choice in notes". "Drop ticket" removes it from tonight's set for the remaining steps and skips its other gaps.
    Done when every gap has an answer or its ticket is dropped.
 
 6. Infer each ticket's repo: `terraform` when the team, labels, title or description point at infrastructure (Terraform, `.tf`, azurerm, resource group, module, App Service plan, storage account, Key Vault, networking, IaC), otherwise `main`. Repo paths live in `REPOS` in `src/repos.ts`.
