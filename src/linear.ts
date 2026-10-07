@@ -42,11 +42,20 @@ export interface LinearClient {
 
 class LinearNotFoundError extends Error {}
 
-function throwOnMissingData(json: { data?: unknown; errors?: { message: string }[] }): void {
+type GraphqlErrors = { message: string }[];
+
+function isNotFound(errors: GraphqlErrors): boolean {
+  return errors.every(e => /not found/i.test(e.message));
+}
+
+function formatErrors(errors: GraphqlErrors): string {
+  return errors.map(e => e.message).join("; ").slice(0, 200);
+}
+
+function throwOnMissingData(json: { data?: unknown; errors?: GraphqlErrors }): void {
   if (json.data != null || !json.errors?.length) return;
-  const message = json.errors.map(e => e.message).join("; ").slice(0, 200);
-  if (json.errors.every(e => /not found/i.test(e.message))) throw new LinearNotFoundError(message);
-  throw new Error(`Linear API error: ${message}`);
+  if (isNotFound(json.errors)) throw new LinearNotFoundError(formatErrors(json.errors));
+  throw new Error(`Linear API error: ${formatErrors(json.errors)}`);
 }
 
 async function linearRequest<T extends { data?: unknown; errors?: { message: string }[] }>(
@@ -116,9 +125,8 @@ export async function fetchTicket(identifier: string, client?: LinearClient): Pr
   }
 
   if (json.errors?.length && !json.data?.issue) {
-    const notFound = json.errors.every(e => /not found/i.test(e.message));
-    if (notFound) return null;
-    throw new Error(`Linear API error: ${json.errors.map(e => e.message).join("; ").slice(0, 200)}`);
+    if (isNotFound(json.errors)) return null;
+    throw new Error(`Linear API error: ${formatErrors(json.errors)}`);
   }
 
   const issue = json.data?.issue;
