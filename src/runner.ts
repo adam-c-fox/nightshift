@@ -28,9 +28,6 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
 let logsDir = path.join(ROOT, "logs");
 
-const claudeToken = getEnv(CLAUDE_TOKEN);
-if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
-
 function log(msg: string) {
   const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
   const line = `[${ts}] ${msg}`;
@@ -472,6 +469,8 @@ function selectProject(): { args: RunArgs; project: Project } {
 async function main() {
   const { args, project } = selectProject();
   useProjectEnv(project.envFile);
+  const claudeToken = getEnv(CLAUDE_TOKEN);
+  if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
   const dryRun = args.dryRun;
   const branchPrefix = getEnv("BRANCH_PREFIX");
   const reportsDir = path.join(REPORTS_DIR, project.name);
