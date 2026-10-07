@@ -26,7 +26,7 @@ export const PREP_COLORS: Record<PrepStateName, string> = {
 const EMPTY = "—";
 const RUNS_POLL_SECONDS = 30;
 
-function badge(text: string, color: string, title?: string): string {
+export function badge(text: string, color: string, title?: string): string {
   const titleAttr = title ? ` title="${esc(title)}"` : "";
   return `<span class="badge" style="background:${color}"${titleAttr}>${esc(text)}</span>`;
 }

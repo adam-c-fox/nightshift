@@ -55,6 +55,19 @@ export const DASHBOARD_CSS = `
   .state { color: var(--text-dim); font-size: 0.85rem; }
   .slot { min-height: 1.5rem; }
   .is-actioned { opacity: 0.5; transition: opacity 0.3s; }
+  .run-banner { background: var(--surface); border: 1px solid var(--border);
+                border-left: 4px solid var(--accent); border-radius: 6px;
+                padding: 0.6rem 0.9rem; margin-bottom: 0.75rem; overflow-wrap: anywhere; }
+  .run-banner.stale { border-color: ${STATUS_COLORS.error}; }
+  .empty { color: var(--text-dim); }
+  ul.inbox { list-style: none; }
+  li.inbox-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem;
+                  padding: 0.6rem 0; border-bottom: 1px solid var(--border);
+                  transition: opacity 0.3s; }
+  li.inbox-item .when { font-size: 0.8rem; }
+  li.inbox-item .inbox-body { flex: 1 1 100%; min-width: 0; display: flex; flex-wrap: wrap;
+                              align-items: baseline; gap: 0.25rem 0.6rem; overflow-wrap: anywhere; }
+  li.inbox-item .summary { flex: 1 1 100%; }
   input.inbox-tick { width: 1.1rem; height: 1.1rem; accent-color: #22c55e; cursor: pointer; flex: none; }
   #toast { position: fixed; left: 1rem; right: 1rem; bottom: 1rem; max-width: 640px;
            margin: 0 auto; background: var(--surface); border: 1px solid var(--accent);
