@@ -123,9 +123,15 @@ export function buildPrDescription(
   return [`Ticket: ${ticket}`, "", ...stacked, summary, ...worthALook, ...verify].join("\n").slice(0, 4000);
 }
 
-function azEnv(): NodeJS.ProcessEnv {
-  const pat = getEnv("AZURE_DEVOPS_EXT_PAT") ?? getEnv("AZURE_DEVOPS_PAT");
+export function azEnvFrom(lookup: (name: string) => string | undefined): NodeJS.ProcessEnv {
+  const pat = lookup("AZURE_DEVOPS_EXT_PAT") ?? lookup("AZURE_DEVOPS_PAT");
   return pat ? { ...process.env, AZURE_DEVOPS_EXT_PAT: pat } : process.env;
+}
+
+const azEnv = () => azEnvFrom(getEnv);
+
+export function parseAzOutput(out: string): unknown {
+  return out.trim() === "" ? null : JSON.parse(out);
 }
 
 export function az(args: string[], cwd?: string): unknown {
@@ -137,7 +143,7 @@ export function az(args: string[], cwd?: string): unknown {
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 10 * 1024 * 1024,
   });
-  return out.trim() === "" ? null : JSON.parse(out);
+  return parseAzOutput(out);
 }
 
 export function pushBranch(worktreePath: string, localBranch: string, remoteBranch: string = localBranch): void {
@@ -150,7 +156,31 @@ export function pushBranch(worktreePath: string, localBranch: string, remoteBran
   });
 }
 
-export interface AzPullRequest { pullRequestId: number; sourceRefName: string; targetRefName: string; autoCompleteSetBy?: unknown }
+export interface AzReviewer { displayName?: string; vote: number }
+export interface AzPullRequest {
+  pullRequestId: number;
+  sourceRefName: string;
+  targetRefName: string;
+  autoCompleteSetBy?: unknown;
+  title?: string;
+  status?: string;
+  isDraft?: boolean;
+  reviewers?: AzReviewer[];
+}
+export interface VoteSummary { approved: number; waiting: number; rejected: number }
+
+const APPROVING_VOTES = [10, 5];
+const WAITING_VOTE = -5;
+const REJECTING_VOTE = -10;
+
+export function voteSummary(reviewers: AzReviewer[] | undefined): VoteSummary {
+  const votes = (reviewers ?? []).map(r => r.vote);
+  return {
+    approved: votes.filter(v => APPROVING_VOTES.includes(v)).length,
+    waiting: votes.filter(v => v === WAITING_VOTE).length,
+    rejected: votes.filter(v => v === REJECTING_VOTE).length,
+  };
+}
 export interface ExistingPr { prId: number; sourceBranch: string; targetBranch: string; autoComplete: boolean }
 
 export function repoNameFromRemote(remoteUrl: string): string {
@@ -176,21 +206,25 @@ export function prAction(existing: ExistingPr | null, startedFromPr: boolean): P
   return existing.autoComplete ? "hold" : "update";
 }
 
+export const ORIGIN_URL_ARGS = ["remote", "get-url", "origin"];
+
+export const prListArgs = (org: string, project: string, repoName: string): string[] => [
+  "repos", "pr", "list",
+  "--org", org,
+  "--project", project,
+  "--repository", repoName,
+  "--status", "active",
+  "--top", "200",
+];
+
 function originUrl(cwd: string): string {
-  return execFileSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", ORIGIN_URL_ARGS, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 export function findOpenTicketPr(expectedBranch: string, repoPath: string): ExistingPr | null {
   const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
   const project = requireEnv("AZURE_DEVOPS_PROJECT");
-  const prs = (az([
-    "repos", "pr", "list",
-    "--org", org,
-    "--project", project,
-    "--repository", repoNameFromRemote(originUrl(repoPath)),
-    "--status", "active",
-    "--top", "200",
-  ]) ?? []) as AzPullRequest[];
+  const prs = (az(prListArgs(org, project, repoNameFromRemote(originUrl(repoPath)))) ?? []) as AzPullRequest[];
   return pickTicketPr(prs, expectedBranch);
 }
 

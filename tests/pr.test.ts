@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { TicketResult } from "../src/types.js";
-import { buildPrDescription, buildPrTitle, buildPrWebUrl, prContent, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, mainBuildDefinitions, pipelineRunArgs, pipelineRunShowArgs, repoShowArgs, mainPolicyListArgs, summarizeRuns, waitForBranchBuilds, DEFAULT_BASE_BRANCH, type BuildDefinition, type PipelineRun, type PolicyConfiguration, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrDescription, buildPrTitle, buildPrWebUrl, prContent, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, mainBuildDefinitions, pipelineRunArgs, pipelineRunShowArgs, repoShowArgs, mainPolicyListArgs, summarizeRuns, waitForBranchBuilds, DEFAULT_BASE_BRANCH, azEnvFrom, parseAzOutput, prListArgs, ORIGIN_URL_ARGS, voteSummary, type BuildDefinition, type PipelineRun, type PolicyConfiguration, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -463,5 +463,50 @@ describe("waitForBranchBuilds", () => {
     const result = await waitForBranchBuilds([], { ...base, queueRun: () => 1, fetchRun: () => done("succeeded") });
     expect(result.status).toBe("unknown");
     expect(result.unknownReason).toMatch(/no build policy/);
+  });
+});
+
+describe("voteSummary", () => {
+  it("counts approvals, waiting and rejections", () => {
+    expect(voteSummary([{ vote: 10 }, { vote: 5 }, { vote: 0 }, { vote: -5 }, { vote: -10 }])).toEqual({ approved: 2, waiting: 1, rejected: 1 });
+  });
+
+  it("is all zeros without reviewers", () => {
+    expect(voteSummary(undefined)).toEqual({ approved: 0, waiting: 0, rejected: 0 });
+  });
+});
+
+describe("prListArgs", () => {
+  it("lists active PRs for a repository", () => {
+    expect(prListArgs("https://dev.azure.com/o", "P", "app")).toEqual([
+      "repos", "pr", "list", "--org", "https://dev.azure.com/o", "--project", "P", "--repository", "app", "--status", "active", "--top", "200",
+    ]);
+  });
+
+  it("exposes the origin url args", () => {
+    expect(ORIGIN_URL_ARGS).toEqual(["remote", "get-url", "origin"]);
+  });
+});
+
+describe("parseAzOutput", () => {
+  it("returns null for empty output and parses JSON otherwise", () => {
+    expect(parseAzOutput("")).toBeNull();
+    expect(parseAzOutput('[{"a":1}]')).toEqual([{ a: 1 }]);
+  });
+});
+
+describe("azEnvFrom", () => {
+  it("passes the PAT as AZURE_DEVOPS_EXT_PAT", () => {
+    expect(azEnvFrom(n => (n === "AZURE_DEVOPS_PAT" ? "pat" : undefined)).AZURE_DEVOPS_EXT_PAT).toBe("pat");
+  });
+
+  it("adds nothing without a PAT", () => {
+    const before = process.env.AZURE_DEVOPS_EXT_PAT;
+    delete process.env.AZURE_DEVOPS_EXT_PAT;
+    try {
+      expect(azEnvFrom(() => undefined).AZURE_DEVOPS_EXT_PAT).toBeUndefined();
+    } finally {
+      if (before !== undefined) process.env.AZURE_DEVOPS_EXT_PAT = before;
+    }
   });
 });
