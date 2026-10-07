@@ -26,10 +26,14 @@ const CI_BADGES: Record<string, { label: string; color: string }> = {
 function prLinksHTML(t: TicketResult): string {
   if (!t.prUrl) return "";
   const badge = t.pipelineStatus ? CI_BADGES[t.pipelineStatus] : undefined;
-  return `<div class="pr-row">
-        <a href="${esc(t.prUrl)}" target="_blank" class="pr-link">Open PR${t.prId ? ` #${t.prId}` : ""} →</a>
+  return `<span class="pr-row">
+        <a href="${esc(t.prUrl)}" target="_blank" class="pr-link">PR${t.prId ? ` #${t.prId}` : ""} →</a>
         ${badge ? `<span class="ci-badge" style="background:${badge.color}">${badge.label}</span>` : ""}
-      </div>`;
+      </span>`;
+}
+
+function actionedBoxHTML(key: string, label: string): string {
+  return `<input type="checkbox" class="actioned" data-key="${esc(key)}" title="Mark actioned" aria-label="Mark ${esc(label)} actioned">`;
 }
 
 function resolutionLabel(resolution: FixResolution, verify: VerifyResult | undefined, verification: FixVerification | undefined): string {
@@ -102,14 +106,18 @@ function postmortemHTML(pm: SessionPostmortem | undefined): string {
     ? `<div class="postmortem-flag">⚠️ ${esc(problem)}</div>`
     : pm.suggestions.length === 0
       ? `<p class="hint">No suggestions.</p>`
-      : pm.suggestions.map(s => `<div class="finding">
-           <div class="finding-head"><span class="finding-id">${esc(s.id)}</span><code class="finding-file">${esc(s.target)}</code><span class="finding-file">${esc(s.tickets.join(", "))}</span></div>
+      : pm.suggestions.map(s => `<div class="finding suggestion">
+           <div class="finding-head">${actionedBoxHTML(`postmortem:${s.id}`, s.id)}<span class="finding-id">${esc(s.id)}</span><code class="finding-file">${esc(s.target)}</code><span class="finding-file">${esc(s.tickets.join(", "))}</span></div>
            <div>${esc(s.problem)}</div>
            <div class="finding-suggestion">Cause: ${esc(s.cause)}</div>
            <div class="finding-suggestion">Change: ${esc(s.change)}</div>
          </div>`).join("");
   const file = pm.file ? `<p class="hint">Suggestions saved to <code>${esc(pm.file)}</code>. Ask Claude to implement the ones you pick by id.</p>` : "";
-  return `<div class="postmortem" id="postmortem"><h2>Postmortem</h2>${body}${file}</div>`;
+  const meta = problem ? `<span class="postmortem-flag">⚠️ ${esc(problem)}</span>` : `<span class="section-meta">${pm.suggestions.length} suggestion(s)</span>`;
+  return `<details class="postmortem" id="postmortem">
+    <summary><span class="chevron">▸</span><h2>Postmortem</h2>${meta}</summary>
+    ${body}${file}
+  </details>`;
 }
 
 function ticketCardHTML(t: TicketResult): string {
@@ -145,16 +153,18 @@ function ticketCardHTML(t: TicketResult): string {
     : "";
 
   return `
-  <div class="card" id="ticket-${esc(t.ticket.id)}">
-    <div class="card-header">
+  <details class="card" id="ticket-${esc(t.ticket.id)}">
+    <summary class="card-header">
+      <span class="chevron">▸</span>
+      ${actionedBoxHTML(`ticket:${t.ticket.id}`, t.ticket.id)}
       <span class="status" style="background:${color}">${t.status.toUpperCase()}</span>
       <span class="ticket-id">${esc(t.ticket.id)}</span>
       <span class="ticket-name">${esc(t.ticket.name)}</span>
+      ${prLinksHTML(t)}
       <span class="ticket-duration">${t.durationSec}s</span>
-    </div>
+    </summary>
     <div class="card-body">
       <p class="summary">${esc(t.summary)}</p>
-      ${prLinksHTML(t)}
       ${t.linear ? `<a href="${esc(t.linear.url)}" target="_blank" class="linear-link">Open in Linear →</a>` : ""}
       ${files ? `<ul class="files">${files}</ul>` : ""}
       ${tests}
@@ -169,8 +179,43 @@ function ticketCardHTML(t: TicketResult): string {
         <span>Worktree: <code>${esc(t.worktreePath)}</code></span>
       </div>
     </div>
-  </div>`;
+  </details>`;
 }
+
+const ACTIONED_SCRIPT = `(() => {
+  const storeKey = "nightshift:actioned:" + location.pathname;
+  const read = () => { try { return JSON.parse(localStorage.getItem(storeKey) || "{}"); } catch { return {}; } };
+  const write = state => { try { localStorage.setItem(storeKey, JSON.stringify(state)); } catch {} };
+  const boxes = [...document.querySelectorAll("input.actioned")];
+  const refresh = () => {
+    for (const box of boxes) box.closest(".card, .suggestion")?.classList.toggle("is-actioned", box.checked);
+    const count = document.getElementById("actioned-count");
+    if (count) count.textContent = boxes.filter(box => box.checked).length + " / " + boxes.length;
+  };
+  const saved = read();
+  for (const box of boxes) {
+    box.checked = Boolean(saved[box.dataset.key]);
+    box.addEventListener("change", () => {
+      const state = read();
+      if (box.checked) state[box.dataset.key] = new Date().toISOString();
+      else delete state[box.dataset.key];
+      write(state);
+      refresh();
+    });
+  }
+  refresh();
+  const openTarget = hash => {
+    const target = hash && document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (target instanceof HTMLDetailsElement) target.open = true;
+  };
+  document.addEventListener("click", event => {
+    const link = event.target.closest?.('a[href^="#"]');
+    if (link) openTarget(link.getAttribute("href"));
+    const toggle = event.target.closest?.("[data-expand]");
+    if (toggle) for (const d of document.querySelectorAll("details")) d.open = toggle.dataset.expand === "open";
+  });
+  openTarget(location.hash);
+})();`;
 
 export function generateHTML(session: SessionResult): string {
   const completed = session.tickets.filter(t => t.status === "done").length;
@@ -188,6 +233,13 @@ export function generateHTML(session: SessionResult): string {
   const pmStat = !session.postmortem ? "" : pmProblem
     ? `<div class="stat postmortem-flag"><a href="#postmortem" style="color:inherit"><strong>⚠️</strong>${esc(pmProblem)}</a></div>`
     : `<div class="stat"><a href="#postmortem" style="color:inherit"><strong>${session.postmortem.suggestions.length}</strong>postmortem suggestions</a></div>`;
+  const suggestionCount = session.postmortem?.outcome === "done" ? session.postmortem.suggestions.length : 0;
+  const actionableCount = session.tickets.length + suggestionCount;
+  const actionedStat = actionableCount === 0 ? "" : `<div class="stat"><strong id="actioned-count">0 / ${actionableCount}</strong>actioned</div>`;
+  const toolbar = actionableCount === 0 ? "" : `<div class="toolbar">
+    <button type="button" data-expand="open">Expand all</button>
+    <button type="button" data-expand="closed">Collapse all</button>
+  </div>`;
   const gateBanner = session.gateHit ? `<div class="gate-hit">⛔ ${esc(session.skipReason)}</div>` : "";
   const ticketErrorBanner = session.ticketError
     ? `<div class="gate-hit">⛔ Tickets could not be loaded: ${esc(session.ticketError)}</div>`
@@ -258,9 +310,20 @@ export function generateHTML(session: SessionResult): string {
   .budget-marker { position: absolute; top: -3px; width: 2px; height: 16px; background: #ef4444; border-radius: 1px; }
   .gate-hit { color: #ef4444; font-weight: 600; margin-top: 0.5rem; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-          margin-bottom: 1rem; overflow: hidden; }
-  .card-header { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem;
-                 border-bottom: 1px solid var(--border); }
+          margin-bottom: 0.6rem; overflow: hidden; transition: opacity 0.15s; }
+  .card-header { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; cursor: pointer; list-style: none; }
+  .card[open] > .card-header { border-bottom: 1px solid var(--border); }
+  summary::-webkit-details-marker { display: none; }
+  summary:hover .chevron { color: var(--text); }
+  .chevron { color: var(--text-dim); font-size: 0.8rem; transition: transform 0.15s; display: inline-block; width: 0.8rem; }
+  details[open] > summary .chevron { transform: rotate(90deg); }
+  input.actioned { width: 1.05rem; height: 1.05rem; accent-color: #22c55e; cursor: pointer; flex: none; }
+  .is-actioned { opacity: 0.5; }
+  .card.is-actioned .ticket-name, .suggestion.is-actioned .finding-id { text-decoration: line-through; }
+  .toolbar { display: flex; justify-content: flex-end; gap: 0.5rem; margin-bottom: 0.6rem; }
+  .toolbar button { background: var(--surface); color: var(--text-dim); border: 1px solid var(--border); border-radius: 6px;
+                    padding: 0.25rem 0.7rem; font: inherit; font-size: 0.8rem; cursor: pointer; }
+  .toolbar button:hover { color: var(--text); }
   .status { color: #fff; font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.6rem;
             border-radius: 4px; letter-spacing: 0.5px; }
   .ticket-id { font-weight: 700; font-family: ui-monospace, monospace; }
@@ -270,7 +333,7 @@ export function generateHTML(session: SessionResult): string {
   .summary { margin-bottom: 0.75rem; }
   .linear-link { color: var(--accent); text-decoration: none; font-size: 0.85rem; display: inline-block; margin-bottom: 0.75rem; }
   .linear-link:hover { text-decoration: underline; }
-  .pr-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+  .pr-row { display: inline-flex; align-items: center; gap: 0.5rem; }
   .pr-link { color: var(--accent); text-decoration: none; font-size: 0.85rem; font-weight: 600; }
   .pr-link:hover { text-decoration: underline; }
   .ci-badge { color: #fff; font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 4px; letter-spacing: 0.5px; }
@@ -312,7 +375,10 @@ export function generateHTML(session: SessionResult): string {
   .res-fixed { color: #22c55e; }
   .res-not_fixed { color: #ef4444; }
   .postmortem { margin-top: 2rem; }
-  .postmortem h2 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+  .postmortem > summary { display: flex; align-items: center; gap: 0.75rem; cursor: pointer; list-style: none; margin-bottom: 0.5rem; }
+  .postmortem h2 { font-size: 1.1rem; }
+  .postmortem > summary .postmortem-flag { margin-bottom: 0; }
+  .section-meta { color: var(--text-dim); font-size: 0.85rem; }
   .postmortem-flag { color: #ef4444; font-weight: 600; margin-bottom: 0.5rem; }
   .followups { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 0.75rem; }
   .followups ul { padding-left: 1.25rem; }
@@ -339,16 +405,19 @@ export function generateHTML(session: SessionResult): string {
     <div class="stat"><strong style="color:#f97316">${review}</strong>review</div>
     <div class="stat"><strong style="color:#6b7280">${skipped}</strong>skipped</div>
     ${pmStat}
+    ${actionedStat}
   </div>
 
   ${ticketErrorBanner}
   ${budgetBar}
 
+  ${toolbar}
   ${ticketsHTML}
 
   ${postmortemHTML(session.postmortem)}
 
   <div class="footer">Generated by nightshift · ${new Date().toISOString()}</div>
+<script>${ACTIONED_SCRIPT}</script>
 </body>
 </html>`;
 }

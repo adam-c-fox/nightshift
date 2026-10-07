@@ -239,3 +239,42 @@ describe("writeReport", () => {
     expect(readFileSync(file, "utf-8")).toContain("<html");
   });
 });
+
+describe("report collapsible sections and actioned checkboxes", () => {
+  const sug = { id: "P1", target: "AGENTS.md", tickets: ["ENG-1"], problem: "p", cause: "c", change: "x" };
+  const html = generateHTML(session({
+    tickets: [ticketResult(), ticketResult({ ticket: { id: "ENG-2", name: "Import", context: [], repo: "main" }, status: "needs_review" })],
+    postmortem: { outcome: "done", suggestions: [sug] },
+  }));
+
+  it("renders each ticket as a collapsed card with its status in the header", () => {
+    expect(html).toContain('<details class="card" id="ticket-ENG-1">');
+    expect(html).toMatch(/<summary class="card-header">[\s\S]*?NEEDS_REVIEW[\s\S]*?ENG-2[\s\S]*?<\/summary>/);
+    expect(html).not.toMatch(/<details[^>]* open/);
+  });
+
+  it("gives every ticket and postmortem suggestion an actioned checkbox", () => {
+    expect(html).toContain('<input type="checkbox" class="actioned" data-key="ticket:ENG-1"');
+    expect(html).toContain('<input type="checkbox" class="actioned" data-key="ticket:ENG-2"');
+    expect(html).toContain('<input type="checkbox" class="actioned" data-key="postmortem:P1"');
+  });
+
+  it("collapses the postmortem section", () => {
+    expect(html).toMatch(/<details class="postmortem" id="postmortem">\s*<summary>/);
+  });
+
+  it("counts actioned items in the summary bar", () => {
+    expect(html).toContain('id="actioned-count">0 / 3</strong>');
+  });
+
+  it("keeps a skipped postmortem visible without a checkbox", () => {
+    const skipped = generateHTML(session({ tickets: [ticketResult()], postmortem: { outcome: "skipped", reason: "cap", suggestions: [] } }));
+    expect(skipped).not.toContain('data-key="postmortem:');
+    expect(skipped).toContain('id="actioned-count">0 / 1</strong>');
+  });
+
+  it("escapes ids used as storage keys", () => {
+    const odd = generateHTML(session({ tickets: [ticketResult({ ticket: { id: 'X"1', name: "n", context: [], repo: "main" } })] }));
+    expect(odd).toContain('data-key="ticket:X&quot;1"');
+  });
+});
