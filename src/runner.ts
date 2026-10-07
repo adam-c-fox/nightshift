@@ -16,6 +16,8 @@ import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { reportBase, REPORTS_DIR, writeReport } from "./report.js";
+import { heartbeatFile, startHeartbeat } from "./heartbeat.js";
+import { writeJsonAtomic } from "./state.js";
 import { nightRecord, writeNightRecord } from "./night-record.js";
 import { postmortemMarkdown, postmortemSkipReason, runPostmortem, sessionLogData, type UsageGate } from "./postmortem.js";
 import { checkCommands, classifyChecks, discoverTerraformRoots, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
@@ -485,123 +487,148 @@ async function main() {
 
   mkdirSync(WORKTREES_DIR, { recursive: true });
   mkdirSync(logsDir, { recursive: true });
+  mkdirSync(reportsDir, { recursive: true });
+  const base = reportBase(date, name => existsSync(path.join(reportsDir, name)));
+  const heartbeat = startHeartbeat(
+    { pid: process.pid, base, startedAt: startedAtDate },
+    {
+      write: hb => {
+        try {
+          writeJsonAtomic(heartbeatFile(logsDir), hb);
+        } catch (e) {
+          log(`Could not write run.json: ${(e as Error).message}`);
+        }
+      },
+      now: () => new Date(),
+      every: (fn, ms) => {
+        const handle = setInterval(fn, ms);
+        handle.unref();
+        return () => clearInterval(handle);
+      },
+    },
+  );
 
-  const results: TicketResult[] = [];
-  let gateHit = false;
-  let skipReason = "";
-  let budget: NightBudget;
-  let ticketError = "";
-  let nightAllowance: number | undefined;
   try {
-    nightAllowance = loadAllowance(project.ticketsFile);
-  } catch (e) {
-    ticketError = (e as Error).message;
-    log(`ERROR loading tickets: ${ticketError}`);
-  }
-  try {
-    const allocationPct = args.allowancePercent ?? nightAllowance ?? project.allowancePercent;
-    const source = args.allowancePercent !== undefined ? "--allowance override" : nightAllowance !== undefined ? "tonight.md" : "project default";
-    budget = startNightBudget(allocationPct);
-    log(`Tonight's allocation: ${allocationPct}% (${source}). Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
-  } catch (e) {
-    const message = (e as Error).message;
-    budget = closedBudget(`usage unavailable: ${message}`);
-    gateHit = true;
-    skipReason = `Skipped – could not read usage at start: ${message}`;
-    log(skipReason);
-    logUsageFailure(e, "  ");
-  }
-  const budgetRef = { current: budget };
-  const closedAtStart = gateHit;
-
-  let tickets: Ticket[] = [];
-  if (!ticketError) {
+    const results: TicketResult[] = [];
+    let gateHit = false;
+    let skipReason = "";
+    let budget: NightBudget;
+    let ticketError = "";
+    let nightAllowance: number | undefined;
     try {
-      tickets = loadTickets(project.ticketsFile, { names: Object.keys(project.repos), defaultRepo: project.defaultRepo });
-      log(`Loaded ${tickets.length} ticket(s) from ${path.basename(project.ticketsFile)}`);
+      nightAllowance = loadAllowance(project.ticketsFile);
     } catch (e) {
       ticketError = (e as Error).message;
       log(`ERROR loading tickets: ${ticketError}`);
     }
-  }
+    try {
+      const allocationPct = args.allowancePercent ?? nightAllowance ?? project.allowancePercent;
+      const source = args.allowancePercent !== undefined ? "--allowance override" : nightAllowance !== undefined ? "tonight.md" : "project default";
+      budget = startNightBudget(allocationPct);
+      log(`Tonight's allocation: ${allocationPct}% (${source}). Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
+    } catch (e) {
+      const message = (e as Error).message;
+      budget = closedBudget(`usage unavailable: ${message}`);
+      gateHit = true;
+      skipReason = `Skipped – could not read usage at start: ${message}`;
+      log(skipReason);
+      logUsageFailure(e, "  ");
+    }
+    const budgetRef = { current: budget };
+    const closedAtStart = gateHit;
 
-  const processed = new Map<string, ProcessedTicket>();
-  const needsTestDb = tickets.some(t => project.repos[t.repo].toolchain === "node");
-  const testDb = !dryRun && project.testDbScript && needsTestDb ? startTestDb(log, undefined, process.env, project.testDbScript) : undefined;
-  try {
-    for (const ticket of tickets) {
-      if (!gateHit) {
-        try {
-          budgetRef.current = checkGate(budgetRef.current);
-          log(budgetGateMessage(budgetRef.current));
-          if (budgetRef.current.gateHit) {
-            gateHit = true;
-            skipReason = `Skipped – nightly budget allocation reached (${budgetRef.current.currentPct}% ≥ cap ${budgetRef.current.capPct}%).`;
-          }
-        } catch (e) {
-          gateHit = true;
-          skipReason = `Skipped – could not read usage: ${(e as Error).message}`;
-          log(`  ${skipReason}`);
-          logUsageFailure(e, "    ");
-        }
-      }
-
-      if (gateHit) {
-        log(`  Skipping ${ticket.id}`);
-        results.push(placeholderResult(ticket, "skipped", skipReason, branchPrefix));
-        continue;
-      }
-
+    let tickets: Ticket[] = [];
+    if (!ticketError) {
       try {
-        const r = await processTicket(ticket, project, branchPrefix, instructions, dryRun, budgetRef, processed);
-        results.push(r);
+        tickets = loadTickets(project.ticketsFile, { names: Object.keys(project.repos), defaultRepo: project.defaultRepo });
+        log(`Loaded ${tickets.length} ticket(s) from ${path.basename(project.ticketsFile)}`);
       } catch (e) {
-        log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
-        results.push(placeholderResult(ticket, "error", (e as Error).message, branchPrefix));
+        ticketError = (e as Error).message;
+        log(`ERROR loading tickets: ${ticketError}`);
       }
     }
+
+    const processed = new Map<string, ProcessedTicket>();
+    const needsTestDb = tickets.some(t => project.repos[t.repo].toolchain === "node");
+    const testDb = !dryRun && project.testDbScript && needsTestDb ? startTestDb(log, undefined, process.env, project.testDbScript) : undefined;
+    try {
+      for (const [i, ticket] of tickets.entries()) {
+        heartbeat.phase("ticket", { index: i + 1, total: tickets.length, id: ticket.id });
+        if (!gateHit) {
+          try {
+            budgetRef.current = checkGate(budgetRef.current);
+            log(budgetGateMessage(budgetRef.current));
+            if (budgetRef.current.gateHit) {
+              gateHit = true;
+              skipReason = `Skipped – nightly budget allocation reached (${budgetRef.current.currentPct}% ≥ cap ${budgetRef.current.capPct}%).`;
+            }
+          } catch (e) {
+            gateHit = true;
+            skipReason = `Skipped – could not read usage: ${(e as Error).message}`;
+            log(`  ${skipReason}`);
+            logUsageFailure(e, "    ");
+          }
+        }
+
+        if (gateHit) {
+          log(`  Skipping ${ticket.id}`);
+          results.push(placeholderResult(ticket, "skipped", skipReason, branchPrefix));
+          continue;
+        }
+
+        try {
+          const r = await processTicket(ticket, project, branchPrefix, instructions, dryRun, budgetRef, processed);
+          results.push(r);
+        } catch (e) {
+          log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
+          results.push(placeholderResult(ticket, "error", (e as Error).message, branchPrefix));
+        }
+      }
+    } finally {
+      testDb?.stop();
+    }
+
+    const session: SessionResult = {
+      date,
+      startedAt,
+      endedAt: new Date().toLocaleString("en-US", { timeZone: TIME_ZONE }),
+      tickets: results,
+      budget: budgetRef.current,
+      gateHit,
+      skipReason,
+      noTasks: tickets.length === 0 && !ticketError,
+      ...(ticketError ? { ticketError } : {}),
+    };
+    heartbeat.phase("postmortem");
+    session.postmortem = await nightPostmortem(session, project, dryRun, reportsDir, budgetRef, base);
+
+    try {
+      if (!closedAtStart) budgetRef.current = checkGate(budgetRef.current);
+    } catch (e) {
+      log(`Final usage check failed: ${(e as Error).message}`);
+      logUsageFailure(e, "  ");
+    }
+    session.budget = budgetRef.current;
+    heartbeat.phase("report");
+    session.endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
+    try {
+      log(`Night record: ${writeNightRecord(reportsDir, base, nightRecord(session, startedAtDate, new Date(), dryRun))}`);
+    } catch (e) {
+      log(`Could not write the night record: ${(e as Error).message}`);
+    }
+
+    // Write report
+    const reportPath = writeReport(session, reportsDir, base);
+    log(`\n═══ Report written: ${reportPath} ═══`);
+    log(`Open in browser: file://${reportPath}`);
+
+    if (!dryRun && tickets.length > 0) {
+      const archivePath = path.join(reportsDir, `${base}-tonight.md`);
+      archiveTickets(archivePath, project.ticketsFile);
+      log(`Tickets archived: ${archivePath}`);
+    }
   } finally {
-    testDb?.stop();
-  }
-
-  const session: SessionResult = {
-    date,
-    startedAt,
-    endedAt: new Date().toLocaleString("en-US", { timeZone: TIME_ZONE }),
-    tickets: results,
-    budget: budgetRef.current,
-    gateHit,
-    skipReason,
-    noTasks: tickets.length === 0 && !ticketError,
-    ...(ticketError ? { ticketError } : {}),
-  };
-  mkdirSync(reportsDir, { recursive: true });
-  const base = reportBase(date, name => existsSync(path.join(reportsDir, name)));
-  session.postmortem = await nightPostmortem(session, project, dryRun, reportsDir, budgetRef, base);
-
-  try {
-    if (!closedAtStart) budgetRef.current = checkGate(budgetRef.current);
-  } catch (e) {
-    log(`Final usage check failed: ${(e as Error).message}`);
-    logUsageFailure(e, "  ");
-  }
-  session.budget = budgetRef.current;
-  session.endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
-  try {
-    log(`Night record: ${writeNightRecord(reportsDir, base, nightRecord(session, startedAtDate, new Date(), dryRun))}`);
-  } catch (e) {
-    log(`Could not write the night record: ${(e as Error).message}`);
-  }
-
-  // Write report
-  const reportPath = writeReport(session, reportsDir, base);
-  log(`\n═══ Report written: ${reportPath} ═══`);
-  log(`Open in browser: file://${reportPath}`);
-
-  if (!dryRun && tickets.length > 0) {
-    const archivePath = path.join(reportsDir, `${base}-tonight.md`);
-    archiveTickets(archivePath, project.ticketsFile);
-    log(`Tickets archived: ${archivePath}`);
+    heartbeat.finish();
   }
 }
 
