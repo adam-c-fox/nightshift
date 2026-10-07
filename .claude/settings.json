@@ -3,7 +3,7 @@
     "allow": [
       "Read(./**)",
       "Edit(./src/**)",
-      "Edit(./tickets/**)",
+      "Edit(./projects/*/tonight.md)",
       "Edit(./reports/**)",
       "Edit(./logs/**)",
       "Bash(npm *)"

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NAME=nightshift-test-pg
-URL=postgresql://nightshift_example:nightshift_example@127.0.0.1:55433/nightshift_example_test
+NAME=nightshift-example-test-pg
+URL=postgresql://nightshift:nightshift@127.0.0.1:55433/nightshift_test
 TIMEOUT_SECONDS=60
 
 running() { [ -n "$(docker ps -q -f "name=^${NAME}$")" ]; }
 exists() { [ -n "$(docker ps -aq -f "name=^${NAME}$")" ]; }
-ready() { docker exec "$NAME" pg_isready -h 127.0.0.1 -U nightshift_example -d nightshift_example_test >/dev/null 2>&1; }
+ready() { docker exec "$NAME" pg_isready -h 127.0.0.1 -U nightshift -d nightshift_test >/dev/null 2>&1; }
 
 up() {
   if ! running; then
     if exists; then docker rm -f "$NAME" >/dev/null; fi
     docker run -d --rm --name "$NAME" \
-      -e POSTGRES_USER=nightshift_example -e POSTGRES_PASSWORD=nightshift_example -e POSTGRES_DB=nightshift_example_test \
+      -e POSTGRES_USER=nightshift -e POSTGRES_PASSWORD=nightshift -e POSTGRES_DB=nightshift_test \
       -p 127.0.0.1:55433:5432 postgres:15-alpine >/dev/null
   fi
   local waited=0

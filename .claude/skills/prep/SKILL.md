@@ -1,21 +1,21 @@
 ---
 name: prep
-description: Audit one Linear ticket with you and write the missing context into its description, so the nightshift agent can work it unattended. Takes a ticket ID.
+description: Audit one Linear ticket with you and write the missing context into its description, so the nightshift agent can work it unattended. Takes a ticket ID and an optional project.
 disable-model-invocation: true
 ---
 
 Prep one Linear ticket with Adam so a nightshift agent can finish it without guessing. Find its gaps, get Adam's decisions, and write them into the ticket's description. `/tonight` later re-checks the night's set as a final pass.
 
-The agent sees the ticket's description and comments, plus the title and bullets in `tickets/tonight.md`. Comments reach it as a raw thread, oldest first, with no sign of which points were settled, so every decision goes into the description.
+The agent sees the ticket's description and comments, plus the title and bullets in `projects/<project>/tonight.md`. Comments reach it as a raw thread, oldest first, with no sign of which points were settled, so every decision goes into the description.
 
 Linear MCP tools are `mcp__claude_ai_Linear__get_issue`, `mcp__claude_ai_Linear__list_comments` and `mcp__claude_ai_Linear__save_issue`. If their parameters are deferred, load them with ToolSearch first. If the Linear MCP is unavailable, use the `linear:linear-api` skill.
 
 ## Steps
 
-1. Take the ticket ID from the arguments, or ask Adam for one. Fetch the issue with `get_issue` and its comments with `list_comments`.
+1. Take the ticket ID and optional project from the arguments (`/prep <ID> [project]`), or ask Adam for the ID. The project defaults to `NIGHTSHIFT_PROJECT` from `.env`; if neither is set, list `projects/*/project.json` and ask. Fetch the issue with `get_issue` and its comments with `list_comments`.
    Done when you hold the ticket and all its comments.
 
-2. Pick the repo with the rule in step 6 of `.claude/skills/tonight/SKILL.md`. Repo paths live in `REPOS` in `src/repos.ts`.
+2. Pick the repo with the rule in step 6 of `.claude/skills/tonight/SKILL.md`. Repos, their paths and descriptions live in `projects/<project>/project.json`.
    Ground the ticket in that repo's code: `grep -rn --exclude-dir={node_modules,.terraform,.git,dist}` for every file, function, type, table, route and config key the ticket names, and read the matching code (± 40 lines). Note the test files that cover it and any existing helper the change should reuse.
    Done when every identifier the ticket names is located or confirmed missing, and you know where the tests for it go.
 

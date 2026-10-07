@@ -216,7 +216,7 @@ export function generateHTML(session: SessionResult): string {
     ? `<div class="no-tasks">
          <div class="no-tasks-icon">🌙</div>
          <p>No tickets in <code>tonight.md</code>. Nothing to process.</p>
-         <p class="hint">Add tickets to <code>nightshift/tickets/tonight.md</code> before tonight's 23:00 run.</p>
+         <p class="hint">Add tickets to <code>projects/&lt;project&gt;/tonight.md</code> before tonight's 23:00 run.</p>
        </div>`
     : session.tickets.map(ticketCardHTML).join("\n");
 

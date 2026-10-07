@@ -8,13 +8,13 @@ Review one nightshift night and suggest changes to the instructions that would h
 
 ## Input
 
-`logs/session-<date>.json`, written by the runner. It holds every ticket's outcome (status, summary, notes, tests, checks, review findings, fix resolutions, fix verification, followups, PR and CI results) and, per ticket, `logFiles`: the agent, review, fix and verify transcripts, and `<ID>-diff.txt`, the committed change against its base. When invoked by hand as `/postmortem [date]`, use the given date, or the newest `logs/session-*.json` if none. To see code around the change, read files under the ticket's `worktreePath`.
+`logs/<project>/session-<date>.json`, written by the runner. Project-specific instructions live in `projects/<project>/AGENTS.md`, so suggestions can target that file. It holds every ticket's outcome (status, summary, notes, tests, checks, review findings, fix resolutions, fix verification, followups, PR and CI results) and, per ticket, `logFiles`: the agent, review, fix and verify transcripts, and `<ID>-diff.txt`, the committed change against its base. When invoked by hand as `/postmortem [date]`, use the given date, or the newest `logs/<project>/session-*.json` if none; take the project from `NIGHTSHIFT_PROJECT` in `.env` or ask. To see code around the change, read files under the ticket's `worktreePath`.
 
 ## What to look for
 
 For each ticket that went wrong: status `needs_review`, `partial` or `error`, review findings (each one is a mistake the implementer made), fixes `not_fixed` or still open after verification, check regressions, CI fix attempts, budget aborts, skipped or failed stages.
 
-For each, find the instruction-level root cause: which part of `AGENTS.md`, `prompts/review.md`, `prompts/fix.md`, `prompts/verify.md`, `.claude/skills/prep/gaps.md` (gap-finding), `.claude/skills/prep/SKILL.md` (ticket descriptions), `.claude/skills/tonight/SKILL.md` (context bullets) or the runner's behaviour was missing, vague or misleading, so that the agent did what it did. Read those files and the relevant log lines before concluding.
+For each, find the instruction-level root cause: which part of `AGENTS.md`, `projects/<project>/AGENTS.md`, `prompts/review.md`, `prompts/fix.md`, `prompts/verify.md`, `.claude/skills/prep/gaps.md` (gap-finding), `.claude/skills/prep/SKILL.md` (ticket descriptions), `.claude/skills/tonight/SKILL.md` (context bullets) or the runner's behaviour was missing, vague or misleading, so that the agent did what it did. Read those files and the relevant log lines before concluding.
 
 ## Rules
 

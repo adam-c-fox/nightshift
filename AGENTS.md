@@ -24,7 +24,7 @@ It overrides anything generic here.
   packages just to make your tests pass. CI won't have them. If your tests
   only pass that way, the test setup is wrong: fix it the way the repo
   already resolves workspace packages in tests, or say so in `notes`.
-- **Terraform repo** (IaC, no JS):
+- **Terraform repos only** (IaC, no JS):
   - Validate: `terraform init -backend=false && terraform validate`
   - Do NOT run Terraform `plan` or `apply`. The PR pipeline runs `plan`,
     and the reviewer checks its output.

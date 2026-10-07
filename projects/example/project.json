@@ -1,0 +1,17 @@
+{
+  "repos": {
+    "app": {
+      "path": "/path/to/app",
+      "toolchain": "node",
+      "description": "Application code: TypeScript monorepo"
+    },
+    "infra": {
+      "path": "/path/to/infra",
+      "toolchain": "terraform",
+      "description": "Infrastructure as code: Terraform, .tf, azurerm, resource group, module, storage account, Key Vault, networking"
+    }
+  },
+  "defaultRepo": "app",
+  "testDb": "test-db.sh",
+  "allowancePercent": 15
+}
