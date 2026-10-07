@@ -236,6 +236,13 @@ describe("createProject", () => {
     expect(existsSync(join(root, "x"))).toBe(false);
   });
 
+  it("refuses the reserved name new because /projects/new is the create page", () => {
+    expect(() =>
+      createProject("new", input(), projectsDir, exampleDir),
+    ).toThrow(/reserved/);
+    expect(existsSync(join(projectsDir, "new"))).toBe(false);
+  });
+
   it("leaves no directory behind when the config is invalid", () => {
     expect(() =>
       createProject(

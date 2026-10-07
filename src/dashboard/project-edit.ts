@@ -161,6 +161,8 @@ function writeProjectFiles(dir: string, config: Json, exampleDir: string) {
   writeFileSync(path.join(dir, "tonight.md"), ticketsHeader(exampleTonight));
 }
 
+const RESERVED_PROJECT_NAME = "new";
+
 export function createProject(
   name: string,
   input: ProjectInput,
@@ -169,6 +171,8 @@ export function createProject(
 ): CreatedProject {
   if (!PROJECT_NAME.test(name))
     throw new Error(`invalid project name "${name}"`);
+  if (name === RESERVED_PROJECT_NAME)
+    throw new Error(`"${name}" is reserved for the create-project page`);
   const dir = path.join(projectsDir, name);
   if (existsSync(dir)) throw new Error(`projects/${name} already exists`);
   const config = mergeProjectConfig({}, input);
