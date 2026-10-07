@@ -1,4 +1,3 @@
-import { getEnv } from "../env.js";
 import {
   ORIGIN_URL_ARGS,
   azEnvFrom,
@@ -34,8 +33,6 @@ export function azProjectFrom(
   if (!project) throw new Error("AZURE_DEVOPS_PROJECT is not set");
   return { org: orgUrl(org), project, env: azEnvFrom(lookup) };
 }
-
-export const azProject = (): AzProject => azProjectFrom(getEnv);
 
 async function azJson(
   exec: Exec,
