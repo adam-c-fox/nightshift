@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  checkCommands, classifyChecks, didNotRun, discoverWorkspaces, firstFailingLine, regressionFindings, runChecks,
+  checkCommands, classifyChecks, didNotRun, discoverTerraformRoots, discoverWorkspaces, firstFailingLine, regressionFindings, runChecks,
   type CheckExec, type CheckResult,
 } from "../src/checks.js";
 
@@ -19,10 +19,49 @@ describe("checkCommands", () => {
     ]);
   });
 
-  it("lists init, validate and fmt for terraform and ignores workspaces", () => {
-    expect(checkCommands("terraform", ["x"]).map(c => c.command)).toEqual([
-      "terraform init -backend=false", "terraform validate", "terraform fmt -check -recursive",
+  it("validates each terraform root module, then checks fmt once at the root", () => {
+    expect(checkCommands("terraform", ["environments/dev", "environments/prod"])).toEqual([
+      { name: "terraform validate (environments/dev)", command: "terraform -chdir=environments/dev init -backend=false -input=false && terraform -chdir=environments/dev validate" },
+      { name: "terraform validate (environments/prod)", command: "terraform -chdir=environments/prod init -backend=false -input=false && terraform -chdir=environments/prod validate" },
+      { name: "terraform fmt", command: "terraform fmt -check -recursive" },
     ]);
+  });
+});
+
+describe("discoverTerraformRoots", () => {
+  const roots: string[] = [];
+  const project = (files: string[]) => {
+    const root = mkdtempSync(join(tmpdir(), "nightshift-tf-"));
+    roots.push(root);
+    for (const f of files) {
+      mkdirSync(join(root, dirname(f)), { recursive: true });
+      writeFileSync(join(root, f), "");
+    }
+    return root;
+  };
+  afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
+
+  it("finds directories that directly contain .tf files, sorted", () => {
+    const root = project(["environments/prod/main.tf", "environments/dev/main.tf", "environments/dev/vars.tf", "README.md"]);
+    expect(discoverTerraformRoots(root)).toEqual(["environments/dev", "environments/prod"]);
+  });
+
+  it("skips modules, .terraform, .git and node_modules", () => {
+    const root = project([
+      "environments/dev/main.tf", "modules/vpc/main.tf", "environments/dev/modules/x/main.tf",
+      "environments/dev/.terraform/modules/y/main.tf", ".git/hooks/a.tf", "node_modules/p/main.tf",
+    ]);
+    expect(discoverTerraformRoots(root)).toEqual(["environments/dev"]);
+  });
+
+  it("includes the worktree root when it has .tf files", () => {
+    const root = project(["main.tf", "environments/dev/main.tf"]);
+    expect(discoverTerraformRoots(root)).toEqual([".", "environments/dev"]);
+  });
+
+  it("throws when there are no root modules", () => {
+    const root = project(["modules/vpc/main.tf", "README.md"]);
+    expect(() => discoverTerraformRoots(root)).toThrow(`no terraform root modules in ${root}`);
   });
 });
 

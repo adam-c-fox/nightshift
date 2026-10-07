@@ -110,6 +110,15 @@ These rules exist so the machine doesn't burn through the weekly budget.
   requires it. `node_modules` is installed from this branch's lockfile.
 - Do NOT modify `.env`, `.github/`, `pipelines/`, `compose.yml`, or
   `package.json` `"engines"` unless the ticket says to.
+- No comments by default, in tests too. The code is the documentation, and
+  comments go stale: reach for a clearer name, a smaller function or an
+  extracted variable instead. Comment only a why the code can't show (an
+  invariant, a workaround for an external bug), in one short line. Never
+  restate what the code or types already say.
+- Place new declarations so existing doc comments stay attached to the code
+  they describe.
+- When you add a module, package or service, add it everywhere the README or
+  docs list its siblings (structure trees, tables).
 
 ## 5 · When to stop
 

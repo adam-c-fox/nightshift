@@ -13,7 +13,7 @@ const DENY_READ = ["~/.ssh", "~/.aws", "~/.azure", "~/.config/gh", "~/.npmrc", "
 const ADO_DOMAINS = ["dev.azure.com", "*.dev.azure.com", "*.visualstudio.com", "vssps.visualstudio.com"];
 const ALLOWED_DOMAINS: Record<Toolchain, string[]> = {
   node: ["registry.npmjs.org", "localhost", "127.0.0.1"],
-  terraform: ["registry.terraform.io", "releases.hashicorp.com"],
+  terraform: ["registry.terraform.io"],
 };
 
 export function buildAgentSettings(

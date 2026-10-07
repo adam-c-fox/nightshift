@@ -38,11 +38,13 @@ const TAIL_LINES = 80;
 const MAX_BUFFER_CHARS = 256 * 1024;
 const FINDING_DETAIL_CHARS = 200;
 
-export function checkCommands(toolchain: Toolchain, workspaces: string[]): CheckCommand[] {
+export function checkCommands(toolchain: Toolchain, dirs: string[]): CheckCommand[] {
   if (toolchain === "terraform") {
     return [
-      { name: "terraform init", command: "terraform init -backend=false" },
-      { name: "terraform validate", command: "terraform validate" },
+      ...dirs.map(dir => ({
+        name: `terraform validate (${dir})`,
+        command: `terraform -chdir=${dir} init -backend=false -input=false && terraform -chdir=${dir} validate`,
+      })),
       { name: "terraform fmt", command: "terraform fmt -check -recursive" },
     ];
   }
@@ -52,7 +54,7 @@ export function checkCommands(toolchain: Toolchain, workspaces: string[]): Check
     { name: "lint", command: "npm run lint" },
     { name: "format", command: "npm run format" },
     { name: "tests (root)", command: "npx vitest run" },
-    ...workspaces.map(w => ({ name: `tests (${w})`, command: `npm test -w ${w}` })),
+    ...dirs.map(w => ({ name: `tests (${w})`, command: `npm test -w ${w}` })),
   ];
 }
 
@@ -92,6 +94,16 @@ export function discoverWorkspaces(cwd: string, query: (cwd: string) => string =
   const expanded = [...new Set(globs.flatMap(g => globSync(g, { cwd })).filter(d => insideCwd(cwd, d) && isPackageDir(cwd, d)))].sort();
   if (expanded.length === 0) throw new Error(`workspace discovery broken in ${cwd}`);
   return expanded;
+}
+
+const NON_ROOT_TERRAFORM_DIRS = new Set(["modules", ".terraform", ".git", "node_modules"]);
+
+export function discoverTerraformRoots(cwd: string): string[] {
+  const roots = [...new Set(globSync("**/*.tf", { cwd })
+    .map(f => path.dirname(f))
+    .filter(dir => !dir.split(path.sep).some(part => NON_ROOT_TERRAFORM_DIRS.has(part))))].sort();
+  if (roots.length === 0) throw new Error(`no terraform root modules in ${cwd}`);
+  return roots;
 }
 
 const npmQuery = (cwd: string) =>

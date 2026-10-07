@@ -17,7 +17,7 @@ import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { reportBase, REPORTS_DIR, writeReport } from "./report.js";
 import { postmortemMarkdown, postmortemSkipReason, runPostmortem, sessionLogData, type UsageGate } from "./postmortem.js";
-import { checkCommands, classifyChecks, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
+import { checkCommands, classifyChecks, discoverTerraformRoots, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
 import { relatedTickets, type ProcessedTicket, type PushedBranch } from "./related.js";
 import { stackDecision, stackedContext } from "./stack.js";
 import { startTestDb } from "./test-db.js";
@@ -248,7 +248,7 @@ async function processTicket(
   const weeklyGateReason = () => weeklyGate(budgetRef, "mid-ticket");
   const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
   const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT, { secretFiles: projectEnvFiles() }), instructions };
-  const commands = dryRun ? [] : checkCommands(toolchain, toolchain === "node" ? discoverWorkspaces(wt.wtPath) : []);
+  const commands = dryRun ? [] : checkCommands(toolchain, toolchain === "node" ? discoverWorkspaces(wt.wtPath) : discoverTerraformRoots(wt.wtPath));
   const baseline = dryRun ? [] : await runLoggedChecks("before the change", wt.wtPath, commands);
   if (!dryRun) await waitForSession();
   const result = await runAgent(

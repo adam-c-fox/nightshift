@@ -92,7 +92,7 @@ describe("buildAgentSettings", () => {
 
   it("lets terraform runs reach only the provider registry", () => {
     const tf = JSON.parse(buildAgentSettings("terraform", root));
-    expect(tf.sandbox.network.allowedDomains).toEqual(["registry.terraform.io", "releases.hashicorp.com"]);
+    expect(tf.sandbox.network.allowedDomains).toEqual(["registry.terraform.io"]);
   });
 
   it("lets node runs listen locally and reach the local test database", () => {
