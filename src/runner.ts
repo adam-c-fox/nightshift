@@ -16,6 +16,7 @@ import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { reportBase, REPORTS_DIR, writeReport } from "./report.js";
+import { nightRecord, writeNightRecord } from "./night-record.js";
 import { postmortemMarkdown, postmortemSkipReason, runPostmortem, sessionLogData, type UsageGate } from "./postmortem.js";
 import { checkCommands, classifyChecks, discoverTerraformRoots, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
 import { relatedTickets, type ProcessedTicket, type PushedBranch } from "./related.js";
@@ -477,6 +478,7 @@ async function main() {
   logsDir = path.join(ROOT, "logs", project.name);
   const instructions = composeInstructions(readFileSync(GENERIC_AGENTS_MD, "utf-8"), project.name, project.instructions);
   const date = localDate();
+  const startedAtDate = new Date();
   const startedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
   log(`═══ Nightshift session ${date} started ${dryRun ? "(DRY RUN)" : ""} ═══`);
   log(`Project: ${project.name}`);
@@ -585,6 +587,11 @@ async function main() {
   }
   session.budget = budgetRef.current;
   session.endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
+  try {
+    log(`Night record: ${writeNightRecord(reportsDir, base, nightRecord(session, startedAtDate, new Date(), dryRun))}`);
+  } catch (e) {
+    log(`Could not write the night record: ${(e as Error).message}`);
+  }
 
   // Write report
   const reportPath = writeReport(session, reportsDir, base);

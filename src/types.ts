@@ -154,3 +154,9 @@ export interface SessionResult {
   ticketError?: string;
   postmortem?: SessionPostmortem;
 }
+
+export interface NightRecord extends SessionResult {
+  startedAtIso: string;
+  endedAtIso: string;
+  dryRun: boolean;
+}
