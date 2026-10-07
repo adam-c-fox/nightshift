@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Toolchain } from "./types.js";
 
 export const PROJECTS_DIR = path.resolve(import.meta.dirname, "..", "projects");
-const TOOLCHAINS: readonly Toolchain[] = ["node", "terraform"];
+export const TOOLCHAINS: readonly Toolchain[] = ["node", "terraform"];
 export const REPO_NAME_PATTERN = "[a-z0-9][a-z0-9_-]*";
 export const REPO_NAME = new RegExp(`^${REPO_NAME_PATTERN}$`);
 export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
