@@ -7,6 +7,7 @@ import {
   loadProject,
   parseProjectConfig,
   projectEnvFiles,
+  readRawProjectConfig,
 } from "../src/project.js";
 
 const everything = () => true;
@@ -131,6 +132,76 @@ describe("parseProjectConfig", () => {
     expect(() =>
       parseProjectConfig("a", "/p/a", { repos: {} }, everything),
     ).toThrow(/at least one repo/);
+  });
+
+  it("keeps the configured Linear team keys", () => {
+    const project = parseProjectConfig(
+      "a",
+      "/p/a",
+      { repos, defaultRepo: "main", linearTeams: ["DEMO", "ENG"] },
+      everything,
+    );
+    expect(project.linearTeams).toEqual(["DEMO", "ENG"]);
+  });
+
+  it("leaves linearTeams undefined when absent or empty", () => {
+    const base = { repos, defaultRepo: "main" };
+    expect(
+      parseProjectConfig("a", "/p/a", base, everything).linearTeams,
+    ).toBeUndefined();
+    expect(
+      parseProjectConfig("a", "/p/a", { ...base, linearTeams: [] }, everything)
+        .linearTeams,
+    ).toBeUndefined();
+  });
+
+  it.each([[["demo"]], ["DEMO"], [["ENG", 3]]])(
+    "rejects linearTeams %j",
+    (teams) => {
+      expect(() =>
+        parseProjectConfig(
+          "a",
+          "/p/a",
+          { repos, defaultRepo: "main", linearTeams: teams },
+          everything,
+        ),
+      ).toThrow(/linearTeams/);
+    },
+  );
+});
+
+describe("readRawProjectConfig", () => {
+  const setup = (content?: string) => {
+    const root = mkdtempSync(join(tmpdir(), "projects-"));
+    mkdirSync(join(root, "acme"));
+    if (content !== undefined) {
+      writeFileSync(join(root, "acme", "project.json"), content);
+    }
+    return root;
+  };
+
+  it("rejects names that aren't a plain directory name", () => {
+    expect(() => readRawProjectConfig("../x", setup())).toThrow(
+      /invalid project name/,
+    );
+  });
+
+  it("reports a missing project", () => {
+    expect(() => readRawProjectConfig("acme", setup())).toThrow(/not found/);
+  });
+
+  it("reports invalid JSON", () => {
+    expect(() => readRawProjectConfig("acme", setup("{"))).toThrow(
+      /is not valid JSON/,
+    );
+  });
+
+  it("returns the untouched config with its paths", () => {
+    const root = setup('{"repos":{},"custom":1}');
+    const result = readRawProjectConfig("acme", root);
+    expect((result.raw as { custom: number }).custom).toBe(1);
+    expect(result.dir).toBe(join(root, "acme"));
+    expect(result.configFile).toBe(join(root, "acme", "project.json"));
   });
 });
 

@@ -6,8 +6,9 @@ export const PROJECTS_DIR = path.resolve(import.meta.dirname, "..", "projects");
 const TOOLCHAINS: readonly Toolchain[] = ["node", "terraform"];
 export const REPO_NAME_PATTERN = "[a-z0-9][a-z0-9_-]*";
 export const REPO_NAME = new RegExp(`^${REPO_NAME_PATTERN}$`);
-const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const DEFAULT_ALLOWANCE_PERCENT = 15;
+export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export const DEFAULT_ALLOWANCE_PERCENT = 15;
+export const LINEAR_TEAM_KEY = /^[A-Z][A-Z0-9]*$/;
 
 export interface RepoConfig {
   path: string;
@@ -23,6 +24,7 @@ export interface Project {
   instructions: string;
   testDbScript?: string;
   allowancePercent: number;
+  linearTeams?: string[];
   ticketsFile: string;
   envFile: string;
 }
@@ -32,6 +34,7 @@ type RawConfig = {
   defaultRepo?: unknown;
   testDb?: unknown;
   allowancePercent?: unknown;
+  linearTeams?: unknown;
 };
 
 export function isValidPercent(value: unknown): value is number {
@@ -100,6 +103,17 @@ export function parseProjectConfig(
   if (!isValidPercent(allowancePercent))
     fail("allowancePercent must be a whole number from 1 to 100");
 
+  const linearTeams = config.linearTeams ?? [];
+  if (
+    !Array.isArray(linearTeams) ||
+    !linearTeams.every(
+      (team) => typeof team === "string" && LINEAR_TEAM_KEY.test(team),
+    )
+  ) {
+    fail('linearTeams must be a list of Linear team keys like "ENG"');
+  }
+  const teams = linearTeams as string[];
+
   return {
     name,
     dir,
@@ -107,6 +121,7 @@ export function parseProjectConfig(
     defaultRepo: defaultRepo as string,
     testDbScript,
     allowancePercent: allowancePercent as number,
+    ...(teams.length > 0 ? { linearTeams: teams } : {}),
     ticketsFile: path.join(dir, "tonight.md"),
     envFile: path.join(dir, ".env"),
   };
@@ -132,7 +147,10 @@ export function projectEnvFiles(projectsDir = PROJECTS_DIR): string[] {
     .sort();
 }
 
-export function loadProject(name: string, projectsDir = PROJECTS_DIR): Project {
+export function readRawProjectConfig(
+  name: string,
+  projectsDir = PROJECTS_DIR,
+): { dir: string; configFile: string; raw: unknown } {
   if (!PROJECT_NAME.test(name)) {
     throw new Error(`invalid project name "${name}"`);
   }
@@ -151,6 +169,11 @@ export function loadProject(name: string, projectsDir = PROJECTS_DIR): Project {
       `project "${name}": ${configFile} is not valid JSON: ${(e as Error).message}`,
     );
   }
+  return { dir, configFile, raw };
+}
+
+export function loadProject(name: string, projectsDir = PROJECTS_DIR): Project {
+  const { dir, raw } = readRawProjectConfig(name, projectsDir);
   const parsed = parseProjectConfig(name, dir, raw, existsSync);
   const agentsFile = path.join(dir, "AGENTS.md");
   return {
