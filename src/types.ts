@@ -1,6 +1,7 @@
 import type { CheckStatus } from "./checks.js";
 
 export type RepoKind = "main" | "terraform";
+export type Toolchain = "node" | "terraform";
 
 export interface Ticket {
   id: string;            // e.g. "ENG-142"
