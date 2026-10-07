@@ -11,7 +11,9 @@ export interface TicketRepos {
 const COMMENT = /<!--[\s\S]*?-->/g;
 const REPO_LINE = new RegExp(`^repo:\\s*(${REPO_NAME_PATTERN})\\s*$`, "i");
 const ALLOWANCE_LINE = /^allowance:\s*(.*?)\s*$/i;
-const HEADING = /^##\s+([A-Z]+-\d+)\s*[–-]\s*(.*)/;
+export const TICKET_ID_PATTERN = "[A-Z]+-\\d+";
+export const TICKET_ID = new RegExp(`^${TICKET_ID_PATTERN}$`);
+const HEADING = new RegExp(`^##\\s+(${TICKET_ID_PATTERN})\\s*[–-]\\s*(.*)`);
 
 export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
   let raw: string;
