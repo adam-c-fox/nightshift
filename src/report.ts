@@ -5,7 +5,7 @@ import { budgetUsedPct } from "./budget.js";
 
 export const REPORTS_DIR = path.resolve(import.meta.dirname, "..", "reports");
 
-const STATUS_COLORS: Record<string, string> = {
+export const STATUS_COLORS: Record<string, string> = {
   done: "#22c55e",
   partial: "#eab308",
   needs_review: "#f97316",
@@ -13,11 +13,11 @@ const STATUS_COLORS: Record<string, string> = {
   error: "#ef4444",
 };
 
-function esc(s: string): string {
+export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-const CI_BADGES: Record<string, { label: string; color: string }> = {
+export const CI_BADGES: Record<string, { label: string; color: string }> = {
   succeeded: { label: "CI passed", color: "#22c55e" },
   failed: { label: "CI failed", color: "#ef4444" },
   unknown: { label: "CI unknown", color: "#eab308" },
@@ -30,6 +30,33 @@ function prLinksHTML(t: TicketResult): string {
         <a href="${esc(t.prUrl)}" target="_blank" class="pr-link">PR${t.prId ? ` #${t.prId}` : ""} →</a>
         ${badge ? `<span class="ci-badge" style="background:${badge.color}">${badge.label}</span>` : ""}
       </span>`;
+}
+
+export const REPORT_BASE = /^nightshift-(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/;
+
+export const ticketActionKey = (id: string): string => `ticket:${id}`;
+export const postmortemActionKey = (id: string): string => `postmortem:${id}`;
+
+export const THEME_CSS = `
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+    --text: #e2e4eb; --text-dim: #8b8fa3; --accent: #6c5ce7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font: 15px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }`;
+
+export interface TicketCounts { total: number; done: number; partial: number; needsReview: number; skipped: number }
+
+export function countTickets(tickets: TicketResult[]): TicketCounts {
+  const count = (...statuses: string[]) => tickets.filter(t => statuses.includes(t.status)).length;
+  return {
+    total: tickets.length,
+    done: count("done"),
+    partial: count("partial"),
+    needsReview: count("needs_review"),
+    skipped: count("skipped", "error"),
+  };
 }
 
 function actionedBoxHTML(key: string, label: string): string {
@@ -107,7 +134,7 @@ function postmortemHTML(pm: SessionPostmortem | undefined): string {
     : pm.suggestions.length === 0
       ? `<p class="hint">No suggestions.</p>`
       : pm.suggestions.map(s => `<div class="finding suggestion">
-           <div class="finding-head">${actionedBoxHTML(`postmortem:${s.id}`, s.id)}<span class="finding-id">${esc(s.id)}</span><code class="finding-file">${esc(s.target)}</code><span class="finding-file">${esc(s.tickets.join(", "))}</span></div>
+           <div class="finding-head">${actionedBoxHTML(postmortemActionKey(s.id), s.id)}<span class="finding-id">${esc(s.id)}</span><code class="finding-file">${esc(s.target)}</code><span class="finding-file">${esc(s.tickets.join(", "))}</span></div>
            <div>${esc(s.problem)}</div>
            <div class="finding-suggestion">Cause: ${esc(s.cause)}</div>
            <div class="finding-suggestion">Change: ${esc(s.change)}</div>
@@ -156,7 +183,7 @@ function ticketCardHTML(t: TicketResult): string {
   <details class="card" id="ticket-${esc(t.ticket.id)}">
     <summary class="card-header">
       <span class="chevron">▸</span>
-      ${actionedBoxHTML(`ticket:${t.ticket.id}`, t.ticket.id)}
+      ${actionedBoxHTML(ticketActionKey(t.ticket.id), t.ticket.id)}
       <span class="status" style="background:${color}">${t.status.toUpperCase()}</span>
       <span class="ticket-id">${esc(t.ticket.id)}</span>
       <span class="ticket-name">${esc(t.ticket.name)}</span>
@@ -218,10 +245,7 @@ const ACTIONED_SCRIPT = `(() => {
 })();`;
 
 export function generateHTML(session: SessionResult): string {
-  const completed = session.tickets.filter(t => t.status === "done").length;
-  const partial = session.tickets.filter(t => t.status === "partial").length;
-  const review = session.tickets.filter(t => t.status === "needs_review").length;
-  const skipped = session.tickets.filter(t => t.status === "skipped" || t.status === "error").length;
+  const counts = countTickets(session.tickets);
   const b = session.budget;
   const used = budgetUsedPct(b);
   const pctColor = b.currentPct >= b.capPct ? "#ef4444" : b.currentPct >= b.capPct - 3 ? "#eab308" : "#22c55e";
@@ -285,14 +309,8 @@ export function generateHTML(session: SessionResult): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nightshift Report – ${esc(session.date)}</title>
-<style>
-  :root {
-    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
-    --text: #e2e4eb; --text-dim: #8b8fa3; --accent: #6c5ce7;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font: 15px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-         background: var(--bg); color: var(--text); padding: 2rem; max-width: 860px; margin: 0 auto; }
+<style>${THEME_CSS}
+  body { padding: 2rem; max-width: 860px; margin: 0 auto; }
   h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
   .date { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 1.5rem; }
   .summary-bar { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
@@ -399,11 +417,11 @@ export function generateHTML(session: SessionResult): string {
   <div class="date">${esc(session.date)} · ${esc(session.startedAt)} → ${esc(session.endedAt)}</div>
 
   <div class="summary-bar">
-    <div class="stat"><strong>${session.tickets.length}</strong>tickets</div>
-    <div class="stat"><strong style="color:#22c55e">${completed}</strong>done</div>
-    <div class="stat"><strong style="color:#eab308">${partial}</strong>partial</div>
-    <div class="stat"><strong style="color:#f97316">${review}</strong>review</div>
-    <div class="stat"><strong style="color:#6b7280">${skipped}</strong>skipped</div>
+    <div class="stat"><strong>${counts.total}</strong>tickets</div>
+    <div class="stat"><strong style="color:#22c55e">${counts.done}</strong>done</div>
+    <div class="stat"><strong style="color:#eab308">${counts.partial}</strong>partial</div>
+    <div class="stat"><strong style="color:#f97316">${counts.needsReview}</strong>review</div>
+    <div class="stat"><strong style="color:#6b7280">${counts.skipped}</strong>skipped</div>
     ${pmStat}
     ${actionedStat}
   </div>

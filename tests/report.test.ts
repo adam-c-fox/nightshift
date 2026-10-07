@@ -3,7 +3,9 @@ import { closedBudget, openNightBudget } from "../src/budget.js";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { generateHTML, reportBase, reportFilename, writeReport } from "../src/report.js";
+import {
+  REPORT_BASE, countTickets, esc, generateHTML, postmortemActionKey, reportBase, reportFilename, ticketActionKey, writeReport,
+} from "../src/report.js";
 import type { SessionResult, TicketResult } from "../src/types.js";
 
 const session = (over: Partial<SessionResult>): SessionResult => ({
@@ -276,5 +278,39 @@ describe("report collapsible sections and actioned checkboxes", () => {
   it("escapes ids used as storage keys", () => {
     const odd = generateHTML(session({ tickets: [ticketResult({ ticket: { id: 'X"1', name: "n", context: [], repo: "main" } })] }));
     expect(odd).toContain('data-key="ticket:X&quot;1"');
+  });
+});
+
+describe("shared report helpers", () => {
+  it("escapes html and quotes", () => {
+    expect(esc('<a href="x">&</a>')).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;");
+  });
+
+  it("counts tickets by status, folding errors into skipped", () => {
+    const statuses = ["done", "done", "partial", "needs_review", "skipped", "error"] as const;
+    const tickets = statuses.map(status => ticketResult({ status }));
+    expect(countTickets(tickets)).toEqual({ total: 6, done: 2, partial: 1, needsReview: 1, skipped: 2 });
+  });
+
+  it("captures the date and run number from a report base", () => {
+    expect(REPORT_BASE.exec("nightshift-2026-10-01-2")?.slice(1)).toEqual(["2026-10-01", "2"]);
+    expect(REPORT_BASE.test("nightshift-2026-10-01-postmortem")).toBe(false);
+  });
+
+  it("generates bases that match the report base pattern", () => {
+    expect(REPORT_BASE.test(reportBase("2026-10-01", () => false))).toBe(true);
+    expect(REPORT_BASE.test(reportBase("2026-10-01", name => name === "nightshift-2026-10-01.html"))).toBe(true);
+  });
+
+  it("builds action keys", () => {
+    expect(ticketActionKey("ENG-1")).toBe("ticket:ENG-1");
+    expect(postmortemActionKey("P2")).toBe("postmortem:P2");
+  });
+
+  it("keeps the theme and stats markup in the report", () => {
+    const html = reportFor(ticketResult());
+    expect(html).toContain('data-key="ticket:ENG-1"');
+    expect(html).toContain("--bg: #0f1117");
+    expect(html).toContain('<div class="stat"><strong style="color:#22c55e">1</strong>done</div>');
   });
 });
