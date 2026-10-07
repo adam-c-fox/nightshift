@@ -2,11 +2,16 @@ import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Ticket } from "./types.js";
 
-const TICKETS_FILE = path.resolve(import.meta.dirname, "..", "tickets", "tonight.md");
+export interface TicketRepos {
+  names: string[];
+  defaultRepo: string;
+}
+
+
 const COMMENT = /<!--[\s\S]*?-->/g;
 const HEADING = /^##\s+([A-Z]+-\d+)\s*[–-]\s*(.*)/;
 
-export function loadTickets(file = TICKETS_FILE): Ticket[] {
+export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
   let raw: string;
   try {
     raw = readFileSync(file, "utf-8");
@@ -14,10 +19,10 @@ export function loadTickets(file = TICKETS_FILE): Ticket[] {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw e;
   }
-  return parseTickets(raw);
+  return parseTickets(raw, repos);
 }
 
-export function parseTickets(raw: string): Ticket[] {
+export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
   const lines = raw.replace(COMMENT, "").split(/\r?\n/);
   const tickets: Ticket[] = [];
   let current: Omit<Ticket, "context"> | null = null;
@@ -34,20 +39,18 @@ export function parseTickets(raw: string): Ticket[] {
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // New ticket heading: "## ENG-142 – Some name"
     const headingMatch = trimmed.match(HEADING);
     if (headingMatch) {
       flush();
       current = {
         id: headingMatch[1],
         name: headingMatch[2].trim() || headingMatch[1],
-        repo: "main",
+        repo: repos.defaultRepo,
       };
       continue;
     }
 
-    // repo: main | terraform
-    const repoMatch = trimmed.match(/^repo:\s*(main|terraform)\s*$/i);
+    const repoMatch = trimmed.match(/^repo:\s*([a-z0-9][a-z0-9_-]*)\s*$/i);
     if (repoMatch && current) {
       current.repo = repoMatch[1].toLowerCase();
       continue;
@@ -68,8 +71,15 @@ export function parseTickets(raw: string): Ticket[] {
   }
 
   flush();
+  validateRepos(tickets, repos.names);
   validateBases(tickets);
   return tickets;
+}
+
+function validateRepos(tickets: Ticket[], names: string[]): void {
+  for (const t of tickets) {
+    if (!names.includes(t.repo)) throw new Error(`Ticket ${t.id}: unknown repo "${t.repo}" (known: ${names.join(", ")})`);
+  }
 }
 
 function validateBases(tickets: Ticket[]): void {
@@ -93,7 +103,7 @@ export function ticketsHeader(raw: string): string {
   return raw;
 }
 
-export function archiveTickets(dest: string, file = TICKETS_FILE): void {
+export function archiveTickets(dest: string, file: string): void {
   mkdirSync(path.dirname(dest), { recursive: true });
   copyFileSync(file, dest);
   writeFileSync(file, ticketsHeader(readFileSync(file, "utf-8")), "utf-8");

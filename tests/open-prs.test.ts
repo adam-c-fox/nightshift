@@ -9,9 +9,12 @@ describe("parseOpenPrsArgs", () => {
     ]);
   });
 
-  it("throws on missing colon, unknown repo or bad ID", () => {
+  it("accepts any repo name", () => {
+    expect(parseOpenPrsArgs(["web-app:ENG-1"])).toEqual([{ repo: "web-app", id: "ENG-1" }]);
+  });
+
+  it("throws on missing colon or bad ID", () => {
     expect(() => parseOpenPrsArgs(["ENG-142"])).toThrow();
-    expect(() => parseOpenPrsArgs(["web:ENG-142"])).toThrow();
     expect(() => parseOpenPrsArgs(["main:eng142"])).toThrow();
   });
 

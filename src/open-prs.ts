@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { getEnv } from "./env.js";
-import { REPOS } from "./repos.js";
+import { listProjects, type Project, loadProject, selectProjectName } from "./project.js";
 import { fetchTicket } from "./linear.js";
 import { findOpenTicketPr } from "./pr.js";
 import { ticketBranchName } from "./worktree.js";
@@ -8,15 +8,15 @@ import { ticketBranchName } from "./worktree.js";
 export function parseOpenPrsArgs(args: string[]): { repo: string; id: string }[] {
   if (args.length === 0) throw new Error("usage: open-prs <repo>:<ID> ...");
   return args.map(arg => {
-    const match = arg.match(/^(main|terraform):([A-Z]+-\d+)$/);
-    if (!match) throw new Error(`bad argument "${arg}", expected main:<ID> or terraform:<ID>`);
+    const match = arg.match(/^([a-z0-9][a-z0-9_-]*):([A-Z]+-\d+)$/i);
+    if (!match) throw new Error(`bad argument "${arg}", expected <repo>:<ID>`);
     return { repo: match[1], id: match[2] };
   });
 }
 
-async function lookup(repo: string, id: string): Promise<object> {
+async function lookup(project: Project, repo: string, id: string): Promise<object> {
   try {
-    const repoPath = REPOS[repo];
+    const repoPath = project.repos[repo]?.path;
     if (!repoPath) return { id, error: `unknown repo ${repo}` };
     const linear = await fetchTicket(id);
     if (!linear) return { id, error: `ticket ${id} not found in Linear` };
@@ -28,15 +28,27 @@ async function lookup(repo: string, id: string): Promise<object> {
   }
 }
 
+function withoutProjectFlag(argv: string[]): string[] {
+  const i = argv.indexOf("--project");
+  return i === -1 ? argv : [...argv.slice(0, i), ...argv.slice(i + 2)];
+}
+
 async function main() {
+  const argv = process.argv.slice(2);
+  const projectName = selectProjectName(argv, getEnv("NIGHTSHIFT_PROJECT"));
+  if (!projectName) {
+    console.error(`no project selected (available: ${listProjects().join(", ")})`);
+    process.exit(1);
+  }
+  const project = loadProject(projectName);
   let targets;
   try {
-    targets = parseOpenPrsArgs(process.argv.slice(2));
+    targets = parseOpenPrsArgs(withoutProjectFlag(argv));
   } catch (e) {
     console.error((e as Error).message);
     process.exit(1);
   }
-  for (const { repo, id } of targets) console.log(JSON.stringify(await lookup(repo, id)));
+  for (const { repo, id } of targets) console.log(JSON.stringify(await lookup(project, repo, id)));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) void main();

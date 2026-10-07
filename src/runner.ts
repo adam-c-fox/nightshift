@@ -23,6 +23,8 @@ import { localDate, TIME_ZONE } from "./time.js";
 import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+const TONIGHT = path.join(ROOT, "tickets", "tonight.md");
+const TONIGHT_REPOS = { names: ["main", "terraform"], defaultRepo: "main" };
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
 const LOGS_DIR = path.join(ROOT, "logs");
 
@@ -479,7 +481,7 @@ async function main() {
   let tickets: Ticket[] = [];
   let ticketError = "";
   try {
-    tickets = loadTickets();
+    tickets = loadTickets(TONIGHT, TONIGHT_REPOS);
     log(`Loaded ${tickets.length} ticket(s) from tonight.md`);
   } catch (e) {
     ticketError = (e as Error).message;
@@ -554,7 +556,7 @@ async function main() {
 
   if (!DRY_RUN && tickets.length > 0) {
     const archivePath = path.join(REPORTS_DIR, `${base}-tonight.md`);
-    archiveTickets(archivePath);
+    archiveTickets(archivePath, TONIGHT);
     log(`Tickets archived: ${archivePath}`);
   }
 }
