@@ -3,6 +3,10 @@
 <!--
   Copy this file to projects/<project>/tonight.md and edit it there. Repo names come from that project's project.json.
 
+  Optional header line, above the first ticket:
+  allowance: <1-100>  ← share of the weekly usage for this night only; overrides the project default,
+                         `--allowance` still wins; removed from this file after the night
+
   One section per ticket, worked in file order. Format:
 
   ## <LINEAR-ID> – <short name>

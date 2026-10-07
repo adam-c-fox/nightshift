@@ -15,7 +15,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
 1. Pick the project: the first argument (`/tonight [project]`), else the output of `npm run -s project`. If that prints nothing, list `projects/*/project.json` and ask Adam which one. Repos, their paths and descriptions live in `projects/<project>/project.json`.
    Done when you have a project name.
 
-2. Read `projects/<project>/tonight.md`; if it doesn't exist, copy `projects/example/tonight.md` to it and delete the example tickets. If `## <ID> – …` headings exist outside the HTML comment, show them and ask Adam: replace, append, or stop.
+2. Read `projects/<project>/tonight.md`; if it doesn't exist, copy `projects/example/tonight.md` to it and delete the example tickets. If `## <ID> – …` headings exist outside the HTML comment, show them and ask Adam: replace, append, or stop. An existing `allowance:` header line is part of the header: keep it or replace it according to the answer in step 11.
    Done when Adam has chosen, or the file has no tickets.
 
 3. Fetch candidates with `list_issues`, assignee `me`, state `Todo` only. If the Linear MCP is unavailable, run the same query through the `linear:linear-api` skill. If there are none, tell Adam and stop.
@@ -55,11 +55,16 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
 10. Show the complete draft: the header comment as it stands in the file, then one `## <ID> – <title>` / `repo: <repo>` / `- bullet` section per ticket, with each inferred repo highlighted. Ask Adam to confirm or edit, and repeat until he approves.
    Done when Adam has approved the draft.
 
-11. Write `projects/<project>/tonight.md`. Validate with:
+11. Run `npm run -s usage -- --project <project>`; it prints one JSON line with `weeklyPercent` and `resetInfo`. Show Adam the weekly usage and reset. Read the project default from `allowancePercent` in `projects/<project>/project.json` (15 if unset).
+    Ask with `AskUserQuestion`, one question, header "Allowance": options "Project default (N%) (Recommended)" and "Use the rest of the week (100%)". Adam can type a number through "Other". If the weekly reset is within about 24 hours, put "Use the rest of the week (100%)" first and mark it "(Recommended)" instead.
+    If the line is an `error` or the command exits non-zero, say usage couldn't be read and ask with the project default recommended.
+    Done when Adam has chosen an allowance. Write `allowance: <n>` in the header only when it differs from the project default; drop any existing line otherwise.
+
+12. Write `projects/<project>/tonight.md`, with the `allowance: <n>` line in the header above the first ticket when step 11 calls for one. Validate with:
    `npx tsx -e 'Promise.all([import("./src/tickets.ts"), import("./src/project.ts")]).then(([t, p]) => { const pr = p.loadProject(process.argv[1]); console.log(JSON.stringify(t.loadTickets(pr.ticketsFile, { names: Object.keys(pr.repos), defaultRepo: pr.defaultRepo }), null, 1)) })' <project>`
    Compare the parsed IDs, repos and order with the draft; fix and re-run until they match.
    Done when the parsed output matches the approved draft.
 
-12. Finish with one line per ticket (ID, repo, "continues PR #N" or "new") and the reminder that `npm run run:dry -- --project <project>` previews the night.
+13. Finish with one line per ticket (ID, repo, "continues PR #N" or "new") and the reminder that `npm run run:dry -- --project <project>` previews the night.
     Leave the night run and Linear tickets as they are.
     Done when the summary is shown.

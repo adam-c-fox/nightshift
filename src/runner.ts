@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, SessionPostmortem, LinearComment, LinearTicket, NightBudget } from "./types.js";
-import { archiveTickets, loadTickets } from "./tickets.js";
+import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, markInProgress, shouldMarkInProgress } from "./linear.js";
 import { runAgent, runFix, runReview, runVerify, type TicketBrief } from "./claude.js";
@@ -488,9 +488,17 @@ async function main() {
   let gateHit = false;
   let skipReason = "";
   let budget: NightBudget;
+  let ticketError = "";
+  let nightAllowance: number | undefined;
   try {
-    const allocationPct = args.allowancePercent ?? project.allowancePercent;
-    const source = args.allowancePercent === undefined ? "project default" : "--allowance override";
+    nightAllowance = loadAllowance(project.ticketsFile);
+  } catch (e) {
+    ticketError = (e as Error).message;
+    log(`ERROR loading tickets: ${ticketError}`);
+  }
+  try {
+    const allocationPct = args.allowancePercent ?? nightAllowance ?? project.allowancePercent;
+    const source = args.allowancePercent !== undefined ? "--allowance override" : nightAllowance !== undefined ? "tonight.md" : "project default";
     budget = startNightBudget(allocationPct);
     log(`Tonight's allocation: ${allocationPct}% (${source}). Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
   } catch (e) {
@@ -505,13 +513,14 @@ async function main() {
   const closedAtStart = gateHit;
 
   let tickets: Ticket[] = [];
-  let ticketError = "";
-  try {
-    tickets = loadTickets(project.ticketsFile, { names: Object.keys(project.repos), defaultRepo: project.defaultRepo });
-    log(`Loaded ${tickets.length} ticket(s) from ${path.basename(project.ticketsFile)}`);
-  } catch (e) {
-    ticketError = (e as Error).message;
-    log(`ERROR loading tickets: ${ticketError}`);
+  if (!ticketError) {
+    try {
+      tickets = loadTickets(project.ticketsFile, { names: Object.keys(project.repos), defaultRepo: project.defaultRepo });
+      log(`Loaded ${tickets.length} ticket(s) from ${path.basename(project.ticketsFile)}`);
+    } catch (e) {
+      ticketError = (e as Error).message;
+      log(`ERROR loading tickets: ${ticketError}`);
+    }
   }
 
   const processed = new Map<string, ProcessedTicket>();

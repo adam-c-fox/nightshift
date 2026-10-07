@@ -1,6 +1,6 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { REPO_NAME_PATTERN } from "./project.js";
+import { isValidPercent, REPO_NAME_PATTERN } from "./project.js";
 import type { Ticket } from "./types.js";
 
 export interface TicketRepos {
@@ -10,6 +10,7 @@ export interface TicketRepos {
 
 const COMMENT = /<!--[\s\S]*?-->/g;
 const REPO_LINE = new RegExp(`^repo:\\s*(${REPO_NAME_PATTERN})\\s*$`, "i");
+const ALLOWANCE_LINE = /^allowance:\s*(.*?)\s*$/i;
 const HEADING = /^##\s+([A-Z]+-\d+)\s*[–-]\s*(.*)/;
 
 export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
@@ -21,6 +22,26 @@ export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
     throw e;
   }
   return parseTickets(raw, repos);
+}
+
+export function loadAllowance(file: string): number | undefined {
+  try {
+    return parseAllowance(readFileSync(file, "utf-8"));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw e;
+  }
+}
+
+export function parseAllowance(raw: string): number | undefined {
+  const values = headerLines(raw).masked.flatMap(line => ALLOWANCE_LINE.exec(line.trim())?.[1] ?? []);
+  if (values.length > 1) throw new Error("tonight.md: allowance is set more than once");
+  if (values.length === 0) return undefined;
+  const percent = Number(values[0]);
+  if (!/^\d+$/.test(values[0]) || !isValidPercent(percent)) {
+    throw new Error(`tonight.md: allowance must be a whole number from 1 to 100, got "${values[0]}"`);
+  }
+  return percent;
 }
 
 export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
@@ -50,6 +71,8 @@ export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
       };
       continue;
     }
+
+    if (current && ALLOWANCE_LINE.test(trimmed)) throw new Error("tonight.md: allowance: must go above the first ticket");
 
     const repoMatch = trimmed.match(REPO_LINE);
     if (repoMatch && current) {
@@ -94,14 +117,18 @@ function validateBases(tickets: Ticket[]): void {
   });
 }
 
+function headerLines(raw: string): { lines: string[]; masked: string[]; hasTickets: boolean } {
+  const lines = raw.split("\n");
+  const masked = raw.replace(COMMENT, c => c.replace(/[^\n]/g, " ")).split("\n");
+  const firstTicket = masked.findIndex(line => HEADING.test(line.trim()));
+  const end = firstTicket === -1 ? lines.length : firstTicket;
+  return { lines: lines.slice(0, end), masked: masked.slice(0, end), hasTickets: firstTicket !== -1 };
+}
+
 export function ticketsHeader(raw: string): string {
-  const masked = raw.replace(COMMENT, c => c.replace(/[^\n]/g, " "));
-  let offset = 0;
-  for (const line of masked.split("\n")) {
-    if (HEADING.test(line.trim())) return raw.slice(0, offset);
-    offset += line.length + 1;
-  }
-  return raw;
+  const { lines, masked, hasTickets } = headerLines(raw);
+  const kept = lines.filter((_, i) => !ALLOWANCE_LINE.test(masked[i].trim()));
+  return kept.join("\n") + (hasTickets ? "\n" : "");
 }
 
 export function archiveTickets(dest: string, file: string): void {
