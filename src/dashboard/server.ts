@@ -441,6 +441,11 @@ export function createDashboardServer(ctx: ServerContext): http.Server {
       });
       send(res, reply, guard);
     } catch (error) {
+      if (res.headersSent) {
+        console.error(`${method} ${target.pathname}: ${firstLine(error)}`);
+        res.destroy();
+        return;
+      }
       send(res, failure(error, method, target.pathname), guard);
     }
   });
@@ -457,6 +462,7 @@ function main(): void {
     exampleDir: deps.exampleDir,
     actionsFile: deps.state.actions,
   });
+  server.requestTimeout = 30_000;
   server.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code === "EADDRINUSE") {
       console.error(

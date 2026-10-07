@@ -200,6 +200,31 @@ describe("guard and headers", () => {
   });
 });
 
+describe("failure after headers are sent", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("destroys the connection without crashing or rejecting, and keeps serving", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(http.ServerResponse.prototype, "end").mockImplementationOnce(
+      () => {
+        throw new Error("write failed");
+      },
+    );
+
+    await expect(req("GET", "/healthz")).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    process.off("unhandledRejection", onRejection);
+
+    expect(rejections).toEqual([]);
+    expect((await req("GET", "/healthz")).body).toBe("ok");
+  });
+});
+
 describe("pages and fragments", () => {
   it("renders the home page with the clock-off slot", async () => {
     const res = await req("GET", "/");
