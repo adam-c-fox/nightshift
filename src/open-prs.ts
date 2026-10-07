@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { getEnv } from "./env.js";
+import { getEnv, useProjectEnv } from "./env.js";
 import { listProjects, type Project, loadProject, selectProjectName } from "./project.js";
 import { fetchTicket } from "./linear.js";
 import { findOpenTicketPr } from "./pr.js";
@@ -40,7 +40,14 @@ async function main() {
     console.error(`no project selected (available: ${listProjects().join(", ")})`);
     process.exit(1);
   }
-  const project = loadProject(projectName);
+  let project;
+  try {
+    project = loadProject(projectName);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+  useProjectEnv(project.envFile);
   let targets;
   try {
     targets = parseOpenPrsArgs(withoutProjectFlag(argv));

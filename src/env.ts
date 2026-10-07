@@ -22,22 +22,36 @@ export function parseEnv(content: string): Record<string, string> {
   return values;
 }
 
-let fileValues: Record<string, string> | undefined;
-
-function loadFileValues(): Record<string, string> {
-  if (fileValues) return fileValues;
+function readEnvFile(file: string): Record<string, string> {
   try {
-    fileValues = parseEnv(readFileSync(ENV_FILE, "utf-8"));
+    return parseEnv(readFileSync(file, "utf-8"));
   } catch {
-    fileValues = {};
+    return {};
   }
-  return fileValues;
+}
+
+let rootFileValues: Record<string, string> | undefined;
+let projectFileValues: Record<string, string> = {};
+
+function rootValues(): Record<string, string> {
+  rootFileValues ??= readEnvFile(ENV_FILE);
+  return rootFileValues;
+}
+
+export function useProjectEnv(file: string): void {
+  projectFileValues = readEnvFile(file);
+}
+
+export function lookupEnv(name: string, layers: Record<string, string | undefined>[]): string | undefined {
+  for (const layer of layers) {
+    const value = layer[name];
+    if (value) return value;
+  }
+  return undefined;
 }
 
 export function getEnv(name: string): string | undefined {
-  const fromProcess = process.env[name];
-  if (fromProcess) return fromProcess;
-  return loadFileValues()[name] || undefined;
+  return lookupEnv(name, [process.env, projectFileValues, rootValues()]);
 }
 
 export function requireEnv(name: string): string {
