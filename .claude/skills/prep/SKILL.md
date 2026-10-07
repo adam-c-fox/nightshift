@@ -15,7 +15,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__get_issue`, `mcp__claude_ai_Linear_
 1. Take the ticket ID and optional project from the arguments (`/prep <ID> [project]`), or ask Adam for the ID. The project defaults to `NIGHTSHIFT_PROJECT` from `.env`; if neither is set, list `projects/*/project.json` and ask. Fetch the issue with `get_issue` and its comments with `list_comments`.
    Done when you hold the ticket and all its comments.
 
-2. Pick the repo with the rule in step 6 of `.claude/skills/tonight/SKILL.md`. Repos, their paths and descriptions live in `projects/<project>/project.json`.
+2. Pick the repo with the rule in step 7 of `.claude/skills/tonight/SKILL.md`. Repos, their paths and descriptions live in `projects/<project>/project.json`.
    Ground the ticket in that repo's code: `grep -rn --exclude-dir={node_modules,.terraform,.git,dist}` for every file, function, type, table, route and config key the ticket names, and read the matching code (± 40 lines). Note the test files that cover it and any existing helper the change should reuse.
    Done when every identifier the ticket names is located or confirmed missing, and you know where the tests for it go.
 
