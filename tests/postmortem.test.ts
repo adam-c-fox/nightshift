@@ -81,9 +81,9 @@ describe("postmortem skill", () => {
 
 describe("buildPostmortemPrompt", () => {
   it("points at the night's session file", () => {
-    const prompt = buildPostmortemPrompt("2026-10-01");
+    const prompt = buildPostmortemPrompt("2026-10-01", "logs/acme");
     expect(prompt).toContain("2026-10-01");
-    expect(prompt).toContain("logs/session-2026-10-01.json");
+    expect(prompt).toContain("logs/acme/session-2026-10-01.json");
   });
 });
 
@@ -95,12 +95,12 @@ describe("sessionLogData", () => {
 
   it("lists only the log files that exist for each ticket", () => {
     const exists = (name: string) => ["ENG-1-output.txt", "ENG-1-review.txt", "ENG-1-diff.txt"].includes(name);
-    const data = sessionLogData(session, exists) as { tickets: { ticket: { id: string }; logFiles: string[] }[] };
-    expect(data.tickets[0].logFiles).toEqual(["logs/ENG-1-output.txt", "logs/ENG-1-review.txt", "logs/ENG-1-diff.txt"]);
+    const data = sessionLogData(session, exists, "logs/acme") as { tickets: { ticket: { id: string }; logFiles: string[] }[] };
+    expect(data.tickets[0].logFiles).toEqual(["logs/acme/ENG-1-output.txt", "logs/acme/ENG-1-review.txt", "logs/acme/ENG-1-diff.txt"]);
     expect(data.tickets[1].logFiles).toEqual([]);
   });
   it("keeps the session data", () => {
-    const data = sessionLogData(session, () => false) as { date: string; tickets: { status: string }[] };
+    const data = sessionLogData(session, () => false, "logs/acme") as { date: string; tickets: { status: string }[] };
     expect(data.date).toBe("2026-10-01");
     expect(data.tickets[0].status).toBe("done");
   });

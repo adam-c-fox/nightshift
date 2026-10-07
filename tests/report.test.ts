@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { closedBudget, openNightBudget } from "../src/budget.js";
-import { generateHTML, reportBase, reportFilename } from "../src/report.js";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { generateHTML, reportBase, reportFilename, writeReport } from "../src/report.js";
 import type { SessionResult, TicketResult } from "../src/types.js";
 
 const session = (over: Partial<SessionResult>): SessionResult => ({
@@ -200,5 +203,15 @@ describe("report stacked tickets", () => {
     const stacked = reportFor(ticketResult({ ticket: { id: "ENG-2", name: "Child", context: [], repo: "main", base: "ENG-1" } }));
     expect(stacked).toContain("Stacked on <code>ENG-1</code>");
     expect(reportFor(ticketResult())).not.toContain("Stacked on");
+  });
+});
+
+describe("writeReport", () => {
+  it("writes the report into the given directory", () => {
+    const dir = path.join(mkdtempSync(path.join(tmpdir(), "nightshift-report-")), "reports", "acme");
+    const file = writeReport(session({}), dir, "nightshift-2026-10-01");
+    expect(file).toBe(path.join(dir, "nightshift-2026-10-01.html"));
+    expect(existsSync(file)).toBe(true);
+    expect(readFileSync(file, "utf-8")).toContain("<html");
   });
 });

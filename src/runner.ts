@@ -2,13 +2,14 @@ import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } fr
 import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, SessionPostmortem, LinearComment, LinearTicket, NightBudget } from "./types.js";
 import { archiveTickets, loadTickets } from "./tickets.js";
-import { REPOS } from "./repos.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, markInProgress, shouldMarkInProgress } from "./linear.js";
 import { runAgent, runFix, runReview, runVerify, type TicketBrief } from "./claude.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
-import { getEnv, requireEnv } from "./env.js";
+import { getEnv, requireEnv, useProjectEnv } from "./env.js";
+import { parseRunArgs, RUN_USAGE, type RunArgs } from "./args.js";
+import { listProjects, loadProject, type Project } from "./project.js";
 import { deriveOutcome } from "./status.js";
 import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
 import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
@@ -24,14 +25,8 @@ import { localDate, TIME_ZONE } from "./time.js";
 import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const TONIGHT = path.join(ROOT, "tickets", "tonight.md");
-const TONIGHT_REPOS = { names: ["main", "terraform"], defaultRepo: "main" };
 const WORKTREES_DIR = path.join(ROOT, "worktrees");
-const LOGS_DIR = path.join(ROOT, "logs");
-
-const DRY_RUN = process.argv.includes("--dry-run");
-
-const BRANCH_PREFIX = getEnv("BRANCH_PREFIX");
+let logsDir = path.join(ROOT, "logs");
 
 const claudeToken = getEnv(CLAUDE_TOKEN);
 if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
@@ -41,9 +36,9 @@ function log(msg: string) {
   const line = `[${ts}] ${msg}`;
   console.log(line);
   try {
-    mkdirSync(LOGS_DIR, { recursive: true });
+    mkdirSync(logsDir, { recursive: true });
     const today = localDate();
-    appendFileSync(path.join(LOGS_DIR, `nightshift-${today}.log`), line + "\n");
+    appendFileSync(path.join(logsDir, `nightshift-${today}.log`), line + "\n");
   } catch { /* best effort */ }
 }
 
@@ -67,12 +62,12 @@ function errorMessage(e: unknown): string {
   return stderr ? `${err.message}\n${stderr}` : (err.message ?? String(e));
 }
 
-function placeholderResult(ticket: Ticket, status: TicketResult["status"], summary: string): TicketResult {
+function placeholderResult(ticket: Ticket, status: TicketResult["status"], summary: string, branchPrefix: string | undefined): TicketResult {
   return {
     ticket, linear: null, status, summary,
     filesCreated: [], filesModified: [], tests: [],
     verifyCommands: [], notes: "", followups: [],
-    worktreePath: "", branch: ticketBranchName(BRANCH_PREFIX, ticket.id, ticket.name), durationSec: 0,
+    worktreePath: "", branch: ticketBranchName(branchPrefix, ticket.id, ticket.name), durationSec: 0,
   };
 }
 
@@ -149,8 +144,8 @@ async function startLinearTicket(linear: LinearTicket): Promise<void> {
 
 function saveLog(name: string, text: string): void {
   try {
-    mkdirSync(LOGS_DIR, { recursive: true });
-    writeFileSync(path.join(LOGS_DIR, name), text, "utf-8");
+    mkdirSync(logsDir, { recursive: true });
+    writeFileSync(path.join(logsDir, name), text, "utf-8");
   } catch (e) {
     log(`  Could not save ${name}: ${(e as Error).message}`);
   }
@@ -202,21 +197,21 @@ const checkRecords = (checks: ClassifiedCheck[]): TicketResult["checks"] =>
   checks.map(({ outputTail: _tail, ...record }) => record);
 
 async function processTicket(
-  ticket: Ticket, dryRun: boolean, budgetRef: { current: NightBudget }, processed: Map<string, ProcessedTicket>,
+  ticket: Ticket, project: Project, branchPrefix: string | undefined, instructions: string, dryRun: boolean,
+  budgetRef: { current: NightBudget }, processed: Map<string, ProcessedTicket>,
 ): Promise<TicketResult> {
   const { id: ticketId, name: ticketName, context, repo } = ticket;
-  const repoPath = REPOS[repo];
+  const { path: repoPath, toolchain } = project.repos[repo];
   const startTime = Date.now();
   const stack = stackDecision(ticket, processed);
   if (stack.kind === "skip") {
     log(`  ${ticketId}: ${stack.reason}`);
-    return placeholderResult(ticket, "skipped", stack.reason);
+    return placeholderResult(ticket, "skipped", stack.reason, branchPrefix);
   }
   const parent = stack.kind === "stacked" ? stack.parent : undefined;
-  const toolchain = repo === "terraform" ? "terraform" : "node";
   const plannedPath = worktreePath(WORKTREES_DIR, repo, ticketId);
   let wt: Worktree = {
-    wtPath: plannedPath, branch: ticketBranchName(BRANCH_PREFIX, ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
+    wtPath: plannedPath, branch: ticketBranchName(branchPrefix, ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
   };
 
   log(`\n── Ticket ${ticketId} – ${ticketName} [${repo}] ──`);
@@ -240,7 +235,7 @@ async function processTicket(
     log(`  Linear fetch error: ${(e as Error).message}`);
   }
 
-  const branchBase = ticketBranchName(BRANCH_PREFIX, ticketId, linear?.name ?? ticketName);
+  const branchBase = ticketBranchName(branchPrefix, ticketId, linear?.name ?? ticketName);
   wt.branch = branchBase;
   const existing = lookUpExistingPr(branchBase, repoPath);
   if (dryRun) {
@@ -255,8 +250,7 @@ async function processTicket(
 
   const weeklyGateReason = () => weeklyGate(budgetRef, "mid-ticket");
   const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
-  const instructions = composeInstructions(readFileSync(GENERIC_AGENTS_MD, "utf-8"), "", "");
-  const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT), instructions };
+  const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT, { secretFiles: [project.envFile] }), instructions };
   const commands = dryRun ? [] : checkCommands(toolchain, toolchain === "node" ? discoverWorkspaces(wt.wtPath) : []);
   const baseline = dryRun ? [] : await runLoggedChecks("before the change", wt.wtPath, commands);
   if (!dryRun) await waitForSession();
@@ -423,11 +417,11 @@ function freshGate(budgetRef: { current: NightBudget }): UsageGate {
   }
 }
 
-async function nightPostmortem(session: SessionResult, budgetRef: { current: NightBudget }, base: string): Promise<SessionPostmortem> {
+async function nightPostmortem(session: SessionResult, project: Project, dryRun: boolean, reportsDir: string, budgetRef: { current: NightBudget }, base: string): Promise<SessionPostmortem> {
   const { date } = session;
   try {
-    saveLog(`session-${date}.json`, JSON.stringify(sessionLogData(session, name => existsSync(path.join(LOGS_DIR, name))), null, 2));
-    const reason = postmortemSkipReason({ dryRun: DRY_RUN, tickets: session.tickets, gate: () => freshGate(budgetRef) });
+    saveLog(`session-${date}.json`, JSON.stringify(sessionLogData(session, name => existsSync(path.join(logsDir, name)), path.relative(ROOT, logsDir)), null, 2));
+    const reason = postmortemSkipReason({ dryRun, tickets: session.tickets, gate: () => freshGate(budgetRef) });
     if (reason) {
       log(`Postmortem skipped: ${reason}`);
       return { outcome: "skipped", reason, suggestions: [] };
@@ -435,15 +429,15 @@ async function nightPostmortem(session: SessionResult, budgetRef: { current: Nig
     log("Running postmortem");
     await waitForSession();
     const shouldAbort = () => weeklyGate(budgetRef, "during the postmortem") ?? sessionAbortReason(budgetRef.current);
-    const { rawOutput, outcome } = await runPostmortem(ROOT, date, [WORKTREES_DIR], {
-      shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true }),
+    const { rawOutput, outcome } = await runPostmortem(ROOT, date, path.relative(ROOT, logsDir), [WORKTREES_DIR], {
+      shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true, secretFiles: [project.envFile] }),
     });
     saveLog(`postmortem-${date}.txt`, rawOutput);
     if (outcome.outcome !== "done") {
       log(`Postmortem failed: ${outcome.reason}`);
       return outcome;
     }
-    const file = path.join(REPORTS_DIR, `${base}-postmortem.md`);
+    const file = path.join(reportsDir, `${base}-postmortem.md`);
     writeFileSync(file, postmortemMarkdown(date, outcome.suggestions), "utf-8");
     log(`Postmortem: ${outcome.suggestions.length} suggestion(s) in ${file}`);
     return { ...outcome, file: path.relative(ROOT, file) };
@@ -454,21 +448,52 @@ async function nightPostmortem(session: SessionResult, budgetRef: { current: Nig
   }
 }
 
+function selectProject(): { args: RunArgs; project: Project } {
+  let args: RunArgs;
+  try {
+    args = parseRunArgs(process.argv.slice(2));
+  } catch (e) {
+    const message = (e as Error).message;
+    console.error(message.includes(RUN_USAGE) ? message : `${message}\n${RUN_USAGE}`);
+    process.exit(2);
+  }
+  try {
+    const name = args.project ?? getEnv("NIGHTSHIFT_PROJECT");
+    if (!name) {
+      throw new Error(`no project selected: pass --project <name> or set NIGHTSHIFT_PROJECT (available: ${listProjects().join(", ") || "none"})`);
+    }
+    return { args, project: loadProject(name) };
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(2);
+  }
+}
+
 async function main() {
+  const { args, project } = selectProject();
+  useProjectEnv(project.envFile);
+  const dryRun = args.dryRun;
+  const branchPrefix = getEnv("BRANCH_PREFIX");
+  const reportsDir = path.join(REPORTS_DIR, project.name);
+  logsDir = path.join(ROOT, "logs", project.name);
+  const instructions = composeInstructions(readFileSync(GENERIC_AGENTS_MD, "utf-8"), project.name, project.instructions);
   const date = localDate();
   const startedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
-  log(`═══ Nightshift session ${date} started ${DRY_RUN ? "(DRY RUN)" : ""} ═══`);
+  log(`═══ Nightshift session ${date} started ${dryRun ? "(DRY RUN)" : ""} ═══`);
+  log(`Project: ${project.name}`);
 
   mkdirSync(WORKTREES_DIR, { recursive: true });
-  mkdirSync(LOGS_DIR, { recursive: true });
+  mkdirSync(logsDir, { recursive: true });
 
   const results: TicketResult[] = [];
   let gateHit = false;
   let skipReason = "";
   let budget: NightBudget;
   try {
-    budget = startNightBudget(15);
-    log(`Tonight's allocation: ${budget.allocationPct}% of weekly. Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
+    const allocationPct = args.allowancePercent ?? project.allowancePercent;
+    const source = args.allowancePercent === undefined ? "project default" : "--allowance override";
+    budget = startNightBudget(allocationPct);
+    log(`Tonight's allocation: ${allocationPct}% (${source}). Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
   } catch (e) {
     const message = (e as Error).message;
     budget = closedBudget(`usage unavailable: ${message}`);
@@ -483,15 +508,16 @@ async function main() {
   let tickets: Ticket[] = [];
   let ticketError = "";
   try {
-    tickets = loadTickets(TONIGHT, TONIGHT_REPOS);
-    log(`Loaded ${tickets.length} ticket(s) from tonight.md`);
+    tickets = loadTickets(project.ticketsFile, { names: Object.keys(project.repos), defaultRepo: project.defaultRepo });
+    log(`Loaded ${tickets.length} ticket(s) from ${path.basename(project.ticketsFile)}`);
   } catch (e) {
     ticketError = (e as Error).message;
     log(`ERROR loading tickets: ${ticketError}`);
   }
 
   const processed = new Map<string, ProcessedTicket>();
-  const testDb = !DRY_RUN && tickets.some(t => t.repo === "main") ? startTestDb(log) : undefined;
+  const needsTestDb = tickets.some(t => project.repos[t.repo].toolchain === "node");
+  const testDb = !dryRun && project.testDbScript && needsTestDb ? startTestDb(log, undefined, process.env, project.testDbScript) : undefined;
   try {
     for (const ticket of tickets) {
       if (!gateHit) {
@@ -512,16 +538,16 @@ async function main() {
 
       if (gateHit) {
         log(`  Skipping ${ticket.id}`);
-        results.push(placeholderResult(ticket, "skipped", skipReason));
+        results.push(placeholderResult(ticket, "skipped", skipReason, branchPrefix));
         continue;
       }
 
       try {
-        const r = await processTicket(ticket, DRY_RUN, budgetRef, processed);
+        const r = await processTicket(ticket, project, branchPrefix, instructions, dryRun, budgetRef, processed);
         results.push(r);
       } catch (e) {
         log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
-        results.push(placeholderResult(ticket, "error", (e as Error).message));
+        results.push(placeholderResult(ticket, "error", (e as Error).message, branchPrefix));
       }
     }
   } finally {
@@ -538,9 +564,9 @@ async function main() {
     skipReason,
     noTasks: tickets.length === 0 && !ticketError,
   };
-  mkdirSync(REPORTS_DIR, { recursive: true });
-  const base = reportBase(date, name => existsSync(path.join(REPORTS_DIR, name)));
-  session.postmortem = await nightPostmortem(session, budgetRef, base);
+  mkdirSync(reportsDir, { recursive: true });
+  const base = reportBase(date, name => existsSync(path.join(reportsDir, name)));
+  session.postmortem = await nightPostmortem(session, project, dryRun, reportsDir, budgetRef, base);
 
   try {
     if (!closedAtStart) budgetRef.current = checkGate(budgetRef.current);
@@ -552,13 +578,13 @@ async function main() {
   session.endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
 
   // Write report
-  const reportPath = writeReport(session, base);
+  const reportPath = writeReport(session, reportsDir, base);
   log(`\n═══ Report written: ${reportPath} ═══`);
   log(`Open in browser: file://${reportPath}`);
 
-  if (!DRY_RUN && tickets.length > 0) {
-    const archivePath = path.join(REPORTS_DIR, `${base}-tonight.md`);
-    archiveTickets(archivePath, TONIGHT);
+  if (!dryRun && tickets.length > 0) {
+    const archivePath = path.join(reportsDir, `${base}-tonight.md`);
+    archiveTickets(archivePath, project.ticketsFile);
     log(`Tickets archived: ${archivePath}`);
   }
 }

@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { CheckRecord, FixResolution, FixVerification, ReviewFinding, SessionPostmortem, SessionResult, TicketResult, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
@@ -357,9 +357,9 @@ export function reportBase(date: string, exists: (name: string) => boolean): str
   return reportFilename(date, exists).replace(/\.html$/, "");
 }
 
-export function writeReport(session: SessionResult, base = reportBase(session.date, name => existsSync(path.join(REPORTS_DIR, name)))): string {
-  mkdirSync(REPORTS_DIR, { recursive: true });
-  const filePath = path.join(REPORTS_DIR, `${base}.html`);
+export function writeReport(session: SessionResult, dir: string, base: string): string {
+  mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${base}.html`);
   writeFileSync(filePath, generateHTML(session), "utf-8");
   return filePath;
 }

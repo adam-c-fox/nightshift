@@ -29,8 +29,8 @@ export function postmortemSystemPrompt(skill: string): string {
   return skill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n\s*/, "");
 }
 
-export const buildPostmortemPrompt = (date: string): string =>
-  `Review the night of ${date}. Session: logs/session-${date}.json. Suggest fixes only; do not edit anything. End your final message with the ---POSTMORTEM--- block.`;
+export const buildPostmortemPrompt = (date: string, logsRel: string): string =>
+  `Review the night of ${date}. Session: ${logsRel}/session-${date}.json. Suggest fixes only; do not edit anything. End your final message with the ---POSTMORTEM--- block.`;
 
 export function parsePostmortemBlock(output: string): PostmortemSuggestion[] {
   const lines = extractBlock(output, POSTMORTEM_START);
@@ -49,12 +49,12 @@ export function parsePostmortemBlock(output: string): PostmortemSuggestion[] {
     }));
 }
 
-export function sessionLogData(session: SessionResult, logExists: (name: string) => boolean): object {
+export function sessionLogData(session: SessionResult, logExists: (name: string) => boolean, logsRel: string): object {
   return {
     ...session,
     tickets: session.tickets.map(t => ({
       ...t,
-      logFiles: LOG_SUFFIXES.map(s => `${t.ticket.id}-${s}.txt`).filter(logExists).map(f => `logs/${f}`),
+      logFiles: LOG_SUFFIXES.map(s => `${t.ticket.id}-${s}.txt`).filter(logExists).map(f => `${logsRel}/${f}`),
     })),
   };
 }
@@ -73,10 +73,10 @@ export function postmortemMarkdown(date: string, suggestions: PostmortemSuggesti
 }
 
 export async function runPostmortem(
-  cwd: string, date: string, addDirs: string[], options: RunAgentOptions,
+  cwd: string, date: string, logsRel: string, addDirs: string[], options: RunAgentOptions,
 ): Promise<{ rawOutput: string; outcome: Omit<SessionPostmortem, "file"> }> {
   const system = postmortemSystemPrompt(readFileSync(SKILL_MD, "utf-8"));
-  const run = await execClaude(cwd, buildPostmortemPrompt(date), system, POSTMORTEM_PROFILE, options, addDirs);
+  const run = await execClaude(cwd, buildPostmortemPrompt(date, logsRel), system, POSTMORTEM_PROFILE, options, addDirs);
   const { value, error } = parseOrError(run.stdout, run.failure, parsePostmortemBlock);
   const outcome = value
     ? { outcome: "done" as const, suggestions: value }
