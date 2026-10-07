@@ -36,6 +36,7 @@ function prLinksHTML(t: TicketResult): string {
 export const REPORT_BASE = /^nightshift-(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/;
 
 export const ticketActionKey = (id: string): string => `ticket:${id}`;
+export const POSTMORTEM_ID_PATTERN = "[A-Za-z0-9_-]{1,32}";
 export const postmortemActionKey = (id: string): string => `postmortem:${id}`;
 
 export const THEME_CSS = `
