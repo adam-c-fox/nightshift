@@ -127,7 +127,6 @@ describe("fileChecks", () => {
         "CLAUDE_CODE_OAUTH_TOKEN",
         "AZURE_DEVOPS_ORG",
         "AZURE_DEVOPS_PROJECT",
-        "AZURE_DEVOPS_PAT",
         "BRANCH_PREFIX",
       ],
     });
@@ -147,7 +146,7 @@ describe("fileChecks", () => {
   it("passes when every required key is present", () => {
     writeFileSync(
       join(projectsDir, "good", ".env"),
-      ENV_KEYS.filter((key) => key !== "AZURE_DEVOPS_EXT_PAT")
+      ENV_KEYS.filter((key) => !key.includes("PAT"))
         .map((key) => `${key}=v`)
         .join("\n"),
     );
@@ -249,7 +248,7 @@ describe("fileChecks", () => {
     expect(env.level).toBe("fail");
     expect(env.reason).toMatch(/fill in projects\/good\/.env/);
     expect(env.keys!.present).toEqual([]);
-    expect(env.keys!.missing).toHaveLength(6);
+    expect(env.keys!.missing).toHaveLength(5);
   });
 
   it("passes testDb as not configured when absent", () => {
@@ -282,7 +281,6 @@ describe("requiredEnvKeys", () => {
       "CLAUDE_CODE_OAUTH_TOKEN",
       "AZURE_DEVOPS_ORG",
       "AZURE_DEVOPS_PROJECT",
-      "AZURE_DEVOPS_PAT",
       "BRANCH_PREFIX",
     ]);
   });

@@ -30,10 +30,11 @@ export interface CheckDeps {
 
 type FileCheckDeps = Pick<CheckDeps, "projectsDir" | "exampleDir" | "rootDir">;
 
-export const IGNORED_ENV_KEYS = ["NIGHTSHIFT_PROJECT"];
+const PAT_KEYS = ["AZURE_DEVOPS_EXT_PAT", "AZURE_DEVOPS_PAT"];
+
+export const IGNORED_ENV_KEYS = ["NIGHTSHIFT_PROJECT", ...PAT_KEYS];
 
 const ENV_EXAMPLE = ".env.example";
-const PAT_KEYS = ["AZURE_DEVOPS_EXT_PAT", "AZURE_DEVOPS_PAT"];
 const LEVEL_ORDER: CheckLevel[] = ["pass", "warn", "fail"];
 const DEFAULT_ROOT_DIR = path.dirname(ROOT_ENV_FILE);
 
