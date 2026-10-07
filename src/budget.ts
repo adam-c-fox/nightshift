@@ -175,10 +175,14 @@ export function formatUsageAttempts(attempts: UsageCommandResult[]): string[] {
   ]);
 }
 
+function capAt(weeklyPct: number, allocationPct: number): number {
+  return Math.min(100, weeklyPct + allocationPct);
+}
+
 export function openNightBudget(snapshot: UsageSnapshot, allocationPct: number): NightBudget {
   return {
     startPct: snapshot.weeklyPercent,
-    capPct: snapshot.weeklyPercent + allocationPct,
+    capPct: capAt(snapshot.weeklyPercent, allocationPct),
     currentPct: snapshot.weeklyPercent,
     allocationPct,
     gateHit: false,
@@ -199,7 +203,7 @@ export function withCurrentUsage(budget: NightBudget, snapshot: UsageSnapshot): 
     return {
       ...budget,
       startPct: now - spent,
-      capPct: now + remaining,
+      capPct: capAt(now, remaining),
       currentPct: now,
       gateHit: remaining <= 0,
       resetInfo: snapshot.resetInfo,

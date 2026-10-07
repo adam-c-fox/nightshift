@@ -44,7 +44,12 @@ describe("night budget gate", () => {
   });
 
   it("takes the allocation as given", () => {
-    expect(openNightBudget({ weeklyPercent: 40, resetInfo: "" }, 100)).toMatchObject({ capPct: 140, allocationPct: 100 });
+    expect(openNightBudget({ weeklyPercent: 40, resetInfo: "" }, 100)).toMatchObject({ capPct: 100, allocationPct: 100 });
+  });
+
+  it("keeps the cap at 100 after a weekly reset", () => {
+    const big = openNightBudget({ weeklyPercent: 40, resetInfo: "" }, 100);
+    expect(withCurrentUsage(big, { weeklyPercent: 5, resetInfo: "" }).capPct).toBe(100);
   });
 
   it("allows a ticket below the cap, stops at or above it", () => {
