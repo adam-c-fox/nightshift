@@ -9,7 +9,7 @@ import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, requireEnv, useProjectEnv } from "./env.js";
 import { parseRunArgs, RUN_USAGE, type RunArgs } from "./args.js";
-import { listProjects, loadProject, type Project } from "./project.js";
+import { listProjects, loadProject, projectEnvFiles, type Project } from "./project.js";
 import { deriveOutcome } from "./status.js";
 import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
 import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
@@ -247,7 +247,7 @@ async function processTicket(
 
   const weeklyGateReason = () => weeklyGate(budgetRef, "mid-ticket");
   const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
-  const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT, { secretFiles: [project.envFile] }), instructions };
+  const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT, { secretFiles: projectEnvFiles() }), instructions };
   const commands = dryRun ? [] : checkCommands(toolchain, toolchain === "node" ? discoverWorkspaces(wt.wtPath) : []);
   const baseline = dryRun ? [] : await runLoggedChecks("before the change", wt.wtPath, commands);
   if (!dryRun) await waitForSession();
@@ -427,7 +427,7 @@ async function nightPostmortem(session: SessionResult, project: Project, dryRun:
     await waitForSession();
     const shouldAbort = () => weeklyGate(budgetRef, "during the postmortem") ?? sessionAbortReason(budgetRef.current);
     const { rawOutput, outcome } = await runPostmortem(ROOT, date, path.relative(ROOT, logsDir), [WORKTREES_DIR], {
-      shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true, secretFiles: [project.envFile] }),
+      shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true, secretFiles: projectEnvFiles() }),
     });
     saveLog(`postmortem-${date}.txt`, rawOutput);
     if (outcome.outcome !== "done") {
@@ -562,6 +562,7 @@ async function main() {
     gateHit,
     skipReason,
     noTasks: tickets.length === 0 && !ticketError,
+    ...(ticketError ? { ticketError } : {}),
   };
   mkdirSync(reportsDir, { recursive: true });
   const base = reportBase(date, name => existsSync(path.join(reportsDir, name)));

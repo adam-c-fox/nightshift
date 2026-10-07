@@ -12,7 +12,31 @@ const session = (over: Partial<SessionResult>): SessionResult => ({
   gateHit: false, skipReason: "", noTasks: false, ...over,
 });
 
+describe("report ticket loading failure", () => {
+  it("shows why tickets could not be loaded", () => {
+    const html = generateHTML(session({ ticketError: 'Ticket ENG-1: unknown repo "web" (known: main)' }));
+    expect(html).toContain("Tickets could not be loaded");
+    expect(html).toContain("unknown repo &quot;web&quot; (known: main)");
+  });
+
+  it("shows no banner when tickets loaded", () => {
+    expect(generateHTML(session({}))).not.toContain("Tickets could not be loaded");
+  });
+});
+
 describe("report budget section", () => {
+  it("shows the effective allocation when the cap clamped it", () => {
+    const budget = openNightBudget({ weeklyPercent: 40, resetInfo: "" }, 100);
+    const html = generateHTML(session({ budget }));
+    expect(html).toContain("100% requested, 60% available");
+  });
+
+  it("shows the plain allocation when nothing was clamped", () => {
+    const html = generateHTML(session({}));
+    expect(html).toContain("<strong>15%</strong> of weekly");
+    expect(html).not.toContain("requested");
+  });
+
   it("says usage was unavailable instead of claiming the budget was reached", () => {
     const reason = "Skipped – could not read usage at start: Could not find weekly usage";
     const html = generateHTML(session({ budget: closedBudget("usage unavailable"), gateHit: true, skipReason: reason }));

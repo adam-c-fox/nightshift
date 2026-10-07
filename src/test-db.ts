@@ -1,7 +1,5 @@
 import { execFileSync } from "node:child_process";
-import path from "node:path";
 
-const SCRIPT = path.resolve(import.meta.dirname, "..", "scripts", "test-db.sh");
 const START_TIMEOUT_MS = 2 * 60 * 1000;
 const STOP_TIMEOUT_MS = 30 * 1000;
 
@@ -15,7 +13,7 @@ export interface TestDb {
 const execScript: ScriptExec = (command, args, timeout) =>
   execFileSync(command, args, { encoding: "utf-8", timeout, stdio: ["ignore", "pipe", "pipe"] });
 
-export function startTestDb(log: (msg: string) => void, exec: ScriptExec = execScript, env: NodeJS.ProcessEnv = process.env, script = SCRIPT): TestDb | undefined {
+export function startTestDb(log: (msg: string) => void, exec: ScriptExec = execScript, env: NodeJS.ProcessEnv = process.env, script: string): TestDb | undefined {
   let url: string;
   try {
     url = exec(script, ["up"], START_TIMEOUT_MS).trim();

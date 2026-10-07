@@ -12,7 +12,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
 
 ## Steps
 
-1. Pick the project: the first argument (`/tonight [project]`), else `NIGHTSHIFT_PROJECT` from `.env`. If neither is set, list `projects/*/project.json` and ask Adam which one. Repos, their paths and descriptions live in `projects/<project>/project.json`.
+1. Pick the project: the first argument (`/tonight [project]`), else the output of `npm run -s project`. If that prints nothing, list `projects/*/project.json` and ask Adam which one. Repos, their paths and descriptions live in `projects/<project>/project.json`.
    Done when you have a project name.
 
 2. Read `projects/<project>/tonight.md`; if it doesn't exist, copy `projects/example/tonight.md` to it and delete the example tickets. If `## <ID> – …` headings exist outside the HTML comment, show them and ask Adam: replace, append, or stop.

@@ -8,7 +8,7 @@ Review one nightshift night and suggest changes to the instructions that would h
 
 ## Input
 
-`logs/<project>/session-<date>.json`, written by the runner. Project-specific instructions live in `projects/<project>/AGENTS.md`, so suggestions can target that file. It holds every ticket's outcome (status, summary, notes, tests, checks, review findings, fix resolutions, fix verification, followups, PR and CI results) and, per ticket, `logFiles`: the agent, review, fix and verify transcripts, and `<ID>-diff.txt`, the committed change against its base. When invoked by hand as `/postmortem [date]`, use the given date, or the newest `logs/<project>/session-*.json` if none; take the project from `NIGHTSHIFT_PROJECT` in `.env` or ask. To see code around the change, read files under the ticket's `worktreePath`.
+`logs/<project>/session-<date>.json`, written by the runner. Project-specific instructions live in `projects/<project>/AGENTS.md`, so suggestions can target that file. It holds every ticket's outcome (status, summary, notes, tests, checks, review findings, fix resolutions, fix verification, followups, PR and CI results) and, per ticket, `logFiles`: the agent, review, fix and verify transcripts, and `<ID>-diff.txt`, the committed change against its base. When invoked by hand as `/postmortem [date]`, use the given date, or the newest `logs/<project>/session-*.json` if none; take the project from `npm run -s project` or ask. When the runner invokes it, the project is the one in the session path it was given (`logs/<project>/...`); never read `.env`. To see code around the change, read files under the ticket's `worktreePath`.
 
 ## What to look for
 

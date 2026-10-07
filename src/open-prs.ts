@@ -1,17 +1,19 @@
 import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
 import { getEnv, useProjectEnv } from "./env.js";
-import { listProjects, type Project, loadProject } from "./project.js";
+import { listProjects, type Project, loadProject, REPO_NAME_PATTERN } from "./project.js";
 import { fetchTicket } from "./linear.js";
 import { findOpenTicketPr } from "./pr.js";
 import { ticketBranchName } from "./worktree.js";
 
+const TARGET = new RegExp(`^(${REPO_NAME_PATTERN}):([A-Z]+-\\d+)$`, "i");
+
 export function parseOpenPrsArgs(args: string[]): { repo: string; id: string }[] {
   if (args.length === 0) throw new Error("usage: open-prs <repo>:<ID> ...");
   return args.map(arg => {
-    const match = arg.match(/^([a-z0-9][a-z0-9_-]*):([A-Z]+-\d+)$/i);
+    const match = arg.match(TARGET);
     if (!match) throw new Error(`bad argument "${arg}", expected <repo>:<ID>`);
-    return { repo: match[1], id: match[2] };
+    return { repo: match[1].toLowerCase(), id: match[2] };
   });
 }
 

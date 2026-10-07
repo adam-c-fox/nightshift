@@ -12,7 +12,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__get_issue`, `mcp__claude_ai_Linear_
 
 ## Steps
 
-1. Take the ticket ID and optional project from the arguments (`/prep <ID> [project]`), or ask Adam for the ID. The project defaults to `NIGHTSHIFT_PROJECT` from `.env`; if neither is set, list `projects/*/project.json` and ask. Fetch the issue with `get_issue` and its comments with `list_comments`.
+1. Take the ticket ID and optional project from the arguments (`/prep <ID> [project]`), or ask Adam for the ID. The project defaults to the output of `npm run -s project`; if that prints nothing, list `projects/*/project.json` and ask. Fetch the issue with `get_issue` and its comments with `list_comments`.
    Done when you hold the ticket and all its comments.
 
 2. Pick the repo with the rule in step 7 of `.claude/skills/tonight/SKILL.md`. Repos, their paths and descriptions live in `projects/<project>/project.json`.

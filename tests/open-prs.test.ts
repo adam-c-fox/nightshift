@@ -13,6 +13,10 @@ describe("parseOpenPrsArgs", () => {
     expect(parseOpenPrsArgs(["web-app:ENG-1"])).toEqual([{ repo: "web-app", id: "ENG-1" }]);
   });
 
+  it("lower-cases the repo name", () => {
+    expect(parseOpenPrsArgs(["Main:ENG-1"])).toEqual([{ repo: "main", id: "ENG-1" }]);
+  });
+
   it("throws on missing colon or bad ID", () => {
     expect(() => parseOpenPrsArgs(["ENG-142"])).toThrow();
     expect(() => parseOpenPrsArgs(["main:eng142"])).toThrow();

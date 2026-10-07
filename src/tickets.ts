@@ -1,5 +1,6 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { REPO_NAME_PATTERN } from "./project.js";
 import type { Ticket } from "./types.js";
 
 export interface TicketRepos {
@@ -7,8 +8,8 @@ export interface TicketRepos {
   defaultRepo: string;
 }
 
-
 const COMMENT = /<!--[\s\S]*?-->/g;
+const REPO_LINE = new RegExp(`^repo:\\s*(${REPO_NAME_PATTERN})\\s*$`, "i");
 const HEADING = /^##\s+([A-Z]+-\d+)\s*[–-]\s*(.*)/;
 
 export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
@@ -50,7 +51,7 @@ export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
       continue;
     }
 
-    const repoMatch = trimmed.match(/^repo:\s*([a-z0-9][a-z0-9_-]*)\s*$/i);
+    const repoMatch = trimmed.match(REPO_LINE);
     if (repoMatch && current) {
       current.repo = repoMatch[1].toLowerCase();
       continue;

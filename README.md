@@ -43,7 +43,7 @@ Fill in the root `.env`:
 | `CLAUDE_CODE_OAUTH_TOKEN` | From `claude setup-token`. Cron can't read the login keychain. |
 | `NIGHTSHIFT_PROJECT` | Project used when `--project` isn't passed |
 
-Fill in the project's `.env` (see [Projects](#projects)):
+Fill in the project's `.env` (see [Projects](#projects)). An empty value there falls through to the root `.env`:
 
 | Variable | What it's for |
 | --- | --- |

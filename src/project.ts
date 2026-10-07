@@ -4,6 +4,9 @@ import type { Toolchain } from "./types.js";
 
 export const PROJECTS_DIR = path.resolve(import.meta.dirname, "..", "projects");
 const TOOLCHAINS: readonly Toolchain[] = ["node", "terraform"];
+export const REPO_NAME_PATTERN = "[a-z0-9][a-z0-9_-]*";
+export const REPO_NAME = new RegExp(`^${REPO_NAME_PATTERN}$`);
+const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const DEFAULT_ALLOWANCE_PERCENT = 15;
 
 export interface RepoConfig {
@@ -54,6 +57,11 @@ export function parseProjectConfig(
 
   const repos: Record<string, RepoConfig> = {};
   for (const [repoName, repo] of entries) {
+    if (!REPO_NAME.test(repoName)) {
+      fail(
+        `repo "${repoName}" must be a lowercase name (letters, digits, "_" or "-", starting with a letter or digit)`,
+      );
+    }
     if (!TOOLCHAINS.includes(repo.toolchain as Toolchain)) {
       fail(
         `repo ${repoName} has unknown toolchain "${repo.toolchain}" (expected ${TOOLCHAINS.join(" or ")})`,
@@ -77,7 +85,7 @@ export function parseProjectConfig(
     (names.length === 1
       ? names[0]
       : fail(`set defaultRepo to one of ${names.join(", ")}`));
-  if (typeof defaultRepo !== "string" || !repos[defaultRepo]) {
+  if (typeof defaultRepo !== "string" || !Object.hasOwn(repos, defaultRepo)) {
     fail(`defaultRepo "${defaultRepo}" is not one of ${names.join(", ")}`);
   }
 
@@ -116,7 +124,18 @@ export function listProjects(projectsDir = PROJECTS_DIR): string[] {
     .sort();
 }
 
+export function projectEnvFiles(projectsDir = PROJECTS_DIR): string[] {
+  if (!existsSync(projectsDir)) return [];
+  return readdirSync(projectsDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => path.join(projectsDir, d.name, ".env"))
+    .sort();
+}
+
 export function loadProject(name: string, projectsDir = PROJECTS_DIR): Project {
+  if (!PROJECT_NAME.test(name)) {
+    throw new Error(`invalid project name "${name}"`);
+  }
   const dir = path.join(projectsDir, name);
   const configFile = path.join(dir, "project.json");
   if (!existsSync(configFile)) {
@@ -124,12 +143,15 @@ export function loadProject(name: string, projectsDir = PROJECTS_DIR): Project {
       `project "${name}" not found in ${projectsDir} (available: ${listProjects(projectsDir).join(", ") || "none"})`,
     );
   }
-  const parsed = parseProjectConfig(
-    name,
-    dir,
-    JSON.parse(readFileSync(configFile, "utf-8")),
-    existsSync,
-  );
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configFile, "utf-8"));
+  } catch (e) {
+    throw new Error(
+      `project "${name}": ${configFile} is not valid JSON: ${(e as Error).message}`,
+    );
+  }
+  const parsed = parseProjectConfig(name, dir, raw, existsSync);
   const agentsFile = path.join(dir, "AGENTS.md");
   return {
     ...parsed,

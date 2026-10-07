@@ -189,6 +189,13 @@ export function generateHTML(session: SessionResult): string {
     ? `<div class="stat postmortem-flag"><a href="#postmortem" style="color:inherit"><strong>⚠️</strong>${esc(pmProblem)}</a></div>`
     : `<div class="stat"><a href="#postmortem" style="color:inherit"><strong>${session.postmortem.suggestions.length}</strong>postmortem suggestions</a></div>`;
   const gateBanner = session.gateHit ? `<div class="gate-hit">⛔ ${esc(session.skipReason)}</div>` : "";
+  const ticketErrorBanner = session.ticketError
+    ? `<div class="gate-hit">⛔ Tickets could not be loaded: ${esc(session.ticketError)}</div>`
+    : "";
+  const effectiveAllocation = b.capPct - b.startPct;
+  const allocationLabel = effectiveAllocation < b.allocationPct
+    ? `${b.allocationPct}% requested, ${effectiveAllocation}% available`
+    : `${b.allocationPct}%`;
   const budgetBar = b.unavailable
     ? `
     <div class="budget">
@@ -196,7 +203,7 @@ export function generateHTML(session: SessionResult): string {
     </div>`
     : `
     <div class="budget">
-      <div class="budget-label">Tonight's allocation: <strong>${b.allocationPct}%</strong> of weekly
+      <div class="budget-label">Tonight's allocation: <strong>${allocationLabel}</strong> of weekly
         ${b.resetInfo ? `<span class="budget-reset">resets ${esc(b.resetInfo)}</span>` : ""}
       </div>
       <div class="budget-track">
@@ -206,7 +213,7 @@ export function generateHTML(session: SessionResult): string {
       </div>
       <div class="budget-figures">
         <span>Started at <strong>${Math.max(0, b.startPct)}%</strong></span>
-        <span>Ended at <strong>${b.currentPct}%</strong> (used ${used}% of ${b.allocationPct}%)</span>
+        <span>Ended at <strong>${b.currentPct}%</strong> (used ${used}% of ${effectiveAllocation < b.allocationPct ? effectiveAllocation : b.allocationPct}%)</span>
         <span>Cap <strong>${b.capPct}%</strong></span>
       </div>
       ${gateBanner}
@@ -334,6 +341,7 @@ export function generateHTML(session: SessionResult): string {
     ${pmStat}
   </div>
 
+  ${ticketErrorBanner}
   ${budgetBar}
 
   ${ticketsHTML}

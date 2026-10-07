@@ -151,5 +151,6 @@ export interface SessionResult {
   gateHit: boolean;
   skipReason: string;
   noTasks: boolean;
+  ticketError?: string;
   postmortem?: SessionPostmortem;
 }

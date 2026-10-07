@@ -6,6 +6,7 @@ import {
   listProjects,
   loadProject,
   parseProjectConfig,
+  projectEnvFiles,
 } from "../src/project.js";
 
 const everything = () => true;
@@ -43,6 +44,23 @@ describe("parseProjectConfig", () => {
         everything,
       ).defaultRepo,
     ).toBe("app");
+  });
+
+  it("rejects a repo key that isn't a lowercase repo name", () => {
+    expect(() =>
+      parseProjectConfig("a", "/p/a", { repos: { Main: repos.main } }, everything),
+    ).toThrow(/repo "Main".*lowercase/);
+  });
+
+  it("rejects an inherited property name as defaultRepo", () => {
+    expect(() =>
+      parseProjectConfig(
+        "a",
+        "/p/a",
+        { repos, defaultRepo: "constructor" },
+        everything,
+      ),
+    ).toThrow(/defaultRepo "constructor"/);
   });
 
   it("requires defaultRepo when there are several repos", () => {
@@ -146,5 +164,32 @@ describe("loadProject", () => {
 
   it("lists only dirs with a project.json", () => {
     expect(listProjects(setup())).toEqual(["acme"]);
+  });
+
+  it("lists every project directory's .env, configured or not", () => {
+    const root = setup();
+    expect(projectEnvFiles(root)).toEqual([
+      join(root, "acme", ".env"),
+      join(root, "notaproject", ".env"),
+    ]);
+  });
+
+  it("returns no env files when the projects dir is missing", () => {
+    expect(projectEnvFiles(join(tmpdir(), "no-such-projects-dir"))).toEqual([]);
+  });
+
+  it("rejects names that aren't a plain directory name", () => {
+    const root = setup();
+    for (const name of ["../x", "a/b", "a\\b", ".hidden", ".."]) {
+      expect(() => loadProject(name, root)).toThrow(/invalid project name/);
+    }
+  });
+
+  it("names the file when project.json isn't valid JSON", () => {
+    const root = setup();
+    writeFileSync(join(root, "acme", "project.json"), "{ nope");
+    expect(() => loadProject("acme", root)).toThrow(
+      /project "acme": .*project\.json is not valid JSON: /,
+    );
   });
 });

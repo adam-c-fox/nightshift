@@ -111,4 +111,13 @@ describe("buildAgentSettings", () => {
     expect(settings.permissions.deny).toContain("Read(//ns/projects/acme/.env)");
     expect(settings.sandbox.filesystem.denyRead).toContain("/ns/projects/acme/.env");
   });
+
+  it("denies every project's env file when given the full list", () => {
+    const secretFiles = ["/ns/projects/acme/.env", "/ns/projects/other/.env"];
+    for (const readLogs of [false, true]) {
+      const settings = JSON.parse(buildAgentSettings("node", "/ns", { readLogs, secretFiles }));
+      expect(settings.permissions.deny).toContain("Read(//ns/projects/other/.env)");
+      expect(settings.sandbox.filesystem.denyRead).toContain("/ns/projects/other/.env");
+    }
+  });
 });

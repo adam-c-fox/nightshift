@@ -8,6 +8,7 @@
   "scripts": {
     "run": "tsx src/runner.ts",
     "run:dry": "tsx src/runner.ts --dry-run",
+    "project": "tsx src/current-project.ts",
     "open-prs": "tsx src/open-prs.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
