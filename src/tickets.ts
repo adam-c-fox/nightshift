@@ -14,6 +14,7 @@ const ALLOWANCE_LINE = /^allowance:\s*(.*?)\s*$/i;
 export const TICKET_ID_PATTERN = "[A-Z]+-\\d+";
 export const TICKET_ID = new RegExp(`^${TICKET_ID_PATTERN}$`);
 const HEADING = new RegExp(`^##\\s+(${TICKET_ID_PATTERN})\\s*[–-]\\s*(.*)`);
+const BASE_LINE = new RegExp(`^base:\\s*(${TICKET_ID_PATTERN})\\s*$`, "i");
 
 export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
   let raw: string;
@@ -82,7 +83,7 @@ export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
       continue;
     }
 
-    const baseMatch = trimmed.match(/^base:\s*([A-Z]+-\d+)\s*$/i);
+    const baseMatch = trimmed.match(BASE_LINE);
     if (baseMatch && current) {
       current.base = baseMatch[1].toUpperCase();
       continue;
