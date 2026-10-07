@@ -11,6 +11,8 @@
     "project": "tsx src/current-project.ts",
     "open-prs": "tsx src/open-prs.ts",
     "usage": "tsx src/usage.ts",
+    "prep-mark": "tsx src/prep-mark.ts",
+    "prep-status": "tsx src/prep-status.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
