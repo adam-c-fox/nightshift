@@ -64,7 +64,7 @@ describe("createWorktree", () => {
   let spec: WorktreeSpec;
   beforeEach(() => {
     env = makeRepo();
-    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" };
+    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", toolchain: "node", branchBase: "adamfox/eng-1-fix" };
   });
 
   it("creates the ticket branch from origin/main and installs instead of symlinking node_modules", () => {
@@ -83,8 +83,14 @@ describe("createWorktree", () => {
 
   it("does not install for terraform", () => {
     const installed: string[] = [];
-    createWorktree({ ...spec, repo: "terraform" }, noop, p => installed.push(p));
+    createWorktree({ ...spec, repo: "terraform", toolchain: "terraform" }, noop, p => installed.push(p));
     expect(installed).toEqual([]);
+  });
+
+  it("installs by toolchain, not by repo name", () => {
+    const installed: string[] = [];
+    const wt = createWorktree({ ...spec, repo: "infra", toolchain: "node" }, noop, p => installed.push(p));
+    expect(installed).toEqual([wt.wtPath]);
   });
 
   it("replaces a worktree left over from a previous run on the next free branch", () => {
@@ -132,7 +138,7 @@ describe("commitWorktree", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   const committedFiles = () => run(wt.wtPath, "diff", "--name-only", `${wt.baseRef}..HEAD`).split("\n").filter(Boolean);
@@ -206,7 +212,7 @@ describe("excludedPathsInBranch", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   it("returns excluded paths the agent committed itself", () => {
@@ -235,7 +241,7 @@ describe("createWorktree stackedOn", () => {
   let spec: WorktreeSpec;
   beforeEach(() => {
     env = makeRepo();
-    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-2", repo: "main", branchBase: "adamfox/eng-2-child" };
+    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-2", repo: "main", toolchain: "node", branchBase: "adamfox/eng-2-child" };
   });
 
   const pushParent = () => {
@@ -273,7 +279,7 @@ describe("createWorktree startFrom", () => {
   let spec: WorktreeSpec;
   beforeEach(() => {
     env = makeRepo();
-    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" };
+    spec = { repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", toolchain: "node", branchBase: "adamfox/eng-1-fix" };
   });
 
   const pushPrBranch = () => {
@@ -350,7 +356,7 @@ describe("worktreeSnapshot and hasChangesVsBase", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+    wt = createWorktree({ repoPath: env.repoPath, worktreesDir: env.worktreesDir, ticketId: "ENG-1", repo: "main", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   it("is stable while nothing changes", () => {

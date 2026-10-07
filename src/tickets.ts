@@ -1,6 +1,6 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Ticket, RepoKind } from "./types.js";
+import type { Ticket } from "./types.js";
 
 const TICKETS_FILE = path.resolve(import.meta.dirname, "..", "tickets", "tonight.md");
 const COMMENT = /<!--[\s\S]*?-->/g;
@@ -41,7 +41,7 @@ export function parseTickets(raw: string): Ticket[] {
       current = {
         id: headingMatch[1],
         name: headingMatch[2].trim() || headingMatch[1],
-        repo: "main" as RepoKind,
+        repo: "main",
       };
       continue;
     }
@@ -49,7 +49,7 @@ export function parseTickets(raw: string): Ticket[] {
     // repo: main | terraform
     const repoMatch = trimmed.match(/^repo:\s*(main|terraform)\s*$/i);
     if (repoMatch && current) {
-      current.repo = repoMatch[1].toLowerCase() as RepoKind;
+      current.repo = repoMatch[1].toLowerCase();
       continue;
     }
 

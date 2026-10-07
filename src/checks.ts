@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, globSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import type { RepoKind, ReviewFinding } from "./types.js";
+import type { ReviewFinding, Toolchain } from "./types.js";
 
 export interface CheckCommand {
   name: string;
@@ -38,8 +38,8 @@ const TAIL_LINES = 80;
 const MAX_BUFFER_CHARS = 256 * 1024;
 const FINDING_DETAIL_CHARS = 200;
 
-export function checkCommands(repo: RepoKind, workspaces: string[]): CheckCommand[] {
-  if (repo === "terraform") {
+export function checkCommands(toolchain: Toolchain, workspaces: string[]): CheckCommand[] {
+  if (toolchain === "terraform") {
     return [
       { name: "terraform init", command: "terraform init -backend=false" },
       { name: "terraform validate", command: "terraform validate" },

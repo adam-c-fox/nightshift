@@ -210,6 +210,7 @@ async function processTicket(
     return placeholderResult(ticket, "skipped", stack.reason);
   }
   const parent = stack.kind === "stacked" ? stack.parent : undefined;
+  const toolchain = repo === "terraform" ? "terraform" : "node";
   const plannedPath = worktreePath(WORKTREES_DIR, repo, ticketId);
   let wt: Worktree = {
     wtPath: plannedPath, branch: ticketBranchName(BRANCH_PREFIX, ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
@@ -244,15 +245,15 @@ async function processTicket(
     if (parent) log(`  [dry-run] Would branch from origin/${parent.branch}`);
   } else {
     const startFrom = existing ? { branch: existing.sourceBranch, baseBranch: existing.targetBranch } : undefined;
-    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, branchBase, startFrom, stackedOn: parent?.branch }, log);
+    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, toolchain, branchBase, startFrom, stackedOn: parent?.branch }, log);
   }
   const continuing = existing !== null && (dryRun || wt.startedFromPr);
   const agentContext = [...(continuing ? [continuingPrContext(existing.prId)] : []), ...(parent ? [stackedContext(parent)] : []), ...context];
 
   const weeklyGateReason = () => weeklyGate(budgetRef, "mid-ticket");
   const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
-  const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(repo, ROOT) };
-  const commands = dryRun ? [] : checkCommands(repo, repo === "main" ? discoverWorkspaces(wt.wtPath) : []);
+  const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT) };
+  const commands = dryRun ? [] : checkCommands(toolchain, toolchain === "node" ? discoverWorkspaces(wt.wtPath) : []);
   const baseline = dryRun ? [] : await runLoggedChecks("before the change", wt.wtPath, commands);
   if (!dryRun) await waitForSession();
   const result = await runAgent(
@@ -431,7 +432,7 @@ async function nightPostmortem(session: SessionResult, budgetRef: { current: Nig
     await waitForSession();
     const shouldAbort = () => weeklyGate(budgetRef, "during the postmortem") ?? sessionAbortReason(budgetRef.current);
     const { rawOutput, outcome } = await runPostmortem(ROOT, date, [WORKTREES_DIR], {
-      shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("main", ROOT, { readLogs: true }),
+      shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true }),
     });
     saveLog(`postmortem-${date}.txt`, rawOutput);
     if (outcome.outcome !== "done") {

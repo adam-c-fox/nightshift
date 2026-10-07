@@ -4,18 +4,17 @@ import { REPOS } from "./repos.js";
 import { fetchTicket } from "./linear.js";
 import { findOpenTicketPr } from "./pr.js";
 import { ticketBranchName } from "./worktree.js";
-import type { RepoKind } from "./types.js";
 
-export function parseOpenPrsArgs(args: string[]): { repo: RepoKind; id: string }[] {
+export function parseOpenPrsArgs(args: string[]): { repo: string; id: string }[] {
   if (args.length === 0) throw new Error("usage: open-prs <repo>:<ID> ...");
   return args.map(arg => {
     const match = arg.match(/^(main|terraform):([A-Z]+-\d+)$/);
     if (!match) throw new Error(`bad argument "${arg}", expected main:<ID> or terraform:<ID>`);
-    return { repo: match[1] as RepoKind, id: match[2] };
+    return { repo: match[1], id: match[2] };
   });
 }
 
-async function lookup(repo: RepoKind, id: string): Promise<object> {
+async function lookup(repo: string, id: string): Promise<object> {
   try {
     const repoPath = REPOS[repo];
     if (!repoPath) return { id, error: `unknown repo ${repo}` };

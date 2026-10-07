@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import path from "node:path";
-import type { RepoKind } from "./types.js";
+import type { Toolchain } from "./types.js";
 
 export type Log = (msg: string) => void;
 
@@ -10,7 +10,8 @@ export interface WorktreeSpec {
   repoPath: string;
   worktreesDir: string;
   ticketId: string;
-  repo: RepoKind;
+  repo: string;
+  toolchain: Toolchain;
   branchBase: string;
   startFrom?: { branch: string; baseBranch: string };
   stackedOn?: string;
@@ -80,7 +81,7 @@ export function chooseBranchName(base: string, exists: (name: string) => boolean
   }
 }
 
-export function worktreePath(worktreesDir: string, repo: RepoKind, ticketId: string): string {
+export function worktreePath(worktreesDir: string, repo: string, ticketId: string): string {
   return path.join(worktreesDir, `${repo}-${ticketId}`);
 }
 
@@ -167,7 +168,7 @@ function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: str
 }
 
 export function createWorktree(spec: WorktreeSpec, log: Log, install: (wtPath: string) => void = npmCi): Worktree {
-  const { repoPath, worktreesDir, ticketId, repo, branchBase, startFrom, stackedOn } = spec;
+  const { repoPath, worktreesDir, ticketId, repo, toolchain, branchBase, startFrom, stackedOn } = spec;
   const wtPath = worktreePath(worktreesDir, repo, ticketId);
 
   removeStaleWorktree(repoPath, worktreesDir, wtPath, ticketId, log);
@@ -190,7 +191,7 @@ export function createWorktree(spec: WorktreeSpec, log: Log, install: (wtPath: s
   git(["worktree", "add", "-b", branch, wtPath, baseRef], repoPath);
   log(`Worktree created: ${wtPath} (branch: ${branch} from ${baseRef})`);
 
-  if (repo === "main") installDependencies(wtPath, install, log);
+  if (toolchain === "node") installDependencies(wtPath, install, log);
 
   return { wtPath, branch, baseRef, baseBranch, startedFromPr };
 }

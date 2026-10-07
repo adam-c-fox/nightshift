@@ -1,13 +1,12 @@
 import type { CheckStatus } from "./checks.js";
 
-export type RepoKind = "main" | "terraform";
 export type Toolchain = "node" | "terraform";
 
 export interface Ticket {
   id: string;            // e.g. "ENG-142"
   name: string;          // e.g. "CSV export fix"
   context: string[];     // bullet lines from tonight.md
-  repo: RepoKind;
+  repo: string;
   base?: string;         // ID of an earlier ticket this one is stacked on
 }
 

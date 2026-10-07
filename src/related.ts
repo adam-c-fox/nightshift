@@ -1,4 +1,3 @@
-import type { RepoKind } from "./types.js";
 
 export interface PushedBranch {
   branch: string;
@@ -7,14 +6,14 @@ export interface PushedBranch {
 
 export interface ProcessedTicket {
   branch: string;
-  repo: RepoKind;
+  repo: string;
   pushed?: PushedBranch;
 }
 
 const TICKET_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g;
 
 export function relatedTickets(
-  ownId: string, repo: RepoKind, texts: string[], processed: Map<string, ProcessedTicket>,
+  ownId: string, repo: string, texts: string[], processed: Map<string, ProcessedTicket>,
 ): { ticketId: string; branch: string }[] {
   const mentioned = new Set(texts.flatMap(t => t.match(TICKET_ID) ?? []));
   mentioned.delete(ownId);
