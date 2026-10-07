@@ -1,5 +1,5 @@
 import { requireEnv } from "./env.js";
-import type { LinearComment, LinearTicket } from "./types.js";
+import type { LinearComment, LinearTicket, TicketStatus } from "./types.js";
 
 export type { LinearComment, LinearTicket };
 
@@ -35,6 +35,17 @@ export function pickInProgressState(states: WorkflowState[]): WorkflowState | un
   return started.find(s => s.name.toLowerCase() === "in progress") ?? started[0];
 }
 
+const FINISHED_TYPES = ["completed", "canceled"];
+const REVIEWABLE_STATUSES: TicketStatus[] = ["done", "needs_review"];
+
+export function shouldMarkInReview(status: TicketStatus, stateType: string): boolean {
+  return REVIEWABLE_STATUSES.includes(status) && !FINISHED_TYPES.includes(stateType);
+}
+
+export function pickInReviewState(states: WorkflowState[]): WorkflowState | undefined {
+  return states.find(s => s.name.toLowerCase() === "in review");
+}
+
 async function linearRequest<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   const res = await fetch(BASE_URL, {
     method: "POST",
@@ -52,9 +63,9 @@ async function linearRequest<T>(query: string, variables: Record<string, unknown
   return (await res.json()) as T;
 }
 
-export async function markInProgress(issueId: string, stateId: string): Promise<void> {
+export async function setIssueState(issueId: string, stateId: string): Promise<void> {
   const mutation = `
-    mutation MarkInProgress($id: String!, $stateId: String!) {
+    mutation SetIssueState($id: String!, $stateId: String!) {
       issueUpdate(id: $id, input: { stateId: $stateId }) { success }
     }
   `;
@@ -109,6 +120,7 @@ export async function fetchTicket(identifier: string): Promise<LinearTicket | nu
     state: issue.state?.name ?? "unknown",
     stateType: issue.state?.type ?? "unknown",
     inProgressState: pickInProgressState(issue.team?.states.nodes ?? []),
+    inReviewState: pickInReviewState(issue.team?.states.nodes ?? []),
     url: issue.url,
   };
 }

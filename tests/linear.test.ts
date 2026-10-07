@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchTicket, markInProgress, pickInProgressState, shouldMarkInProgress } from "../src/linear.js";
+import { fetchTicket, pickInProgressState, pickInReviewState, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "../src/linear.js";
 
 describe("pickInProgressState", () => {
   const states = [
@@ -33,7 +33,37 @@ describe("shouldMarkInProgress", () => {
   });
 });
 
-describe("markInProgress", () => {
+describe("pickInReviewState", () => {
+  const states = [
+    { id: "progress", name: "In Progress", type: "started", position: 2 },
+    { id: "review", name: "in review", type: "started", position: 3 },
+  ];
+
+  it("finds the state named In Review regardless of case", () => {
+    expect(pickInReviewState(states)?.id).toBe("review");
+  });
+
+  it("returns undefined when the team has no In Review state", () => {
+    expect(pickInReviewState(states.filter(s => s.id !== "review"))).toBeUndefined();
+  });
+});
+
+describe("shouldMarkInReview", () => {
+  it("moves tickets that finished done or need review", () => {
+    expect(shouldMarkInReview("done", "started")).toBe(true);
+    expect(shouldMarkInReview("needs_review", "unstarted")).toBe(true);
+  });
+
+  it("leaves partial, skipped and errored tickets where they are", () => {
+    expect(["partial", "skipped", "error"].map(s => shouldMarkInReview(s as "partial", "started"))).toEqual([false, false, false]);
+  });
+
+  it("never moves a ticket out of a finished state", () => {
+    expect(["completed", "canceled"].map(t => shouldMarkInReview("done", t))).toEqual([false, false]);
+  });
+});
+
+describe("setIssueState", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
@@ -48,11 +78,11 @@ describe("markInProgress", () => {
     });
 
     vi.stubGlobal("fetch", respond(true));
-    await markInProgress("issue-1", "progress");
+    await setIssueState("issue-1", "progress");
     expect(bodies[0]).toMatchObject({ variables: { id: "issue-1", stateId: "progress" } });
 
     vi.stubGlobal("fetch", respond(false));
-    await expect(markInProgress("issue-1", "progress")).rejects.toThrow(/not updated/);
+    await expect(setIssueState("issue-1", "progress")).rejects.toThrow(/not updated/);
   });
 });
 
