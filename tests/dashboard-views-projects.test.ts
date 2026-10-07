@@ -225,6 +225,19 @@ describe("projectFormHTML", () => {
     );
   });
 
+  it("edit mode hints that relative testDb paths resolve from the project directory", () => {
+    const html = projectFormHTML({
+      name: "a&b",
+      raw: RAW,
+      teams: TEAMS,
+      mode: "edit",
+    });
+    expect(html).toContain(
+      "script path; relative paths resolve from projects/a&amp;b/",
+    );
+    expect(html).not.toContain("absolute path to the test database");
+  });
+
   it("edit mode has no name field", () => {
     expect(editForm()).not.toContain('id="project-name"');
   });

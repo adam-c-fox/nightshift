@@ -326,7 +326,7 @@ export function projectFormHTML(opts: {
     : "";
   const testDbHint = creating
     ? "absolute path, or leave blank and add it later"
-    : "absolute path to the test database";
+    : `script path; relative paths resolve from projects/${name}/`;
   const defaultRepoInput = textInput(
     "default-repo",
     "defaultRepo",
