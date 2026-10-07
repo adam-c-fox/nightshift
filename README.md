@@ -68,7 +68,7 @@ A project is the set of repos nightshift works in, plus the instructions and tic
 | `tonight.md` | Tonight's tickets |
 | `test-db.sh` | Optional script that starts the throwaway Postgres |
 
-`linearTeams` is a list of Linear team keys such as `["ENG"]`. When it's set, `/tonight`, `prep-status` and the [dashboard](#dashboard) only list your Todo tickets from those teams. Leave it out to see all of them. `/prep` and `/tonight` also use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](#prep-memory).
+`linearTeams` is a list of Linear team keys such as `["ENG"]`. When it's set, `prep-status` and the [dashboard](#dashboard) only list your Todo tickets from those teams. `/tonight` still lists every Todo ticket assigned to you, and tickets outside `linearTeams` show "—" in its prep column. Leave it out to see all of them. `/prep` and `/tonight` also use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](#prep-memory).
 
 Start a new project by copying [`projects/example`](projects/example) to `projects/<name>` and replacing the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
 
@@ -100,7 +100,7 @@ Read `reports/<name>/nightshift-<date>.html`. The Postmortem section at the bott
 
 ## Dashboard
 
-The dashboard is a local web page for the evening and the morning. It shows what to prep and plan before you log off, and what needs you after a night. It only reads and writes files in this repo and calls Linear and Azure DevOps with the same credentials as the runner.
+The dashboard is a local web page for the evening and the morning. It shows what to prep and plan before you log off, and what needs you after a night. Besides reading and writing files in this repo, it calls Linear and Azure DevOps with the same credentials as the runner, runs the usage check, runs git in the configured repo paths and launches herdr.
 
 ### Install
 
@@ -165,7 +165,7 @@ npm run -s prep-status -- --project <name>
 
 ### Projects
 
-`/projects` lists each project with its checks: config, default repo, `.env` keys, `AGENTS.md`, the test database script, `linearTeams` and `az` login. Open a project to edit its `project.json`, or use "New project" to create one from `projects/example`. Creating a project doesn't write `.env`. It tells you which keys to fill in at `projects/<name>/.env`.
+`/projects` lists each project with its overall file-check status: config, default repo, `.env` keys, `AGENTS.md` and the test database script. The `linearTeams` and `az` login checks run on the project's own page. Open a project to edit its `project.json`, or use "New project" to create one from `projects/example`. Creating a project doesn't write `.env`. It tells you which keys to fill in at `projects/<name>/.env`.
 
 ### Security
 
