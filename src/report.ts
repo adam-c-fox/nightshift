@@ -2,6 +2,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { CheckRecord, FixResolution, FixVerification, ReviewFinding, SessionPostmortem, SessionResult, TicketResult, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
+import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
 
 export const REPORTS_DIR = path.resolve(import.meta.dirname, "..", "reports");
 
@@ -209,28 +210,37 @@ function ticketCardHTML(t: TicketResult): string {
   </details>`;
 }
 
-const ACTIONED_SCRIPT = `(() => {
+export const ACTIONED_SCRIPT = `(() => {
+  const match = location.pathname.match(/\\/reports\\/((?:[^/]+\\/)?[^/]+)\\.html$/);
+  const reportId = match ? decodeURIComponent(match[1]) : null;
+  const overHttp = location.protocol === "http:" || location.protocol === "https:";
+  const apiUrl = (overHttp ? "" : "${DASHBOARD_ORIGIN}") + "/api/actions?report=" + encodeURIComponent(reportId || "");
+  const put = async entries => fetch(apiUrl, { method: "PUT", headers: { "Content-Type": "application/json", "X-Nightshift": "1" }, body: JSON.stringify(entries) });
+  const get = async () => (await fetch(apiUrl)).json();
   const storeKey = "nightshift:actioned:" + location.pathname;
-  const read = () => { try { return JSON.parse(localStorage.getItem(storeKey) || "{}"); } catch { return {}; } };
-  const write = state => { try { localStorage.setItem(storeKey, JSON.stringify(state)); } catch {} };
+  const readLocal = () => { try { return JSON.parse(localStorage.getItem(storeKey) || "{}"); } catch { return {}; } };
+  const writeLocal = state => { try { localStorage.setItem(storeKey, JSON.stringify(state)); } catch {} };
   const boxes = [...document.querySelectorAll("input.actioned")];
   const refresh = () => {
     for (const box of boxes) box.closest(".card, .suggestion")?.classList.toggle("is-actioned", box.checked);
     const count = document.getElementById("actioned-count");
     if (count) count.textContent = boxes.filter(box => box.checked).length + " / " + boxes.length;
   };
-  const saved = read();
-  for (const box of boxes) {
-    box.checked = Boolean(saved[box.dataset.key]);
-    box.addEventListener("change", () => {
-      const state = read();
-      if (box.checked) state[box.dataset.key] = new Date().toISOString();
-      else delete state[box.dataset.key];
-      write(state);
-      refresh();
-    });
+  const apply = ticked => { for (const box of boxes) box.checked = Boolean(ticked[box.dataset.key]); refresh(); };
+  if (overHttp && reportId) {
+    get().then(map => apply(Object.fromEntries(Object.entries(map).filter(([, v]) => v && v.at).map(([k, v]) => [k, v.at])))).catch(() => {});
+  } else {
+    const saved = readLocal();
+    apply(saved);
+    const entries = Object.fromEntries(Object.entries(saved).map(([k, at]) => [k, { at, updatedAt: at }]));
+    if (reportId && Object.keys(entries).length > 0) put(entries).catch(() => {});
   }
-  refresh();
+  for (const box of boxes) box.addEventListener("change", () => {
+    const now = new Date().toISOString();
+    if (overHttp && reportId) put({ [box.dataset.key]: { at: box.checked ? now : null, updatedAt: now } }).catch(() => {});
+    else { const state = readLocal(); if (box.checked) state[box.dataset.key] = now; else delete state[box.dataset.key]; writeLocal(state); }
+    refresh();
+  });
   const openTarget = hash => {
     const target = hash && document.getElementById(decodeURIComponent(hash.slice(1)));
     if (target instanceof HTMLDetailsElement) target.open = true;
