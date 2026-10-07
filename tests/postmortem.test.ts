@@ -90,7 +90,7 @@ describe("buildPostmortemPrompt", () => {
 describe("sessionLogData", () => {
   const session: SessionResult = {
     date: "2026-10-01", startedAt: "", endedAt: "", tickets: [ticket("ENG-1", "done"), ticket("ENG-2", "skipped")],
-    budget: openNightBudget({ weeklyPercent: 3, resetInfo: "Oct 7" }), gateHit: false, skipReason: "", noTasks: false,
+    budget: openNightBudget({ weeklyPercent: 3, resetInfo: "Oct 7" }, 15), gateHit: false, skipReason: "", noTasks: false,
   };
 
   it("lists only the log files that exist for each ticket", () => {

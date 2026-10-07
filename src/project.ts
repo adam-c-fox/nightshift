@@ -138,13 +138,3 @@ export function loadProject(name: string, projectsDir = PROJECTS_DIR): Project {
       : "",
   };
 }
-
-export function selectProjectName(
-  argv: string[],
-  fromEnv: string | undefined,
-): string | undefined {
-  const i = argv.indexOf("--project");
-  if (i === -1) return fromEnv || undefined;
-  const value = argv[i + 1];
-  return value && !value.startsWith("--") ? value : undefined;
-}

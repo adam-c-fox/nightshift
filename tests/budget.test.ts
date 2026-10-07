@@ -37,10 +37,14 @@ describe("parseUsageOutput", () => {
 });
 
 describe("night budget gate", () => {
-  const start = openNightBudget({ weeklyPercent: 3, resetInfo: "soon" });
+  const start = openNightBudget({ weeklyPercent: 3, resetInfo: "soon" }, 15);
 
   it("caps at start plus the 15 point allocation", () => {
     expect(start).toMatchObject({ startPct: 3, capPct: 18, allocationPct: 15, gateHit: false });
+  });
+
+  it("takes the allocation as given", () => {
+    expect(openNightBudget({ weeklyPercent: 40, resetInfo: "" }, 100)).toMatchObject({ capPct: 140, allocationPct: 100 });
   });
 
   it("allows a ticket below the cap, stops at or above it", () => {
@@ -226,7 +230,7 @@ describe("5-hour session guard", () => {
   });
 
   it("remembers the latest session reading on the night budget", () => {
-    const start = openNightBudget({ weeklyPercent: 3, resetInfo: "" });
+    const start = openNightBudget({ weeklyPercent: 3, resetInfo: "" }, 15);
     expect(withCurrentUsage(start, { weeklyPercent: 4, resetInfo: "", sessionPercent: 42 }).sessionPercent).toBe(42);
   });
 });

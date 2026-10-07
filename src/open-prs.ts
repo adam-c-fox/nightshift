@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
+import { extractFlag } from "./args.js";
 import { getEnv, useProjectEnv } from "./env.js";
-import { listProjects, type Project, loadProject, selectProjectName } from "./project.js";
+import { listProjects, type Project, loadProject } from "./project.js";
 import { fetchTicket } from "./linear.js";
 import { findOpenTicketPr } from "./pr.js";
 import { ticketBranchName } from "./worktree.js";
@@ -28,14 +29,16 @@ async function lookup(project: Project, repo: string, id: string): Promise<objec
   }
 }
 
-function withoutProjectFlag(argv: string[]): string[] {
-  const i = argv.indexOf("--project");
-  return i === -1 ? argv : [...argv.slice(0, i), ...argv.slice(i + 2)];
-}
-
 async function main() {
   const argv = process.argv.slice(2);
-  const projectName = selectProjectName(argv, getEnv("NIGHTSHIFT_PROJECT"));
+  let flagged;
+  try {
+    flagged = extractFlag(argv, "--project");
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+  const projectName = flagged.value ?? getEnv("NIGHTSHIFT_PROJECT");
   if (!projectName) {
     console.error(`no project selected (available: ${listProjects().join(", ")})`);
     process.exit(1);
@@ -50,7 +53,7 @@ async function main() {
   useProjectEnv(project.envFile);
   let targets;
   try {
-    targets = parseOpenPrsArgs(withoutProjectFlag(argv));
+    targets = parseOpenPrsArgs(flagged.rest);
   } catch (e) {
     console.error((e as Error).message);
     process.exit(1);

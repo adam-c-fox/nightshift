@@ -5,7 +5,7 @@ import type { SessionResult, TicketResult } from "../src/types.js";
 
 const session = (over: Partial<SessionResult>): SessionResult => ({
   date: "2026-10-01", startedAt: "", endedAt: "", tickets: [],
-  budget: openNightBudget({ weeklyPercent: 3, resetInfo: "Oct 7" }),
+  budget: openNightBudget({ weeklyPercent: 3, resetInfo: "Oct 7" }, 15),
   gateHit: false, skipReason: "", noTasks: false, ...over,
 });
 

@@ -467,7 +467,7 @@ async function main() {
   let skipReason = "";
   let budget: NightBudget;
   try {
-    budget = startNightBudget();
+    budget = startNightBudget(15);
     log(`Tonight's allocation: ${budget.allocationPct}% of weekly. Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
   } catch (e) {
     const message = (e as Error).message;

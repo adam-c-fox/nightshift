@@ -6,7 +6,6 @@ import {
   listProjects,
   loadProject,
   parseProjectConfig,
-  selectProjectName,
 } from "../src/project.js";
 
 const everything = () => true;
@@ -147,25 +146,5 @@ describe("loadProject", () => {
 
   it("lists only dirs with a project.json", () => {
     expect(listProjects(setup())).toEqual(["acme"]);
-  });
-});
-
-describe("selectProjectName", () => {
-  it("prefers --project over the environment", () => {
-    expect(selectProjectName(["--dry-run", "--project", "acme"], "other")).toBe(
-      "acme",
-    );
-  });
-
-  it("falls back to the environment", () => {
-    expect(selectProjectName([], "acme")).toBe("acme");
-  });
-
-  it("returns undefined when neither is set or --project has no value", () => {
-    expect(selectProjectName([], undefined)).toBeUndefined();
-    expect(selectProjectName(["--project"], undefined)).toBeUndefined();
-    expect(
-      selectProjectName(["--project", "--dry-run"], undefined),
-    ).toBeUndefined();
   });
 });

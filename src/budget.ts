@@ -4,7 +4,6 @@ import type { NightBudget } from "./types.js";
 import { CLAUDE_TOKEN } from "./agent-env.js";
 import { TIME_ZONE } from "./time.js";
 
-const ALLOCATION_PERCENT = 15;
 const USAGE_ATTEMPTS = 3;
 const USAGE_RETRY_DELAY_MS = 15_000;
 const PROBE_MODEL = "claude-haiku-4-5-20251001";
@@ -176,7 +175,7 @@ export function formatUsageAttempts(attempts: UsageCommandResult[]): string[] {
   ]);
 }
 
-export function openNightBudget(snapshot: UsageSnapshot, allocationPct = ALLOCATION_PERCENT): NightBudget {
+export function openNightBudget(snapshot: UsageSnapshot, allocationPct: number): NightBudget {
   return {
     startPct: snapshot.weeklyPercent,
     capPct: snapshot.weeklyPercent + allocationPct,
@@ -247,8 +246,8 @@ export async function waitForSessionCapacity(deps: SessionWaitDeps): Promise<voi
   }
 }
 
-export function startNightBudget(): NightBudget {
-  return openNightBudget(snapshotUsage());
+export function startNightBudget(allocationPct: number): NightBudget {
+  return openNightBudget(snapshotUsage(), allocationPct);
 }
 
 export function checkGate(budget: NightBudget, attempts = USAGE_ATTEMPTS): NightBudget {
