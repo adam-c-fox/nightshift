@@ -13,6 +13,7 @@
     "usage": "tsx src/usage.ts",
     "prep-mark": "tsx src/prep-mark.ts",
     "prep-status": "tsx src/prep-status.ts",
+    "dashboard": "tsx src/dashboard/server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
