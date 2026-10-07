@@ -96,9 +96,9 @@ describe("buildAgentSettings", () => {
   });
 
   it("lets node runs listen locally and reach the local test database", () => {
-    const main = JSON.parse(buildAgentSettings("node", root));
-    expect(main.sandbox.network.allowLocalBinding).toBe(true);
-    expect(main.sandbox.network.allowedDomains).toEqual(expect.arrayContaining(["registry.npmjs.org", "localhost", "127.0.0.1"]));
+    const node = JSON.parse(buildAgentSettings("node", root));
+    expect(node.sandbox.network.allowLocalBinding).toBe(true);
+    expect(node.sandbox.network.allowedDomains).toEqual(expect.arrayContaining(["registry.npmjs.org", "localhost", "127.0.0.1"]));
   });
 
   it("does not open local binding for terraform runs", () => {

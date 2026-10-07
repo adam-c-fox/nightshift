@@ -1,4 +1,3 @@
-
 export interface PushedBranch {
   branch: string;
   prId: number;

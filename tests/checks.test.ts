@@ -11,7 +11,7 @@ const result = (command: string, passed: boolean, outputTail = ""): CheckResult 
   ({ name: command, command, passed, durationSec: 1, outputTail });
 
 describe("checkCommands", () => {
-  it("lists the CI commands and one test run per workspace for main", () => {
+  it("lists the CI commands and one test run per workspace for node", () => {
     const commands = checkCommands("node", ["services/a", "packages/b"]).map(c => c.command);
     expect(commands).toEqual([
       "npm run build", "npm run typecheck", "npm run lint", "npm run format", "npx vitest run",
