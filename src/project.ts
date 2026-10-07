@@ -45,6 +45,46 @@ export function isValidPercent(value: unknown): value is number {
   );
 }
 
+export function resolveDefaultRepo(
+  repoNames: string[],
+  configured: unknown,
+): string {
+  const defaultRepo =
+    configured ??
+    (repoNames.length === 1
+      ? repoNames[0]
+      : reject(`set defaultRepo to one of ${repoNames.join(", ")}`));
+  if (typeof defaultRepo !== "string" || !repoNames.includes(defaultRepo)) {
+    reject(
+      `defaultRepo "${defaultRepo}" is not one of ${repoNames.join(", ")}`,
+    );
+  }
+  return defaultRepo as string;
+}
+
+export function resolveTestDbPath(
+  dir: string,
+  testDb: unknown,
+  exists: (p: string) => boolean,
+): string | undefined {
+  if (testDb === undefined) return undefined;
+  const script = path.resolve(dir, String(testDb));
+  if (!exists(script)) reject(`testDb script ${script} does not exist`);
+  return script;
+}
+
+function reject(reason: string): never {
+  throw new Error(reason);
+}
+
+function reasoned<T>(fail: (reason: string) => never, resolve: () => T): T {
+  try {
+    return resolve();
+  } catch (e) {
+    return fail((e as Error).message);
+  }
+}
+
 export function parseProjectConfig(
   name: string,
   dir: string,
@@ -82,22 +122,12 @@ export function parseProjectConfig(
     };
   }
 
-  const names = Object.keys(repos);
-  const defaultRepo =
-    config.defaultRepo ??
-    (names.length === 1
-      ? names[0]
-      : fail(`set defaultRepo to one of ${names.join(", ")}`));
-  if (typeof defaultRepo !== "string" || !Object.hasOwn(repos, defaultRepo)) {
-    fail(`defaultRepo "${defaultRepo}" is not one of ${names.join(", ")}`);
-  }
-
-  let testDbScript: string | undefined;
-  if (config.testDb !== undefined) {
-    testDbScript = path.resolve(dir, String(config.testDb));
-    if (!exists(testDbScript))
-      fail(`testDb script ${testDbScript} does not exist`);
-  }
+  const defaultRepo = reasoned(fail, () =>
+    resolveDefaultRepo(Object.keys(repos), config.defaultRepo),
+  );
+  const testDbScript = reasoned(fail, () =>
+    resolveTestDbPath(dir, config.testDb, exists),
+  );
 
   const allowancePercent = config.allowancePercent ?? DEFAULT_ALLOWANCE_PERCENT;
   if (!isValidPercent(allowancePercent))
@@ -118,7 +148,7 @@ export function parseProjectConfig(
     name,
     dir,
     repos,
-    defaultRepo: defaultRepo as string,
+    defaultRepo,
     testDbScript,
     allowancePercent: allowancePercent as number,
     ...(teams.length > 0 ? { linearTeams: teams } : {}),
