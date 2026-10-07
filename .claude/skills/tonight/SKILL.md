@@ -21,7 +21,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
 3. Fetch candidates with `list_issues`, assignee `me`, state `Todo` only. If the Linear MCP is unavailable, run the same query through the `linear:linear-api` skill. If there are none, tell Adam and stop.
    Done when you hold every Todo ticket assigned to Adam.
 
-4. Show a numbered list: ID, title, team, priority, estimate. Ask which to run tonight, as numbers or IDs, in priority order, and tell him the runner works tickets in file order, so order is priority.
+4. Run `npm run -s prep-status -- --project <project>`; it prints one JSON line per Todo ticket in the project's `linearTeams`, with a `prep` field. Show a numbered list: ID, title, team, priority, estimate, prep. The prep column is one of: fresh, stale, new comments, not ready (with its blockers), inferred, none. Stale means the description changed after `/prep`; new comments means comments arrived after `/prep`. A ticket from step 3 that is missing from the output shows "—": it is outside this project's `linearTeams`. If the command errors, show the prep column as "?" and say why. Ask which to run tonight, as numbers or IDs, in priority order, and tell him the runner works tickets in file order, so order is priority.
    When a picked ticket depends on another picked ticket's unmerged code, order it after its parent and add `base: <ID>` under `repo:`. Both must be in the same repo.
    Done when Adam has named an ordered set.
 
@@ -29,6 +29,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__list_issues`, `mcp__claude_ai_Linea
    Done when every picked ticket has both.
 
 6. Check each picked ticket against every item in `.claude/skills/prep/gaps.md`. Tickets prepped with `/prep` carry their decisions in the description under `## Decisions`; count those as answered.
+   Say in the gap list header which picked tickets are fresh-prepped ("prepped, decisions recorded"), but still check every item in `gaps.md` for every ticket. For each stale, not ready or none ticket, add a one-line note suggesting `/prep <ID>` first.
    First list all tickets' gaps as short numbered titles, grouped by ticket, so Adam sees how many there are. Then ask about them one at a time with `AskUserQuestion` (load it with ToolSearch if it's deferred), one question per call, in the listed order, with the ticket ID as the header. Each question states the gap and what the ticket and comments show. Put your recommended answer first, labelled "(Recommended)", then at most one real alternative, then "Your call" and "Drop ticket" (the tool allows four options). Adam can type his own answer through "Other". Wait for each answer before you ask the next, and let it change later questions: drop a gap it settles, and reword one it affects.
    Write "your call" as a bullet like "Your call on X; state the choice in notes". "Drop ticket" removes it from tonight's set for the remaining steps and skips its other gaps.
    Done when every gap has an answer or its ticket is dropped.

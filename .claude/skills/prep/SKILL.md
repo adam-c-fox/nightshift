@@ -23,7 +23,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__get_issue`, `mcp__claude_ai_Linear_
    Done when every item has been checked.
 
 4. First list the gaps as short numbered titles so Adam sees how many there are. Then ask about them one at a time with `AskUserQuestion` (load it with ToolSearch if it's deferred), one question per call, in the listed order. Each question states the gap and what the code shows. Put your recommended answer first, labelled "(Recommended)", then at most one real alternative, then "Your call" and "Not ready" (the tool allows four options). Adam can type his own answer through "Other". Wait for each answer before you ask the next, and let it change later questions: drop a gap it settles, and reword one it affects.
-   "Not ready" ends the prep: list what the ticket still needs, leave Linear unchanged, and stop.
+   "Not ready" ends the prep: list what the ticket still needs, then run `npm run -s prep-mark -- <ID> --project <project> --not-ready "<blockers in one line>"`, leave the Linear ticket unchanged, record the outcome, and stop. If it prints `error`, tell Adam and stop anyway.
    Done when every gap has an answer.
 
 5. Draft the new description. Keep the existing text as it is. After it, add only the sections that have content:
@@ -38,7 +38,8 @@ Linear MCP tools are `mcp__claude_ai_Linear__get_issue`, `mcp__claude_ai_Linear_
    Done when Adam has approved the draft.
 
 7. Save it with `save_issue`, passing the ticket's `id`, the new `description`, `assignee: "me"` and `state: "Todo"`. Leave labels and the title as they are. Fetch the ticket again and compare its description with the approved draft.
-   Done when the saved description matches the draft, and the ticket is assigned to Adam and in Todo.
+   Then run `npm run -s prep-mark -- <ID> --project <project> --repo <repo>`. It re-fetches the ticket and records a hash of the saved description. If it prints `error`, show it to Adam; the prep itself still stands.
+   Done when the saved description matches the draft, the ticket is assigned to Adam and in Todo, and prep-mark printed the record.
 
 8. Finish with one line: the ticket ID, its repo, and "ready" or what still blocks it.
    Done when the line is shown.
