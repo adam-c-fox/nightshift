@@ -37,8 +37,8 @@ Linear MCP tools are `mcp__claude_ai_Linear__get_issue`, `mcp__claude_ai_Linear_
 6. Show the full draft description and ask Adam to approve or edit. Repeat until he approves.
    Done when Adam has approved the draft.
 
-7. Save it with `save_issue`, passing the ticket's `id` and the new `description` only, so state, assignee, labels and the title are left as they are. Fetch the ticket again and compare its description with the approved draft.
-   Done when the saved description matches the draft.
+7. Save it with `save_issue`, passing the ticket's `id`, the new `description`, `assignee: "me"` and `state: "Todo"`. Leave labels and the title as they are. Fetch the ticket again and compare its description with the approved draft.
+   Done when the saved description matches the draft, and the ticket is assigned to Adam and in Todo.
 
 8. Finish with one line: the ticket ID, its repo, and "ready" or what still blocks it.
    Done when the line is shown.
