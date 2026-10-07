@@ -3,6 +3,7 @@ node_modules/
 worktrees/
 reports/
 logs/
+state/
 *.log
 .DS_Store
 projects/*
