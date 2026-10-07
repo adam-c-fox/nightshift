@@ -7,7 +7,7 @@ export const TOOLCHAINS: readonly Toolchain[] = ["node", "terraform"];
 export const REPO_NAME_PATTERN = "[a-z0-9][a-z0-9_-]*";
 export const REPO_NAME = new RegExp(`^${REPO_NAME_PATTERN}$`);
 export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-export const DEFAULT_ALLOWANCE_PERCENT = 15;
+const DEFAULT_ALLOWANCE_PERCENT = 15;
 export const LINEAR_TEAM_KEY = /^[A-Z][A-Z0-9]*$/;
 
 export interface RepoConfig {
