@@ -23,7 +23,7 @@ Linear MCP tools are `mcp__claude_ai_Linear__get_issue`, `mcp__claude_ai_Linear_
    Done when every item has been checked.
 
 4. First list the gaps as short numbered titles so Adam sees how many there are. Then ask about them one at a time with `AskUserQuestion` (load it with ToolSearch if it's deferred), one question per call, in the listed order. Each question states the gap and what the code shows. Put your recommended answer first, labelled "(Recommended)", then at most one real alternative, then "Your call" and "Not ready" (the tool allows four options). Adam can type his own answer through "Other". Wait for each answer before you ask the next, and let it change later questions: drop a gap it settles, and reword one it affects.
-   "Not ready" ends the prep: list what the ticket still needs, then run `npm run -s prep-mark -- <ID> --project <project> --not-ready "<blockers in one line>"`, leave the Linear ticket unchanged, record the outcome, and stop. If it prints `error`, tell Adam and stop anyway.
+   "Not ready" ends the prep: list what the ticket still needs, then run `npm run -s prep-mark -- <ID> --project <project> --not-ready "<blockers in one line>"`, leave the Linear ticket unchanged, and stop. If it prints `error`, tell Adam and stop anyway.
    Done when every gap has an answer.
 
 5. Draft the new description. Keep the existing text as it is. After it, add only the sections that have content:
