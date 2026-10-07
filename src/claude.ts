@@ -5,7 +5,6 @@ import type { ClassifiedCheck } from "./checks.js";
 import type { Followup, FixResolution, LinearComment, ReviewFinding, ReviewRisk, Severity, TestResult, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const AGENTS_MD = path.join(ROOT, "AGENTS.md");
 const REVIEW_MD = path.join(ROOT, "prompts", "review.md");
 const FIX_MD = path.join(ROOT, "prompts", "fix.md");
 const VERIFY_MD = path.join(ROOT, "prompts", "verify.md");
@@ -415,6 +414,7 @@ export interface RunAgentOptions {
   checkIntervalMs?: number;
   env: NodeJS.ProcessEnv;
   settings: string;
+  instructions?: string;
 }
 
 export interface ClaudeRun {
@@ -471,7 +471,7 @@ export async function runAgent(
   const prompt = buildPrompt({ ticketId, ticketName, context, linearDesc, linearComments, linearUrl, state: linearState });
 
   if (dryRun) {
-    console.log(`  [dry-run] Would run: claude ${buildClaudeArgs("<AGENTS.md>").slice(0, -2).join(" ")} (in ${worktreePath})`);
+    console.log(`  [dry-run] Would run: claude ${buildClaudeArgs("<instructions>").slice(0, -2).join(" ")} (in ${worktreePath})`);
     console.log(`  [dry-run] Prompt:\n${prompt.slice(0, 500)}...`);
     return { success: true, rawOutput: "", report: {
       status: "done", title: "", summary: "dry run", filesCreated: [], filesModified: [],
@@ -479,7 +479,8 @@ export async function runAgent(
     }};
   }
 
-  const run = await execClaude(worktreePath, prompt, readFileSync(AGENTS_MD, "utf-8"), EDIT_PROFILE, options);
+  if (options.instructions === undefined) throw new Error("instructions missing");
+  const run = await execClaude(worktreePath, prompt, options.instructions, EDIT_PROFILE, options);
   const { value: report, error: parseError } = parseOrError(run.stdout, run.failure, parseReportBlock);
   return { success: run.failure === undefined, rawOutput: run.rawOutput, report, parseError, failure: run.failure, abortReason: run.abortReason };
 }
@@ -513,7 +514,8 @@ export async function runFix(
   worktreePath: string, brief: TicketBrief, findings: ReviewFinding[], options: RunAgentOptions,
 ): Promise<FixRunResult> {
   const prompt = buildFixPrompt(brief, findings);
-  const systemPrompt = [readFileSync(AGENTS_MD, "utf-8"), readFileSync(FIX_MD, "utf-8")].join("\n\n---\n\n");
+  if (options.instructions === undefined) throw new Error("instructions missing");
+  const systemPrompt = [options.instructions, readFileSync(FIX_MD, "utf-8")].join("\n\n---\n\n");
   const run = await execClaude(worktreePath, prompt, systemPrompt, EDIT_PROFILE, options);
   const parsedReport = parseOrError(run.stdout, run.failure, parseReportBlock);
   const parsedFixes = parseOrError(run.stdout, run.failure, parseFixesBlock);

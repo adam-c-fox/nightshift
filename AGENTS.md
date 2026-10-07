@@ -8,25 +8,22 @@ and always leave the repo in a state a human can review in the morning.
 
 ## 1 · Repo & tooling
 
-- **Main repo** (TypeScript monorepo): `npm workspaces` across `packages/*` and `services/*`.
-  - Use the same commands CI runs. Check `package.json` scripts if a repo differs.
-  - Tests: **Vitest**. `npm test` runs the root suite and every workspace's
-    own tests. Each workspace has its own vitest config, so run a single file
-    from inside its workspace, e.g. `npm test -w services/import-worker` or
-    `cd services/import-worker && npx vitest run tests/poll.test.ts`. A root
-    `npx vitest run` does NOT run workspace tests.
-  - Type-check: `npm run build && npm run typecheck` (per workspace, like CI).
-  - Lint and format: `npm run lint` and `npm run format`.
-  - A throwaway Postgres is running and `TEST_DATABASE_URL` points at it, so
-    database-backed tests (claims, races, migrations) run here. Run them.
-    Binding local ports is allowed, so HTTP server tests run too. Some things
-    are still missing (e.g. LibreOffice). If a test you rely on is skipped or
-    can't run, say so plainly in `notes`, and don't treat a skipped test as
-    proof.
-  - Do NOT build gitignored artifacts (`dist/`, generated clients) of other
-    packages just to make your tests pass. CI won't have them. If your tests
-    only pass that way, the test setup is wrong: fix it the way the repo
-    already resolves workspace packages in tests, or say so in `notes`.
+The **Project** section at the end of these instructions names the repos,
+their layout, the services available in this environment and what is missing.
+It overrides anything generic here.
+
+- Use the same commands CI runs. Check `package.json` scripts if a repo differs.
+- Tests: **Vitest**. Each workspace may have its own vitest config; run a
+  single file from inside its workspace. A root `npx vitest run` does NOT run
+  workspace tests.
+- Type-check: `npm run build && npm run typecheck` (per workspace, like CI).
+- Lint and format: `npm run lint` and `npm run format`.
+- If a test you rely on is skipped or can't run, say so plainly in `notes`,
+  and don't treat a skipped test as proof.
+- Do NOT build gitignored artifacts (`dist/`, generated clients) of other
+  packages just to make your tests pass. CI won't have them. If your tests
+  only pass that way, the test setup is wrong: fix it the way the repo
+  already resolves workspace packages in tests, or say so in `notes`.
 - **Terraform repo** (IaC, no JS):
   - Validate: `terraform init -backend=false && terraform validate`
   - Do NOT run Terraform `plan` or `apply`. The PR pipeline runs `plan`,
