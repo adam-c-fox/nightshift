@@ -14,6 +14,29 @@ export interface UsageSnapshot {
   resetInfo: string;
   sessionPercent?: number;
   sessionResetAt?: number;
+  weeklyResetAt?: number;
+}
+
+export interface UsageSummary {
+  weeklyPercent: number;
+  resetInfo: string;
+  resetAtIso?: string;
+}
+
+export function usageSummary(s: UsageSnapshot): UsageSummary {
+  return {
+    weeklyPercent: s.weeklyPercent,
+    resetInfo: s.resetInfo,
+    ...(s.weeklyResetAt !== undefined ? { resetAtIso: new Date(s.weeklyResetAt).toISOString() } : {}),
+  };
+}
+
+export function parseUsageSummary(stdout: string): UsageSummary {
+  const lastLine = stdout.split("\n").map((line) => line.trim()).filter(Boolean).at(-1);
+  if (!lastLine) throw new Error("no usage output");
+  const parsed = JSON.parse(lastLine) as UsageSummary & { error?: string };
+  if (parsed.error) throw new Error(parsed.error);
+  return parsed;
 }
 
 export const SESSION_WAIT_PCT = 80;
@@ -91,6 +114,7 @@ export function parseRateLimitHeaders(response: string): UsageSnapshot {
   return {
     weeklyPercent: toPercent(utilization),
     resetInfo,
+    ...(reset ? { weeklyResetAt: Number(reset) * 1000 } : {}),
     ...(sessionUtilization !== undefined ? { sessionPercent: toPercent(sessionUtilization) } : {}),
     ...(sessionReset ? { sessionResetAt: Number(sessionReset) * 1000 } : {}),
   };

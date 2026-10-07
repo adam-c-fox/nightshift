@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   apiUsageSource, budgetUsedPct, sessionAbortReason, sessionWaitMs, waitForSessionCapacity, cliUsageSource, closedBudget, formatUsageAttempts, openNightBudget,
-  parseRateLimitHeaders, parseUsageOutput, snapshotUsage, UsageUnavailableError, withCurrentUsage,
+  parseRateLimitHeaders, parseUsageOutput, parseUsageSummary, snapshotUsage, UsageUnavailableError, usageSummary, withCurrentUsage,
   type UsageCommandResult,
 } from "../src/budget.js";
 
@@ -170,8 +170,43 @@ describe("parseRateLimitHeaders", () => {
     expect(snapshot.sessionResetAt).toBe(1790975400 * 1000);
   });
 
+  it("reads the weekly reset as a millisecond epoch", () => {
+    expect(parseRateLimitHeaders(probeHeaders).weeklyResetAt).toBe(1791392400 * 1000);
+  });
+
+  it("leaves the weekly reset undefined without the header", () => {
+    const withoutReset = probeHeaders.replace(/^anthropic-ratelimit-unified-7d-reset:.*\n/m, "");
+    expect(parseRateLimitHeaders(withoutReset).weeklyResetAt).toBeUndefined();
+  });
+
   it("throws when the weekly header is missing", () => {
     expect(() => parseRateLimitHeaders("HTTP/2 200 \nanthropic-ratelimit-unified-5h-utilization: 0.05")).toThrow(/7d-utilization/);
+  });
+});
+
+describe("usageSummary", () => {
+  it("reports the weekly figures and reset as an ISO time, without session fields", () => {
+    expect(
+      usageSummary({ weeklyPercent: 42, resetInfo: "Oct 9", weeklyResetAt: Date.parse("2026-10-09T17:00:00Z"), sessionPercent: 5 }),
+    ).toEqual({ weeklyPercent: 42, resetInfo: "Oct 9", resetAtIso: "2026-10-09T17:00:00.000Z" });
+  });
+
+  it("omits the ISO time when the reset is unknown", () => {
+    expect(usageSummary({ weeklyPercent: 42, resetInfo: "Oct 9" })).toEqual({ weeklyPercent: 42, resetInfo: "Oct 9" });
+  });
+});
+
+describe("parseUsageSummary", () => {
+  it("reads the last non-empty line", () => {
+    expect(parseUsageSummary('noise\n{"weeklyPercent":42,"resetInfo":"Oct 9"}\n')).toEqual({ weeklyPercent: 42, resetInfo: "Oct 9" });
+  });
+
+  it("throws the reported error", () => {
+    expect(() => parseUsageSummary('{"error":"claude is not logged in"}')).toThrow(/not logged in/);
+  });
+
+  it("throws when there is no output", () => {
+    expect(() => parseUsageSummary("")).toThrow(/no usage output/);
   });
 });
 
