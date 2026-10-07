@@ -25,6 +25,7 @@ export interface LinearTicket {
   state: string;
   stateType: string;
   inProgressState?: { id: string; name: string };
+  inReviewState?: { id: string; name: string };
   url: string;
 }
 

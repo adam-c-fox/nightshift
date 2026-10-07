@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Ticket, TicketResult, SessionResult, SessionPostmortem, LinearComment, LinearTicket, NightBudget } from "./types.js";
 import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
-import { fetchTicket, markInProgress, shouldMarkInProgress } from "./linear.js";
+import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
 import { runAgent, runFix, runReview, runVerify, type TicketBrief } from "./claude.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
@@ -131,11 +131,10 @@ function holdForAutoComplete(result: TicketResult, existing: ExistingPr): void {
   result.notes = [result.notes, `PR #${existing.prId} has auto-complete set; not pushing agent commits to it.`].filter(Boolean).join(" | ");
 }
 
-async function startLinearTicket(linear: LinearTicket): Promise<void> {
-  const target = linear.inProgressState;
-  if (!target || !shouldMarkInProgress(linear.stateType)) return;
+async function moveLinearTicket(linear: LinearTicket, target: LinearTicket["inProgressState"]): Promise<void> {
+  if (!target) return;
   try {
-    await markInProgress(linear.id, target.id);
+    await setIssueState(linear.id, target.id);
     log(`  Linear: moved ${linear.identifier} to ${target.name}`);
   } catch (e) {
     log(`  Linear: could not move ${linear.identifier} to ${target.name}: ${(e as Error).message}`);
@@ -227,7 +226,7 @@ async function processTicket(
       linearUrl = linear.url;
       linearState = linear.state;
       log(`  Linear: ${linear.name} [${linear.state}]`);
-      if (!dryRun) await startLinearTicket(linear);
+      if (!dryRun && shouldMarkInProgress(linear.stateType)) await moveLinearTicket(linear, linear.inProgressState);
     } else {
       log(`  Linear: ticket ${ticketId} not found (using tonight.md context only)`);
     }
@@ -401,6 +400,7 @@ async function processTicket(
     }
   }
 
+  if (!dryRun && linear && shouldMarkInReview(ticketResult.status, linear.stateType)) await moveLinearTicket(linear, linear.inReviewState);
   ticketResult.durationSec = Math.round((Date.now() - startTime) / 1000);
   log(`  Result: ${ticketResult.status} (${ticketResult.durationSec}s)`);
   processed.set(ticketId, { branch: wt.branch, repo, pushed });

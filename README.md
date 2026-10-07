@@ -20,7 +20,7 @@ Cron starts the runner at 23:00. It reads the project's `tonight.md` and works t
 
 8. **Runs a postmortem after the last ticket.** A read-only agent ([`.claude/skills/postmortem/SKILL.md`](.claude/skills/postmortem/SKILL.md)) reviews the night's logs and suggests changes to the instructions and workflow. It never edits anything. It's skipped on a dry run, when no ticket was worked, or when usage has run out, and the report says so.
 
-Anything that can't be finished cleanly stays on a local branch, marked `needs_review`, with notes saying why.
+Anything that can't be finished cleanly stays on a local branch, marked `needs_review`, with notes saying why. Tickets that end `done` or `needs_review` are moved to In Review in Linear, if the team has that state.
 
 ### Budget
 
@@ -39,7 +39,7 @@ Fill in the root `.env`:
 
 | Variable | What it's for |
 | --- | --- |
-| `LINEAR_API_KEY` | Fetching tickets and moving them to In Progress |
+| `LINEAR_API_KEY` | Fetching tickets and moving them to In Progress and In Review |
 | `CLAUDE_CODE_OAUTH_TOKEN` | From `claude setup-token`. Cron can't read the login keychain. |
 | `NIGHTSHIFT_PROJECT` | Project used when `--project` isn't passed |
 
