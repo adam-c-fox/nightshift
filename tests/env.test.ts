@@ -1,8 +1,8 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { getEnv, lookupEnv, parseEnv, useProjectEnv } from "../src/env.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { envLookup, getEnv, lookupEnv, parseEnv, ROOT_ENV_FILE, useProjectEnv } from "../src/env.js";
 import { authorizationHeader } from "../src/linear.js";
 
 describe("parseEnv", () => {
@@ -40,5 +40,39 @@ describe("useProjectEnv", () => {
   it("treats a missing project env file as empty", () => {
     useProjectEnv(join(tmpdir(), "nightshift-missing", ".env"));
     expect(getEnv("NIGHTSHIFT_TEST_ONLY_VALUE")).toBeUndefined();
+  });
+});
+
+describe("envLookup", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const writeEnvFiles = () => {
+    const dir = mkdtempSync(join(tmpdir(), "env-"));
+    const a = join(dir, "a.env");
+    const b = join(dir, "b.env");
+    writeFileSync(a, "K=fromA\nE=\n");
+    writeFileSync(b, "K=fromB\nE=fromB\nM=m\n");
+    return { a, b, missing: join(dir, "missing.env") };
+  };
+
+  it("takes the first file with a non-empty value and ignores missing files", () => {
+    const { a, b, missing } = writeEnvFiles();
+    const lookup = envLookup([missing, a, b]);
+    expect(lookup("K")).toBe("fromA");
+    expect(lookup("E")).toBe("fromB");
+    expect(lookup("M")).toBe("m");
+    expect(lookup("NIGHTSHIFT_TEST_ABSENT")).toBeUndefined();
+  });
+
+  it("prefers process.env over the files", () => {
+    const { a, b } = writeEnvFiles();
+    vi.stubEnv("K", "env");
+    expect(envLookup([a, b])("K")).toBe("env");
+  });
+});
+
+describe("ROOT_ENV_FILE", () => {
+  it("points at the repo root .env", () => {
+    expect(ROOT_ENV_FILE).toMatch(/\.env$/);
   });
 });

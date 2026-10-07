@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const ENV_FILE = path.resolve(import.meta.dirname, "..", ".env");
+export const ROOT_ENV_FILE = path.resolve(import.meta.dirname, "..", ".env");
 
 export function parseEnv(content: string): Record<string, string> {
   const values: Record<string, string> = {};
@@ -34,7 +34,7 @@ let rootFileValues: Record<string, string> | undefined;
 let projectFileValues: Record<string, string> = {};
 
 function rootValues(): Record<string, string> {
-  rootFileValues ??= readEnvFile(ENV_FILE);
+  rootFileValues ??= readEnvFile(ROOT_ENV_FILE);
   return rootFileValues;
 }
 
@@ -48,6 +48,11 @@ export function lookupEnv(name: string, layers: Record<string, string | undefine
     if (value) return value;
   }
   return undefined;
+}
+
+export function envLookup(files: string[]): (name: string) => string | undefined {
+  const layers = [process.env, ...files.map(readEnvFile)];
+  return name => lookupEnv(name, layers);
 }
 
 export function getEnv(name: string): string | undefined {
