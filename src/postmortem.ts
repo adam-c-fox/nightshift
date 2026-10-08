@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { execClaude, extractBlock, parseOrError, parseRecords, POSTMORTEM_PROFILE, type RunAgentOptions } from "./claude.js";
+import { execClaude, extractBlock, parseOrError, parseRecords, POSTMORTEM_PROFILE, type ClaudeRun, type RunAgentOptions } from "./claude.js";
 import type { PostmortemSuggestion, SessionPostmortem, SessionResult, TicketResult } from "./types.js";
 
 const SKILL_MD = path.resolve(import.meta.dirname, "..", ".claude", "skills", "postmortem", "SKILL.md");
 const POSTMORTEM_START = "---POSTMORTEM---";
 const FIELDS = ["id", "target", "tickets", "problem", "cause", "change"];
-const LOG_SUFFIXES = ["output", "review", "fix", "verify", "diff"];
+const LOG_SUFFIXES = ["output", "review", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm", "fix", "verify", "diff"];
 
 export type UsageGate = "open" | "hit" | "unreadable";
 
@@ -77,9 +77,13 @@ export async function runPostmortem(
 ): Promise<{ rawOutput: string; outcome: Omit<SessionPostmortem, "file"> }> {
   const system = postmortemSystemPrompt(readFileSync(SKILL_MD, "utf-8"));
   const run = await execClaude(cwd, buildPostmortemPrompt(date, logsRel), system, POSTMORTEM_PROFILE, options, addDirs);
+  return { rawOutput: run.rawOutput, outcome: postmortemOutcome(run) };
+}
+
+export function postmortemOutcome(run: ClaudeRun): Omit<SessionPostmortem, "file"> {
   const { value, error } = parseOrError(run.stdout, run.failure, parsePostmortemBlock);
-  const outcome = value
+  const base = value
     ? { outcome: "done" as const, suggestions: value }
     : { outcome: "failed" as const, reason: error, suggestions: [] };
-  return { rawOutput: run.rawOutput, outcome };
+  return run.usage ? { ...base, usage: run.usage } : base;
 }

@@ -1,10 +1,10 @@
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { Ticket, TicketResult, SessionResult, SessionPostmortem, LinearComment, LinearTicket, NightBudget } from "./types.js";
+import { REVIEW_LENSES, lensStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type LinearComment, type LinearTicket, type NightBudget, type RunUsage } from "./types.js";
 import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
-import { runAgent, runFix, runReview, runVerify, type TicketBrief } from "./claude.js";
+import { runAgent, runConfirm, runFinder, runFix, runVerify, type TicketBrief } from "./claude.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, requireEnv, useProjectEnv } from "./env.js";
@@ -271,9 +271,15 @@ async function processTicket(
     verifyCommands: report?.verifyCommands ?? [],
     notes: report?.notes ?? "",
     followups: report?.followups ?? [],
+    decisions: report?.decisions ?? [],
     worktreePath: wt.wtPath,
     branch: wt.branch,
     durationSec: 0,
+    runs: dryRun ? [] : [{ stage: "implement", usage: result.usage }],
+  };
+  const recordRun = <T extends { usage?: RunUsage }>(stage: string, run: T): T => {
+    ticketResult.runs!.push({ stage, usage: run.usage });
+    return run;
   };
   if (existing && wt.startedFromPr) {
     ticketResult.prId = existing.prId;
@@ -313,17 +319,23 @@ async function processTicket(
       hasChanges: () => hasChangesVsBase(wt),
       snapshot: () => worktreeSnapshot(wt),
       gateOpen: () => weeklyGateReason() === undefined,
-      review: async () => {
+      lenses: REVIEW_LENSES,
+      decisions: report?.decisions ?? [],
+      find: async (lens, pass) => {
         await waitForSession();
-        return runReview(wt.wtPath, brief, report, wt.baseRef, agentOptions, { checks, related: related.map(r => ({ ticketId: r.ticketId, branch: r.branch })) });
+        return recordRun(lensStage(lens, pass), await runFinder(wt.wtPath, lens, brief, report, wt.baseRef, agentOptions, { checks, related: related.map(r => ({ ticketId: r.ticketId, branch: r.branch })) }));
+      },
+      confirm: async candidates => {
+        await waitForSession();
+        return recordRun("review-confirm", await runConfirm(wt.wtPath, brief, wt.baseRef, candidates, agentOptions));
       },
       fix: async findings => {
         await waitForSession();
-        return runFix(wt.wtPath, brief, findings, agentOptions);
+        return recordRun("fix", await runFix(wt.wtPath, brief, findings, agentOptions));
       },
       verify: async (findings, resolutions) => {
         await waitForSession();
-        return runVerify(wt.wtPath, brief, wt.baseRef, findings, resolutions, agentOptions);
+        return recordRun("verify", await runVerify(wt.wtPath, brief, wt.baseRef, findings, resolutions, agentOptions));
       },
       saveOutput: (name, raw) => saveLog(`${ticketId}-${name}.txt`, raw),
       log,
@@ -370,7 +382,7 @@ async function processTicket(
           const fix = await fixFailingChecks(pr, { ticketId, title: ticketResult.title ?? "" }, {
             runAgent: async context => {
               await waitForSession();
-              return runAgent(wt.wtPath, ticketId, ticketName, context, linearDesc, linearComments, linearUrl, linearState, false, agentOptions);
+              return recordRun("ci-fix", await runAgent(wt.wtPath, ticketId, ticketName, context, linearDesc, linearComments, linearUrl, linearState, false, agentOptions));
             },
             commit: subject => {
               const outcome = commitWorktree(wt, subject, log);

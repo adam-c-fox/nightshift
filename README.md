@@ -15,7 +15,7 @@ Cron starts the runner at 23:00. It reads the project's `tonight.md` and works t
 3. **Runs the repo's checks** (tests, typecheck, lint, or `terraform validate` and `fmt`) to get a baseline.
 4. **Runs the agent** with the ticket, your context bullets and [`AGENTS.md`](AGENTS.md) plus the project's own `AGENTS.md`. The agent works test-first and ends with a structured report, including anything it spotted but didn't fix ("Spotted, not fixed" in the report).
 5. **Re-runs the checks** against the baseline, so only failures the change introduced count as regressions.
-6. **Reviews the diff** with a separate read-only agent ([`prompts/review.md`](prompts/review.md)), then has an agent fix the findings ([`prompts/fix.md`](prompts/fix.md)), and re-checks the claimed fixes with a second read-only pass ([`prompts/verify.md`](prompts/verify.md)).
+6. **Reviews the diff** with read-only agents, one after another: three finders ([bugs](prompts/review-bugs.md), [spec](prompts/review-spec.md), [reuse](prompts/review-reuse.md), on the shared [`review.md`](prompts/review.md)). The bugs finder runs twice, independently and with the same prompt, because a single pass catches a given bug in some runs and misses it in others; the passes run in the order bugs, bugs, spec, reuse, and their candidates are numbered together. Then a [confirm step](prompts/confirm.md) that keeps only the findings it can demonstrate. Unproven ones become "worth a closer look" risks in the PR. An agent then fixes what was confirmed ([`prompts/fix.md`](prompts/fix.md)), and a second read-only pass re-checks the claimed fixes ([`prompts/verify.md`](prompts/verify.md)). Token usage for every run is recorded in the session JSON and shown in the morning report.
 7. **Commits and opens or updates the PR.** If CI fails, it pulls the failure logs and makes up to two attempts to fix them. It won't push to a PR that has auto-complete set.
 
 8. **Runs a postmortem after the last ticket.** A read-only agent ([`.claude/skills/postmortem/SKILL.md`](.claude/skills/postmortem/SKILL.md)) reviews the night's logs and suggests changes to the instructions and workflow. It never edits anything. It's skipped on a dry run, when no ticket was worked, or when usage has run out, and the report says so.
@@ -177,3 +177,23 @@ The server binds to 127.0.0.1 and only accepts requests whose `Host` is `127.0.0
 npm test
 npm run typecheck
 ```
+
+### Replaying a review
+
+`replay-review` re-runs the finders and the confirm step against a change from an earlier night, without the implementer run, the fixer or any PR. It spends real usage, so it isn't part of `npm test`:
+
+```sh
+npm run -s replay-review -- --project <name> --ticket <ID> --base <sha> \
+  --diff logs/<name>/<ID>-diff.txt --report logs/<name>/<ID>-output.txt [--related ID=branch ...]
+```
+
+It adds a detached worktree under the system temp directory at `<sha>`, applies the diff and commits it there, fetches the ticket from Linear and parses the implementer's report. It then prints the confirmed findings, the risks (with a `[data]` marker), the rulings on the implementer's decisions, each lens's outcome (the bugs finder runs twice, so it appears as `bugs` and `bugs (pass 2)`), and the usage of every run with a total. Raw outputs go to `logs/<name>/replay-<date>/`, with the second bugs pass in its own `review-bugs-2` log. The temporary worktree is removed afterwards; your branches and other worktrees are never touched. The repo has no `node_modules` in the replay, so the finders can read code but not run tests, and no check results are passed in. `--related` takes branches of related tickets for the reuse lens.
+
+To judge a replay against a synthetic export example:
+
+1. Use the base commit recorded for that change. For a stacked ticket, use its parent's commit from the same night rather than the current default branch. Check that the saved diff applies before running agents.
+2. Write down the known issues in that diff, such as an export that reads only its first row or reports success without writing a file, and check whether the review surfaces them.
+3. Check that choices left open by the ticket appear as risks or decisions, rather than being silently treated as requirements.
+4. To exercise decision parsing, replay a report with choices in its notes and another with the same choices in a structured `decisions:` list.
+5. Compare each lens's candidates with the confirmation verdicts and compare the usage cost with the original run.
+

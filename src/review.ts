@@ -1,17 +1,24 @@
 import { deriveOutcome } from "./status.js";
-import type { AgentReport, FixRunResult, ReviewRunResult, VerifyRunResult } from "./claude.js";
-import type { Followup, FixResolution, FixVerification, ReviewFinding, TestResult, TicketReview } from "./types.js";
+import type { AgentReport, ConfirmRunResult, FixRunResult, FoundFinding, ParsedRuling, ReviewRunResult, VerifyRunResult } from "./claude.js";
+import type {
+  CandidateVerdict, Decision, DecisionRuling, Followup, FixResolution, FixVerification, LensRun, ReviewCandidate, ReviewFinding,
+  ReviewLens, ReviewRisk, ReviewStage, Severity, TestResult, TicketReview,
+} from "./types.js";
+import { lensLabel, lensStage } from "./types.js";
 
 export interface ReviewDeps {
   hasChanges(): boolean;
   snapshot(): string;
   gateOpen(): boolean;
-  review(): Promise<ReviewRunResult>;
+  lenses: ReviewLens[];
+  find(lens: ReviewLens, pass: number): Promise<ReviewRunResult>;
+  confirm(candidates: ReviewCandidate[]): Promise<ConfirmRunResult>;
+  decisions?: Decision[];
   fix(findings: ReviewFinding[]): Promise<FixRunResult>;
   regressions?: ReviewFinding[];
   recheck?(): Promise<ReviewFinding[]>;
   verify?(findings: ReviewFinding[], resolutions: FixResolution[]): Promise<VerifyRunResult>;
-  saveOutput(stage: "review" | "fix" | "verify", raw: string): void;
+  saveOutput(stage: ReviewStage | "review-confirm" | "fix" | "verify", raw: string): void;
   log(msg: string): void;
 }
 
@@ -30,13 +37,14 @@ interface Refinable {
   filesModified: string[];
   tests: TestResult[];
   followups: Followup[];
+  decisions?: Decision[];
 }
 
 const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
 
-const unionFollowups = (a: Followup[], b: Followup[]): Followup[] => {
-  const seen = new Map<string, Followup>();
-  for (const f of [...a, ...b]) seen.set(`${f.file}\0${f.note}`, seen.get(`${f.file}\0${f.note}`) ?? f);
+const unionBy = <T>(items: T[], key: (item: T) => string): T[] => {
+  const seen = new Map<string, T>();
+  for (const item of items) if (!seen.has(key(item))) seen.set(key(item), item);
   return [...seen.values()];
 };
 
@@ -50,7 +58,8 @@ export function mergeFixReport(base: Refinable, fix: AgentReport): Refinable {
     filesCreated: union(base.filesCreated, fix.filesCreated),
     filesModified: union(base.filesModified, fix.filesModified),
     tests: [...replaced, ...added],
-    followups: unionFollowups(base.followups, fix.followups),
+    followups: unionBy([...base.followups, ...fix.followups], f => `${f.file}\0${f.note}`),
+    decisions: unionBy([...(base.decisions ?? []), ...fix.decisions], d => `${d.file}\0${d.decision}`),
   };
 }
 
@@ -122,6 +131,232 @@ function failedReview(reason: string, publish: boolean, notes: string[], regress
 const regressionNames = (findings: ReviewFinding[]): string =>
   findings.map(f => f.issue.split(" fails after the change")[0]).join(", ");
 
+type Pending = Omit<ReviewCandidate, "id">;
+type RecordedCandidate = ReviewCandidate & { verdict?: CandidateVerdict };
+type ReviewRecord = Pick<TicketReview, "lenses" | "candidates" | "confirmation" | "decisions">;
+
+export interface FoundReview {
+  stopped?: undefined;
+  findings: ReviewFinding[];
+  risks: ReviewRisk[];
+  record: ReviewRecord;
+  notes: string[];
+  needsReview: boolean;
+}
+
+export type FindAndConfirmResult = FoundReview | { stopped: ReviewStageOutcome };
+
+const LENS_PREFIX: Record<ReviewLens, string> = { bugs: "B", spec: "S", reuse: "U" };
+
+const pendingFinding = (lens: ReviewLens, f: FoundFinding): Pending => ({
+  lens, kind: "finding", severity: f.severity, confidence: f.confidence ?? "proven",
+  file: f.file, issue: f.issue, suggestion: f.suggestion, data: false, ...(f.decision ? { decision: f.decision } : {}),
+});
+
+const pendingRisk = (lens: ReviewLens, r: ReviewRisk): Pending => ({
+  lens, kind: "risk", severity: "major", confidence: "suspected", file: r.file, issue: r.risk, suggestion: "", data: r.data ?? false,
+});
+
+const riskCandidate = (file: string, text: string): Pending =>
+  pendingRisk("bugs", { file, risk: text });
+
+interface LensStep {
+  run: LensRun;
+  pending: Pending[];
+  rulings: ParsedRuling[];
+}
+
+const lensStep = (lens: ReviewLens, pass: number, outcome: LensRun["outcome"], reason?: string, pending: Pending[] = [], rulings: ParsedRuling[] = []): LensStep =>
+  ({ run: { lens, ...(pass > 1 ? { pass } : {}), outcome, ...(reason ? { reason } : {}), candidates: pending.length }, pending, rulings });
+
+async function runLens(lens: ReviewLens, pass: number, deps: ReviewDeps, regressions: ReviewFinding[]): Promise<LensStep | { stopped: ReviewStageOutcome }> {
+  const label = lensLabel(lens, pass);
+  if (!deps.gateOpen()) return lensStep(lens, pass, "skipped", "budget cap reached");
+
+  const before = deps.snapshot();
+  deps.log(`  Reviewing change (${pass > 1 ? `${lens}, pass ${pass}` : lens})`);
+  const run = await deps.find(lens, pass);
+  deps.saveOutput(lensStage(lens, pass), run.rawOutput);
+
+  if (deps.snapshot() !== before) {
+    const reason = `the ${label} review run modified the worktree`;
+    deps.log(`  Review failed: ${reason}; not publishing`);
+    return { stopped: failedReview(reason, false, [`Review failed: ${reason}; work kept on local branch, not pushed.`], regressions) };
+  }
+
+  const failure = run.failure ?? run.parseError;
+  if (failure || !run.findings) {
+    const reason = failure ?? "no findings reported";
+    deps.log(`  Review (${label}) failed: ${reason}`);
+    return lensStep(lens, pass, "failed", reason);
+  }
+  const pending = [...run.findings.map(f => pendingFinding(lens, f)), ...(run.risks ?? []).map(r => pendingRisk(lens, r))];
+  return lensStep(lens, pass, "reviewed", undefined, pending, run.rulings ?? []);
+}
+
+interface Ruled {
+  rulings: DecisionRuling[];
+  risks: Pending[];
+  notes: string[];
+}
+
+const RULING_STRICTNESS: ParsedRuling["ruling"][] = ["accept", "risk", "finding"];
+
+const strictest = (rulings: ParsedRuling[]): ParsedRuling | undefined =>
+  rulings.reduce<ParsedRuling | undefined>((top, r) => !top || RULING_STRICTNESS.indexOf(r.ruling) > RULING_STRICTNESS.indexOf(top.ruling) ? r : top, undefined);
+
+function ruleOnDecisions(decisions: Decision[], parsed: ParsedRuling[], pending: Pending[]): Ruled {
+  const listed = decisions.map((d, i) => ({ ...d, id: `D${i + 1}` }));
+  const unlistedIds = [...new Set(parsed.map(p => p.id).filter(id => !listed.some(d => d.id === id)))];
+  const entries = [
+    ...listed.map(d => ({ decision: d, parsed: strictest(parsed.filter(p => p.id === d.id)) })),
+    ...unlistedIds.map(id => ({ decision: { id, file: "", decision: "(taken from the notes)" }, parsed: strictest(parsed.filter(p => p.id === id)) })),
+  ];
+  const ruled: Ruled = { rulings: [], risks: [], notes: [] };
+  for (const { decision, parsed: ruling } of entries) {
+    const record = (kind: DecisionRuling["ruling"], reason: string) =>
+      ruled.rulings.push({ id: decision.id, decision: decision.decision, file: decision.file, ruling: kind, reason });
+    if (ruling?.ruling === "accept") record("accept", ruling.reason);
+    else if (ruling?.ruling === "risk") {
+      record("risk", ruling.reason);
+      ruled.risks.push(riskCandidate(decision.file, ruling.reason));
+    } else if (ruling?.ruling === "finding" && pending.some(p => p.kind === "finding" && p.decision === decision.id)) {
+      record("finding", ruling.reason);
+    } else if (ruling?.ruling === "finding") {
+      record("risk", ruling.reason);
+      ruled.risks.push(riskCandidate(decision.file, ruling.reason));
+    } else {
+      record("unruled", "not ruled on");
+      ruled.risks.push(riskCandidate(decision.file, decision.decision));
+      ruled.notes.push(`Decision ${decision.id} not ruled on`);
+    }
+  }
+  return ruled;
+}
+
+const withIds = (lenses: ReviewLens[], pending: Pending[]): ReviewCandidate[] =>
+  lenses.flatMap(lens => pending.filter(p => p.lens === lens).map((p, i): ReviewCandidate => ({ id: `${LENS_PREFIX[lens]}${i + 1}`, ...p })));
+
+const toFinding = (c: ReviewCandidate, n: number, severity: Severity = c.severity): ReviewFinding =>
+  ({ id: `R${n}`, severity, file: c.file, issue: c.issue, suggestion: c.suggestion, from: c.id });
+
+const toRisk = (c: ReviewCandidate, data: boolean = c.data): ReviewRisk => ({ file: c.file, risk: c.issue, data });
+
+interface Judgement {
+  findings: ReviewFinding[];
+  risks: ReviewRisk[];
+  candidates: RecordedCandidate[];
+}
+
+function judgeCandidates(candidates: ReviewCandidate[], verdicts: CandidateVerdict[]): Judgement {
+  const recorded = candidates.map((c): RecordedCandidate =>
+    ({ ...c, verdict: verdicts.find(v => v.id === c.id) ?? { id: c.id, verdict: "unproven", note: "not covered by the confirm step" } }));
+  const confirmed = recorded.filter(c => c.verdict?.verdict === "confirmed");
+  const unproven = recorded.filter(c => c.verdict?.verdict === "unproven");
+  return {
+    findings: confirmed.map((c, i) => toFinding(c, i + 1, c.verdict?.severity)),
+    risks: unproven.map(c => toRisk(c, c.verdict?.data ?? c.data)),
+    candidates: recorded,
+  };
+}
+
+function unconfirmed(candidates: ReviewCandidate[]): Judgement {
+  const asked = candidates.filter(c => c.kind === "finding");
+  return {
+    findings: asked.map((c, i) => toFinding(c, i + 1)),
+    risks: candidates.filter(c => c.kind === "risk").map(c => toRisk(c)),
+    candidates,
+  };
+}
+
+const dataRiskNotes = (risks: ReviewRisk[]): string[] => {
+  const files = [...new Set(risks.filter(r => r.data).map(r => r.file))];
+  return files.length > 0 ? [`Unconfirmed risk to recorded data: ${files.join(", ")}`] : [];
+};
+
+const lensNotes = (runs: LensRun[]): string[] =>
+  runs.filter(r => r.outcome !== "reviewed").map(r => `Review lens ${lensLabel(r.lens, r.pass)} ${r.outcome}: ${r.reason}.`);
+
+const allLensesFailedReason = (runs: LensRun[]): string =>
+  runs.length === 1 ? runs[0].reason! : runs.map(r => `${lensLabel(r.lens, r.pass)}: ${r.reason}`).join("; ");
+
+type Confirmation =
+  | { verdicts: CandidateVerdict[] }
+  | { unconfirmed: { outcome: "skipped" | "failed"; reason: string } }
+  | { stopped: ReviewStageOutcome };
+
+async function confirmCandidates(candidates: ReviewCandidate[], deps: ReviewDeps, regressions: ReviewFinding[]): Promise<Confirmation> {
+  if (!deps.gateOpen()) return { unconfirmed: { outcome: "skipped", reason: "budget cap reached" } };
+
+  const before = deps.snapshot();
+  deps.log(`  Confirming ${candidates.length} candidate(s)`);
+  const run = await deps.confirm(candidates);
+  deps.saveOutput("review-confirm", run.rawOutput);
+
+  if (deps.snapshot() !== before) {
+    const reason = "the confirm run modified the worktree";
+    deps.log(`  Review failed: ${reason}; not publishing`);
+    return { stopped: failedReview(reason, false, [`Review failed: ${reason}; work kept on local branch, not pushed.`], regressions) };
+  }
+  const failure = run.failure ?? run.parseError;
+  if (failure || !run.verdicts) {
+    const reason = failure ?? "no verdicts reported";
+    deps.log(`  Confirm failed: ${reason}`);
+    return { unconfirmed: { outcome: "failed", reason } };
+  }
+  return { verdicts: run.verdicts };
+}
+
+const withRecord = (outcome: ReviewStageOutcome, record: ReviewRecord): ReviewStageOutcome =>
+  ({ ...outcome, review: { ...outcome.review, ...record } });
+
+export async function findAndConfirm(deps: ReviewDeps): Promise<FindAndConfirmResult> {
+  const regressions = deps.regressions ?? [];
+  const steps: LensStep[] = [];
+  for (const [i, lens] of deps.lenses.entries()) {
+    const pass = deps.lenses.slice(0, i + 1).filter(l => l === lens).length;
+    const step = await runLens(lens, pass, deps, regressions);
+    if ("stopped" in step) return step;
+    steps.push(step);
+  }
+  const lenses = steps.map(s => s.run);
+  if (!lenses.some(r => r.outcome === "reviewed")) {
+    const reason = allLensesFailedReason(lenses);
+    deps.log(`  Review failed: ${reason}`);
+    return { stopped: withRecord(failedReview(reason, true, [`Review failed: ${reason}`], regressions), { lenses }) };
+  }
+
+  const found = steps.flatMap(s => s.pending);
+  const ruled = ruleOnDecisions(deps.decisions ?? [], steps.flatMap(s => s.rulings), found);
+  const candidates = withIds([...new Set([...deps.lenses, ...[...found, ...ruled.risks].map(p => p.lens)])], [...found, ...ruled.risks]);
+  const notes = [...lensNotes(lenses), ...ruled.notes];
+  const decisions = ruled.rulings.length > 0 ? { decisions: ruled.rulings } : {};
+
+  let judgement: Judgement = { findings: [], risks: [], candidates };
+  let confirmation: TicketReview["confirmation"];
+  if (candidates.length > 0) {
+    const step = await confirmCandidates(candidates, deps, regressions);
+    if ("stopped" in step) return { stopped: withRecord(step.stopped, { lenses, candidates, ...decisions }) };
+    if ("verdicts" in step) {
+      judgement = judgeCandidates(candidates, step.verdicts);
+      confirmation = { outcome: "confirmed" };
+    } else {
+      judgement = unconfirmed(candidates);
+      confirmation = step.unconfirmed;
+      notes.push(`Review candidates unconfirmed: ${step.unconfirmed.reason}.`);
+    }
+  }
+
+  const dataNotes = dataRiskNotes(judgement.risks);
+  return {
+    findings: [...regressions, ...judgement.findings],
+    risks: judgement.risks,
+    record: { lenses, candidates: judgement.candidates, ...(confirmation ? { confirmation } : {}), ...decisions },
+    notes: [...notes, ...dataNotes],
+    needsReview: notes.length > 0 || dataNotes.length > 0,
+  };
+}
+
 export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Promise<ReviewStageOutcome> {
   const quiet = (reason: string): ReviewStageOutcome =>
     ({ review: { outcome: "skipped", reason, findings: [], resolutions: [] }, publish: true, needsReview: false, notes: [] });
@@ -137,36 +372,20 @@ export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Prom
     };
   }
 
-  const before = deps.snapshot();
-  deps.log("  Reviewing change");
-  const run = await deps.review();
-  deps.saveOutput("review", run.rawOutput);
+  const found = await findAndConfirm(deps);
+  if (found.stopped) return found.stopped;
+  const { findings, risks, record } = found;
 
-  if (deps.snapshot() !== before) {
-    const reason = "the review run modified the worktree";
-    deps.log(`  Review failed: ${reason}; not publishing`);
-    return failedReview(reason, false, [`Review failed: ${reason}; work kept on local branch, not pushed.`], regressions);
-  }
-
-  const failure = run.failure ?? run.parseError;
-  if (failure || !run.findings) {
-    const reason = failure ?? "no findings reported";
-    deps.log(`  Review failed: ${reason}`);
-    return failedReview(reason, true, [`Review failed: ${reason}`], regressions);
-  }
-
-  const findings = [...regressions, ...run.findings];
-  const risks = run.risks ?? [];
   if (findings.length === 0) {
     deps.log("  Review: no issues found");
-    return { review: { outcome: "reviewed", findings, resolutions: [], risks }, publish: true, needsReview: false, notes: [] };
+    return { review: { outcome: "reviewed", findings, resolutions: [], risks, ...record }, publish: true, needsReview: found.needsReview, notes: found.notes };
   }
   deps.log(`  Review: ${findings.length} issue(s) found`);
 
   if (!deps.gateOpen()) {
     return {
-      review: { outcome: "reviewed", findings, resolutions: [], risks },
-      ...settle(findings, [], [`Review found ${findings.length} issue(s); fix skipped: budget cap reached.`], true),
+      review: { outcome: "reviewed", findings, resolutions: [], risks, ...record },
+      ...settle(findings, [], [...found.notes, `Review found ${findings.length} issue(s); fix skipped: budget cap reached.`], true),
     };
   }
 
@@ -177,8 +396,8 @@ export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Prom
 
   if (!agent.publish) {
     return {
-      review: { outcome: "reviewed", findings, resolutions: notFixed(findings, "the fix run did not finish"), risks },
-      ...settle(findings, [], [`Review found ${findings.length} issue(s). ${agent.notes.join(" ")}`], true),
+      review: { outcome: "reviewed", findings, resolutions: notFixed(findings, "the fix run did not finish"), risks, ...record },
+      ...settle(findings, [], [...found.notes, `Review found ${findings.length} issue(s). ${agent.notes.join(" ")}`], true),
     };
   }
 
@@ -190,15 +409,16 @@ export async function reviewAndFix(publishable: boolean, deps: ReviewDeps): Prom
   const stillFailing = remaining.length > 0 ? [`Checks still failing after the fix: ${regressionNames(remaining)}.`] : [];
   const verified = await verifyFixes(findings, resolutions, deps);
   const notes = [
+    ...found.notes,
     `Review found ${findings.length} issue(s); ${fixedCount} fixed.`,
     ...(fix.fixesError ? [`Fix run gave no usable fixes list: ${fix.fixesError}`] : []),
     ...agent.notes,
     ...stillFailing,
     ...verified.notes,
   ];
-  const settled = settle(findings, verified.resolutions, notes, agent.status === "needs_review" || remaining.length > 0 || verified.needsReview);
+  const settled = settle(findings, verified.resolutions, notes, found.needsReview || agent.status === "needs_review" || remaining.length > 0 || verified.needsReview);
   return {
-    review: { outcome: "reviewed", findings, resolutions: verified.resolutions, risks, ...(verified.verification && { verification: verified.verification }) },
+    review: { outcome: "reviewed", findings, resolutions: verified.resolutions, risks, ...record, ...(verified.verification && { verification: verified.verification }) },
     fixReport: fix.report,
     ...settled,
     publish: settled.publish && verified.publish,

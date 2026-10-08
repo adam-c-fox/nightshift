@@ -27,6 +27,11 @@ followups:
     note: "Swallows errors: add logging"
   - file: src/other.ts
     note: Dead branch.
+decisions:
+  - file: src/export.ts
+    decision: "A row with no header is skipped: not an error"
+  - file: src/other.ts
+    decision: Empty files are marked read.
 ---
 `;
 
@@ -48,6 +53,10 @@ describe("parseReportBlock", () => {
         { file: "src/legacy.ts", note: "Swallows errors: add logging" },
         { file: "src/other.ts", note: "Dead branch." },
       ],
+      decisions: [
+        { file: "src/export.ts", decision: "A row with no header is skipped: not an error" },
+        { file: "src/other.ts", decision: "Empty files are marked read." },
+      ],
     });
   });
 
@@ -55,6 +64,12 @@ describe("parseReportBlock", () => {
     const withoutKey = block.replace(/followups:[\s\S]*?\n---/, "---");
     expect(parseReportBlock(withoutKey).followups).toEqual([]);
     expect(parseReportBlock(block.replace(/followups:[\s\S]*?\n---/, "followups: []\n---")).followups).toEqual([]);
+  });
+
+  it("gives an empty decisions list when missing or empty", () => {
+    const withoutKey = block.replace(/decisions:[\s\S]*?\n---/, "---");
+    expect(parseReportBlock(withoutKey).decisions).toEqual([]);
+    expect(parseReportBlock(block.replace(/decisions:[\s\S]*?\n---/, "decisions: []\n---")).decisions).toEqual([]);
   });
 
   it("leaves the title empty when the report has none", () => {

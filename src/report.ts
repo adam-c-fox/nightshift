@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import type { CheckRecord, FixResolution, FixVerification, ReviewFinding, SessionPostmortem, SessionResult, TicketResult, VerifyResult } from "./types.js";
+import { lensLabel } from "./types.js";
+import type { CheckRecord, FixResolution, FixVerification, LensRun, ReviewFinding, RunRecord, RunUsage, SessionPostmortem, SessionResult, TicketResult, TicketReview, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
 
@@ -78,7 +79,7 @@ function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefin
   return `<li class="finding">
            <div class="finding-head">
              <span class="sev sev-${finding.severity}">${finding.severity}</span>
-             <span class="finding-id">${esc(finding.id)}</span>
+             <span class="finding-id">${esc(finding.id)}</span>${finding.from ? `<span class="finding-from">(from ${esc(finding.from)})</span>` : ""}
              <code class="finding-file">${esc(finding.file)}</code>
            </div>
            <div>${esc(finding.issue)}</div>
@@ -90,7 +91,7 @@ function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefin
 function risksHTML(t: TicketResult): string {
   const risks = t.review?.risks ?? [];
   if (risks.length === 0) return "";
-  const items = risks.map(r => `<li><code class="finding-file">${esc(r.file)}</code> ${esc(r.risk)}</li>`).join("");
+  const items = risks.map(r => `<li>${r.data ? `<span class="data-risk">recorded data</span> ` : ""}<code class="finding-file">${esc(r.file)}</code> ${esc(r.risk)}</li>`).join("");
   return `<div class="review"><strong>Worth a closer look</strong><ul class="risks">${items}</ul></div>`;
 }
 
@@ -110,19 +111,58 @@ function checksHTML(t: TicketResult): string {
   return `<div class="checks"><strong>Checks</strong><table><tr><th>Check</th><th>Result</th><th>Time</th></tr>${rows}</table></div>`;
 }
 
+const LENS_MARK: Record<LensRun["outcome"], (l: LensRun) => string> = {
+  reviewed: l => `${lensLabel(l.lens, l.pass)} ✓`,
+  skipped: l => `${lensLabel(l.lens, l.pass)} skipped (${l.reason ?? ""})`,
+  failed: l => `${lensLabel(l.lens, l.pass)} failed (${l.reason ?? ""})`,
+};
+
+function candidateTally(review: TicketReview): string {
+  const candidates = review.candidates ?? [];
+  if (candidates.length === 0) return "";
+  const count = (...verdicts: string[]) => candidates.filter(c => c.verdict && verdicts.includes(c.verdict.verdict)).length;
+  const outcome = candidates.some(c => c.verdict)
+    ? `${count("confirmed")} confirmed, ${count("unproven")} unproven, ${count("duplicate", "rejected")} dropped`
+    : "unconfirmed";
+  return ` · ${candidates.length} candidates → ${outcome}`;
+}
+
+function stagesHTML(review: TicketReview): string {
+  if (!review.lenses || review.lenses.length === 0) return "";
+  return `<div class="review review-stages">Review: ${review.lenses.map(l => esc(LENS_MARK[l.outcome](l))).join(" · ")}${candidateTally(review)}</div>`;
+}
+
+function droppedHTML(review: TicketReview): string {
+  const dropped = (review.candidates ?? []).filter(c => c.verdict?.verdict === "duplicate" || c.verdict?.verdict === "rejected");
+  if (dropped.length === 0) return "";
+  const items = dropped.map(c => {
+    const why = c.verdict!.verdict === "duplicate" ? `duplicate of ${c.verdict!.duplicateOf ?? "?"}` : "rejected";
+    return `<li><span class="finding-id">${esc(c.id)}</span> ${esc(why)}: <code class="finding-file">${esc(c.file)}</code> ${esc(c.issue)} <span class="dropped-why">— ${esc(c.verdict!.note)}</span></li>`;
+  }).join("");
+  return `<details class="dropped"><summary>Dropped candidates (${dropped.length})</summary><ul>${items}</ul></details>`;
+}
+
+function rulingsHTML(review: TicketReview): string {
+  const rulings = review.decisions ?? [];
+  if (rulings.length === 0) return "";
+  const items = rulings.map(r => `<li><span class="finding-id">${esc(r.id)}</span> ${esc(r.ruling)}: ${esc(r.decision)} <span class="dropped-why">— ${esc(r.reason)}</span></li>`).join("");
+  return `<details class="rulings"><summary>Decision rulings (${rulings.length})</summary><ul>${items}</ul></details>`;
+}
+
 function reviewHTML(t: TicketResult): string {
   const review = t.review;
   if (!review) return "";
   if (review.outcome !== "reviewed") {
-    return `<div class="review review-${review.outcome}">Review ${review.outcome}: ${esc(review.reason ?? "")}</div>`;
+    return `<div class="review review-${review.outcome}">Review ${review.outcome}: ${esc(review.reason ?? "")}</div>${stagesHTML(review)}`;
   }
+  const details = `${droppedHTML(review)}${rulingsHTML(review)}`;
   if (review.findings.length === 0) {
-    return `<div class="review"><strong>Review: no issues found</strong></div>${risksHTML(t)}`;
+    return `<div class="review"><strong>Review: no issues found</strong></div>${stagesHTML(review)}${details}${risksHTML(t)}`;
   }
   const items = review.findings.map(f => findingHTML(f, review.resolutions.find(r => r.id === f.id), review.verification)).join("");
   const v = review.verification;
   const verifyLine = v && v.outcome !== "verified" ? `<div class="review review-${v.outcome}">Fix verification ${v.outcome}: ${esc(v.reason ?? "")}</div>` : "";
-  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong><ul class="findings">${items}</ul></div>${verifyLine}${risksHTML(t)}`;
+  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong></div>${stagesHTML(review)}<div class="review"><ul class="findings">${items}</ul></div>${details}${verifyLine}${risksHTML(t)}`;
 }
 
 const postmortemProblem = (pm: SessionPostmortem): string | undefined =>
@@ -147,6 +187,53 @@ function postmortemHTML(pm: SessionPostmortem | undefined): string {
     <summary><span class="chevron">▸</span><h2>Postmortem</h2>${meta}</summary>
     ${body}${file}
   </details>`;
+}
+
+const totalInput = (u: RunUsage): number => u.inputTokens + u.cacheReadTokens + u.cacheCreationTokens;
+
+function tokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
+function usageTotals(runs: RunRecord[]): { input: number; output: number; cost: number; unmeasured: number; measured: number } {
+  const totals = { input: 0, output: 0, cost: 0, unmeasured: 0, measured: 0 };
+  for (const { usage } of runs) {
+    if (!usage) { totals.unmeasured++; continue; }
+    totals.measured++;
+    totals.input += totalInput(usage);
+    totals.output += usage.outputTokens;
+    totals.cost += usage.costUsd;
+  }
+  return totals;
+}
+
+type UsageTotals = ReturnType<typeof usageTotals>;
+
+const tokenSummary = (totals: UsageTotals): string => `${tokenCount(totals.input)} in / ${tokenCount(totals.output)} out`;
+const costLabel = (totals: UsageTotals): string => `$${totals.cost.toFixed(2)}`;
+const unmeasuredNote = (totals: UsageTotals): string =>
+  totals.unmeasured > 0 ? ` · ${totals.unmeasured} run${totals.unmeasured === 1 ? "" : "s"} unmeasured` : "";
+
+function stageShares(runs: RunRecord[], cost: number): string {
+  if (cost <= 0) return "";
+  const byStage = new Map<string, number>();
+  for (const { stage, usage } of runs) if (usage) byStage.set(stage, (byStage.get(stage) ?? 0) + usage.costUsd);
+  return [...byStage].map(([stage, c]) => ` · ${esc(stage)} ${Math.round((c / cost) * 100)}%`).join("");
+}
+
+function usageHTML(t: TicketResult): string {
+  if (!t.runs || t.runs.length === 0) return "";
+  const totals = usageTotals(t.runs);
+  return `<div class="usage">Usage: ${tokenSummary(totals)} · ${costLabel(totals)} API-equivalent${unmeasuredNote(totals)}${stageShares(t.runs, totals.cost)}</div>`;
+}
+
+function nightUsageStat(tickets: TicketResult[], postmortem?: SessionPostmortem): string {
+  const runs = [...tickets.flatMap(t => t.runs ?? []), ...(postmortem?.usage ? [{ stage: "postmortem", usage: postmortem.usage }] : [])];
+  if (runs.length === 0) return "";
+  const totals = usageTotals(runs);
+  return `<div class="stat night-usage"><strong>${costLabel(totals)}</strong>API-equivalent · ${tokenSummary(totals)}${unmeasuredNote(totals)}</div>`;
 }
 
 function ticketCardHTML(t: TicketResult): string {
@@ -198,6 +285,7 @@ function ticketCardHTML(t: TicketResult): string {
       ${files ? `<ul class="files">${files}</ul>` : ""}
       ${tests}
       ${verify}
+      ${usageHTML(t)}
       ${checksHTML(t)}
       ${reviewHTML(t)}
       ${followups}
@@ -383,6 +471,12 @@ export function generateHTML(session: SessionResult): string {
                  font-size: 0.85rem; display: inline-block; margin: 0.1rem 0; }
   .review { font-size: 0.9rem; margin-bottom: 0.75rem; }
   .review-skipped, .review-failed { color: var(--text-dim); }
+  .finding-from, .data-risk { color: var(--text-dim); font-size: 0.8rem; margin-left: 0.4rem; }
+  .data-risk { color: #f97316; font-weight: 600; }
+  details.dropped, details.rulings { font-size: 0.85rem; color: var(--text-dim); margin: 0.5rem 0; }
+  details.dropped ul, details.rulings ul { padding-left: 1.2rem; margin: 0.3rem 0; }
+  .dropped-why { color: var(--text-dim); }
+  .usage { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 0.75rem; }
   .checks { font-size: 0.9rem; margin-bottom: 0.75rem; }
   .checks table { border-collapse: collapse; margin-top: 0.3rem; }
   .checks th, .checks td { text-align: left; padding: 0.15rem 0.9rem 0.15rem 0; font-size: 0.85rem; }
@@ -433,6 +527,7 @@ export function generateHTML(session: SessionResult): string {
     <div class="stat"><strong style="color:#eab308">${counts.partial}</strong>partial</div>
     <div class="stat"><strong style="color:#f97316">${counts.needsReview}</strong>review</div>
     <div class="stat"><strong style="color:#6b7280">${counts.skipped}</strong>skipped</div>
+    ${nightUsageStat(session.tickets, session.postmortem)}
     ${pmStat}
     ${actionedStat}
   </div>

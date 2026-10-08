@@ -59,10 +59,10 @@ state of every input you skip, reject or fail on. If the ticket says "ignore
 X", decide what ignoring means durably: mark it read, move it, or record it,
 so it isn't fetched again forever and doesn't block the rest of the queue. A
 claimed or in-progress record that can never succeed must reach a terminal
-state. Write a test for each such decision and list it in `notes`. Where two
-pieces of code must agree on a definition (what counts as a valid
-attachment, a status, a contract), share one definition rather than writing
-it twice.
+state. Write a test for each such decision and list each in `decisions`, one
+per choice. Where two pieces of code must agree on a definition (what counts
+as a valid attachment, a status, a contract), share one definition rather than
+writing it twice.
 
 If a test still fails after **two fix iterations**, stop working on the ticket.
 Write what you learned into your report. Mark status `needs_review`. Do NOT
@@ -160,6 +160,9 @@ verify:
   - "npm test -w services/export"
   - "npm run build && npm run typecheck"
 notes: <anything the reviewer must know. Empty string if nothing.>
+decisions:
+  - file: src/poller.ts
+    decision: <one line: the behaviour chosen where the ticket was silent>
 followups:
   - file: src/legacy/parse.ts
     note: <one line: problem noticed outside this ticket>
@@ -179,6 +182,10 @@ automation.
 
 **`verify`** – the exact commands to run in the worktree to confirm the
 change works. The reviewer will copy-paste these.
+
+**`decisions`** – optional. One line per choice the ticket did not settle,
+with the file. Omit or use `decisions: []` when there are none. These choices
+are judged before merge.
 
 **`followups`** – optional. Problems you noticed outside the ticket's scope
 and deliberately did not fix. One concrete line each, with the file. Omit or

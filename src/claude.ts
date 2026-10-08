@@ -2,12 +2,15 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { runWithWatchdog } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
-import type { Followup, FixResolution, LinearComment, ReviewFinding, ReviewRisk, Severity, TestResult, VerifyResult } from "./types.js";
+import type { CandidateVerdict, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, Verdict, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const REVIEW_MD = path.join(ROOT, "prompts", "review.md");
 const FIX_MD = path.join(ROOT, "prompts", "fix.md");
 const VERIFY_MD = path.join(ROOT, "prompts", "verify.md");
+const CONFIRM_MD = path.join(ROOT, "prompts", "confirm.md");
+const lensMd = (lens: ReviewLens) => path.join(ROOT, "prompts", `review-${lens}.md`);
+const LAYER_SEPARATOR = "\n\n---\n\n";
 
 export interface TicketBrief {
   ticketId: string;
@@ -107,8 +110,23 @@ export interface ReviewPromptExtras {
   related?: RelatedBranch[];
 }
 
-export function buildReviewPrompt(
-  brief: TicketBrief, report: AgentReport | undefined, baseRef: string, extras: ReviewPromptExtras = {},
+function decisionsSection(report: AgentReport | undefined): string[] {
+  const decisions = report?.decisions ?? [];
+  if (decisions.length === 0) {
+    return [
+      ``,
+      `The implementer's report lists no decisions. Pull any choice the ticket did not settle out of the Notes above and rule on each, with ids \`N1\`, \`N2\`, … in the order they appear in the Notes.`,
+    ];
+  }
+  return [
+    ``,
+    `**Implementer's decisions the ticket did not settle: rule on each one.**`,
+    ...decisions.map((d, i) => `- D${i + 1} (${d.file}): ${d.decision}`),
+  ];
+}
+
+function finderPrompt(
+  brief: TicketBrief, report: AgentReport | undefined, baseRef: string, extras: ReviewPromptExtras, decisions: string[],
 ): string {
   return [
     ...ticketSection(brief),
@@ -119,8 +137,38 @@ export function buildReviewPrompt(
     `Inspect the change yourself with \`git diff ${baseRef}\` and \`git status --porcelain\` (untracked files are not in the diff; read them directly).`,
     ...checksSection(extras.checks),
     ...relatedSection(extras.related, baseRef),
+    ...decisions,
     ``,
     `Review it now. Do not modify any file. End your final message with the ---REVIEW--- block.`,
+  ].join("\n");
+}
+
+export function buildFinderPrompt(
+  lens: ReviewLens, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, extras: ReviewPromptExtras = {},
+): string {
+  return finderPrompt(
+    brief, report, baseRef,
+    { checks: extras.checks, related: lens === "reuse" ? extras.related : undefined },
+    lens === "bugs" ? decisionsSection(report) : [],
+  );
+}
+
+export function buildConfirmPrompt(brief: TicketBrief, baseRef: string, candidates: ReviewCandidate[]): string {
+  const listed = candidates.map(c =>
+    [
+      `- id: ${c.id}`, `  lens: ${c.lens}`, `  kind: ${c.kind}`, `  severity: ${c.severity}`, `  confidence: ${c.confidence}`,
+      `  data: ${c.data ? "yes" : "no"}`, `  file: ${c.file}`, `  issue: ${c.issue}`, `  suggestion: ${c.suggestion}`,
+    ].join("\n"));
+  return [
+    ...ticketSection(brief),
+    `**Base ref:** \`${baseRef}\``,
+    `Inspect the current change with \`git diff ${baseRef}\` and \`git status --porcelain\` (untracked files are not in the diff; read them directly).`,
+    ``,
+    `These candidates were reported against the change:`,
+    ``,
+    ...listed,
+    ``,
+    `Check each one against the code. Do not modify any file. End your final message with the ---CONFIRM--- block.`,
   ].join("\n");
 }
 
@@ -164,6 +212,7 @@ export interface AgentReport {
   filesCreated: string[]; filesModified: string[];
   tests: TestResult[]; verifyCommands: string[]; notes: string;
   followups: Followup[];
+  decisions: Decision[];
 }
 
 const VALID_STATUSES = ["done", "partial", "needs_review"];
@@ -171,6 +220,7 @@ const REPORT_START = "---REPORT---";
 const REVIEW_START = "---REVIEW---";
 const FIXES_START = "---FIXES---";
 const VERIFY_START = "---VERIFY---";
+const CONFIRM_START = "---CONFIRM---";
 const BLOCK_END = "---";
 const SEVERITIES: Severity[] = ["blocker", "major", "minor"];
 
@@ -236,6 +286,10 @@ function parseTests(lines: string[] | undefined): TestResult[] {
   return tests;
 }
 
+function parseDecisions(lines: string[] | undefined): Decision[] {
+  return parseRecords(lines, ["file", "decision"]).filter(r => r.decision).map(r => ({ file: r.file ?? "", decision: r.decision }));
+}
+
 function parseFollowups(lines: string[] | undefined): Followup[] {
   return parseRecords(lines, ["file", "note"]).filter(r => r.note).map(r => ({ file: r.file ?? "", note: r.note }));
 }
@@ -266,32 +320,66 @@ export function parseRecords(lines: string[] | undefined, fields: string[]): Rec
   return records;
 }
 
-export interface ParsedReview {
-  findings: ReviewFinding[];
-  risks: ReviewRisk[];
+export interface FoundFinding extends ReviewFinding {
+  confidence?: Confidence;
+  decision?: string;
 }
+
+export interface ParsedRuling {
+  id: string;
+  ruling: Ruling;
+  reason: string;
+}
+
+export interface ParsedReview {
+  findings: FoundFinding[];
+  risks: ReviewRisk[];
+  rulings: ParsedRuling[];
+}
+
+const RULINGS: Ruling[] = ["accept", "finding", "risk"];
+const VERDICTS: Verdict[] = ["confirmed", "duplicate", "rejected"];
+const isYes = (value: string | undefined): boolean => /^(yes|true)$/i.test(value ?? "");
 
 function parseRisks(lines: string[] | undefined): ReviewRisk[] {
   const body = (lines ?? []).map(l => l.trim()).filter(l => l !== "");
   if (body.length === 0 || body.join("") === "[]") return [];
-  const records = parseRecords(lines, ["file", "risk"]);
-  const risks = records.filter(r => r.risk).map(r => ({ file: r.file ?? "", risk: r.risk }));
+  const records = parseRecords(lines, ["file", "risk", "data"]);
+  const risks = records.filter(r => r.risk).map(r => ({ file: r.file ?? "", risk: r.risk, data: isYes(r.data) }));
   if (risks.length === 0) throw new Error("Malformed risks list in ---REVIEW--- block");
   return risks;
 }
 
 export function parseReviewBlock(output: string): ParsedReview {
   const groups = groupByTopLevelKey(extractBlock(output, REVIEW_START));
-  const findings = parseRecords(groups.get("findings"), ["id", "severity", "file", "issue", "suggestion"])
+  const findings = parseRecords(groups.get("findings"), ["id", "severity", "confidence", "decision", "file", "issue", "suggestion"])
     .filter(r => r.issue)
-    .map((r, i) => ({
+    .map((r, i): FoundFinding => ({
       id: r.id || `R${i + 1}`,
       severity: SEVERITIES.includes(r.severity as Severity) ? r.severity as Severity : "major",
+      confidence: r.confidence === "suspected" ? "suspected" : "proven",
+      ...(r.decision ? { decision: r.decision } : {}),
       file: r.file ?? "",
       issue: r.issue,
       suggestion: r.suggestion ?? "",
     }));
-  return { findings, risks: parseRisks(groups.get("risks")) };
+  const rulings = parseRecords(groups.get("rulings"), ["id", "ruling", "reason"])
+    .filter(r => r.id)
+    .map((r): ParsedRuling => ({ id: r.id, ruling: RULINGS.includes(r.ruling as Ruling) ? r.ruling as Ruling : "unruled", reason: r.reason ?? "" }));
+  return { findings, risks: parseRisks(groups.get("risks")), rulings };
+}
+
+export function parseConfirmBlock(output: string): CandidateVerdict[] {
+  return parseRecords(extractBlock(output, CONFIRM_START), ["id", "verdict", "duplicate_of", "severity", "data", "note"])
+    .filter(r => r.id)
+    .map((r): CandidateVerdict => ({
+      id: r.id,
+      verdict: VERDICTS.includes(r.verdict as Verdict) ? r.verdict as Verdict : "unproven",
+      ...(r.duplicate_of ? { duplicateOf: r.duplicate_of } : {}),
+      ...(SEVERITIES.includes(r.severity as Severity) ? { severity: r.severity as Severity } : {}),
+      ...(r.data ? { data: isYes(r.data) } : {}),
+      note: r.note ?? "",
+    }));
 }
 
 export function parseFixesBlock(output: string): FixResolution[] {
@@ -321,6 +409,7 @@ export function parseReportBlock(output: string): AgentReport {
     verifyCommands: listItems(groups.get("verify")),
     notes: scalar(groups.get("notes")),
     followups: parseFollowups(groups.get("followups")),
+    decisions: parseDecisions(groups.get("decisions")),
   };
 }
 
@@ -331,6 +420,7 @@ export interface ClaudeResult {
   parseError?: string;
   failure?: string;
   abortReason?: string;
+  usage?: RunUsage;
 }
 
 export const MAX_TURNS = 80;
@@ -389,6 +479,7 @@ export const POSTMORTEM_PROFILE: ToolProfile = {
 export function buildClaudeArgs(operatingInstructions: string, profile: ToolProfile = EDIT_PROFILE, addDirs: string[] = []): string[] {
   return [
     "-p",
+    "--output-format", "json",
     "--max-turns", String(MAX_TURNS),
     "--permission-mode", profile.permissionMode,
     "--allowedTools", profile.allowedTools.join(","),
@@ -422,6 +513,29 @@ export interface ClaudeRun {
   rawOutput: string;
   failure?: string;
   abortReason?: string;
+  usage?: RunUsage;
+}
+
+const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+export function parseRunOutput(stdout: string): { text: string; usage?: RunUsage } {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return { text: stdout };
+  }
+  if (typeof parsed?.result !== "string") return { text: stdout };
+  const u = parsed.usage ?? {};
+  return {
+    text: parsed.result,
+    usage: {
+      inputTokens: count(u.input_tokens), outputTokens: count(u.output_tokens),
+      cacheReadTokens: count(u.cache_read_input_tokens), cacheCreationTokens: count(u.cache_creation_input_tokens),
+      costUsd: count(parsed.total_cost_usd), turns: count(parsed.num_turns), durationMs: count(parsed.duration_ms),
+      models: Object.keys(parsed.modelUsage ?? {}),
+    },
+  };
 }
 
 export async function execClaude(
@@ -444,8 +558,9 @@ export async function execClaude(
       : proc.status !== 0
       ? `claude exited with status ${proc.status}${proc.signal ? ` (${proc.signal})` : ""}`
       : undefined;
-  const rawOutput = [proc.stdout, proc.stderr, failure ?? ""].filter(Boolean).join("\n");
-  return { stdout: proc.stdout, rawOutput, failure, abortReason: proc.abortReason };
+  const { text, usage } = parseRunOutput(proc.stdout);
+  const rawOutput = [text, proc.stderr, failure ?? ""].filter(Boolean).join("\n");
+  return { stdout: text, rawOutput, failure, abortReason: proc.abortReason, usage };
 }
 
 export function parseOrError<T>(stdout: string, failure: string | undefined, parse: (output: string) => T): { value?: T; error?: string } {
@@ -475,34 +590,44 @@ export async function runAgent(
     console.log(`  [dry-run] Prompt:\n${prompt.slice(0, 500)}...`);
     return { success: true, rawOutput: "", report: {
       status: "done", title: "", summary: "dry run", filesCreated: [], filesModified: [],
-      tests: [], verifyCommands: [], notes: "dry run – no changes", followups: [],
+      tests: [], verifyCommands: [], notes: "dry run – no changes", followups: [], decisions: [],
     }};
   }
 
   if (options.instructions === undefined) throw new Error("instructions missing");
   const run = await execClaude(worktreePath, prompt, options.instructions, EDIT_PROFILE, options);
   const { value: report, error: parseError } = parseOrError(run.stdout, run.failure, parseReportBlock);
-  return { success: run.failure === undefined, rawOutput: run.rawOutput, report, parseError, failure: run.failure, abortReason: run.abortReason };
+  return { success: run.failure === undefined, rawOutput: run.rawOutput, report, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }
 
 export interface ReviewRunResult {
   success: boolean;
   rawOutput: string;
-  findings?: ReviewFinding[];
+  findings?: FoundFinding[];
   risks?: ReviewRisk[];
+  rulings?: ParsedRuling[];
   parseError?: string;
   failure?: string;
   abortReason?: string;
+  usage?: RunUsage;
 }
 
-export async function runReview(
-  worktreePath: string, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, options: RunAgentOptions,
+const layered = (...files: string[]): string => files.map(f => readFileSync(f, "utf-8")).join(LAYER_SEPARATOR);
+
+export const finderSystemPrompt = (lens: ReviewLens): string => layered(REVIEW_MD, lensMd(lens));
+export const confirmSystemPrompt = (): string => layered(REVIEW_MD, CONFIRM_MD);
+
+async function execFinder(worktreePath: string, prompt: string, systemPrompt: string, options: RunAgentOptions): Promise<ReviewRunResult> {
+  const run = await execClaude(worktreePath, prompt, systemPrompt, REVIEW_PROFILE, options);
+  const { value: parsed, error: parseError } = parseOrError(run.stdout, run.failure, parseReviewBlock);
+  return { success: run.failure === undefined, rawOutput: run.rawOutput, findings: parsed?.findings, risks: parsed?.risks, rulings: parsed?.rulings, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
+}
+
+export async function runFinder(
+  worktreePath: string, lens: ReviewLens, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, options: RunAgentOptions,
   extras: ReviewPromptExtras = {},
 ): Promise<ReviewRunResult> {
-  const prompt = buildReviewPrompt(brief, report, baseRef, extras);
-  const run = await execClaude(worktreePath, prompt, readFileSync(REVIEW_MD, "utf-8"), REVIEW_PROFILE, options);
-  const { value: parsed, error: parseError } = parseOrError(run.stdout, run.failure, parseReviewBlock);
-  return { success: run.failure === undefined, rawOutput: run.rawOutput, findings: parsed?.findings, risks: parsed?.risks, parseError, failure: run.failure, abortReason: run.abortReason };
+  return execFinder(worktreePath, buildFinderPrompt(lens, brief, report, baseRef, extras), finderSystemPrompt(lens), options);
 }
 
 export interface FixRunResult extends ClaudeResult {
@@ -523,7 +648,7 @@ export async function runFix(
     success: run.failure === undefined, rawOutput: run.rawOutput,
     report: parsedReport.value, parseError: parsedReport.error,
     fixes: parsedFixes.value, fixesError: parsedFixes.error,
-    failure: run.failure, abortReason: run.abortReason,
+    failure: run.failure, abortReason: run.abortReason, usage: run.usage,
   };
 }
 
@@ -534,14 +659,34 @@ export interface VerifyRunResult {
   parseError?: string;
   failure?: string;
   abortReason?: string;
+  usage?: RunUsage;
 }
 
 export async function runVerify(
   worktreePath: string, brief: TicketBrief, baseRef: string, findings: ReviewFinding[], resolutions: FixResolution[], options: RunAgentOptions,
 ): Promise<VerifyRunResult> {
   const prompt = buildVerifyPrompt(brief, baseRef, findings, resolutions);
-  const systemPrompt = [readFileSync(REVIEW_MD, "utf-8"), readFileSync(VERIFY_MD, "utf-8")].join("\n\n---\n\n");
+  const systemPrompt = layered(REVIEW_MD, VERIFY_MD);
   const run = await execClaude(worktreePath, prompt, systemPrompt, REVIEW_PROFILE, options);
   const { value: results, error: parseError } = parseOrError(run.stdout, run.failure, parseVerifyBlock);
-  return { success: run.failure === undefined, rawOutput: run.rawOutput, results, parseError, failure: run.failure, abortReason: run.abortReason };
+  return { success: run.failure === undefined, rawOutput: run.rawOutput, results, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
+}
+
+export interface ConfirmRunResult {
+  success: boolean;
+  rawOutput: string;
+  verdicts?: CandidateVerdict[];
+  parseError?: string;
+  failure?: string;
+  abortReason?: string;
+  usage?: RunUsage;
+}
+
+export async function runConfirm(
+  worktreePath: string, brief: TicketBrief, baseRef: string, candidates: ReviewCandidate[], options: RunAgentOptions,
+): Promise<ConfirmRunResult> {
+  const prompt = buildConfirmPrompt(brief, baseRef, candidates);
+  const run = await execClaude(worktreePath, prompt, confirmSystemPrompt(), REVIEW_PROFILE, options);
+  const { value: verdicts, error: parseError } = parseOrError(run.stdout, run.failure, parseConfirmBlock);
+  return { success: run.failure === undefined, rawOutput: run.rawOutput, verdicts, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }

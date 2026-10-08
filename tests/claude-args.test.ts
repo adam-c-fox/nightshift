@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { agentRunArgs, buildClaudeArgs, POSTMORTEM_PROFILE, REVIEW_PROFILE } from "../src/claude.js";
+import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, finderSystemPrompt, POSTMORTEM_PROFILE, REVIEW_PROFILE } from "../src/claude.js";
 
 describe("agent instructions", () => {
   const agentsMd = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf-8");
@@ -19,6 +19,15 @@ describe("agent instructions", () => {
     const args = buildClaudeArgs("x");
     const disallowed = args[args.indexOf("--disallowedTools") + 1];
     expect(disallowed).toContain("Bash(git commit *)");
+  });
+});
+
+describe("output format", () => {
+  it("asks for JSON output in every profile", () => {
+    for (const profile of [undefined, REVIEW_PROFILE, POSTMORTEM_PROFILE]) {
+      const args = buildClaudeArgs("x", profile);
+      expect(args[args.indexOf("--output-format") + 1]).toBe("json");
+    }
   });
 });
 
@@ -104,9 +113,62 @@ describe("review and fix prompts", () => {
   });
 
   it("forbids provenance mentions in both", () => {
-    for (const name of ["review.md", "fix.md"]) {
+    for (const name of ["review-spec.md", "fix.md"]) {
       expect(read(name)).toMatch(/nightshift/i);
     }
+  });
+});
+
+describe("review prompt layering", () => {
+  const read = (name: string) => readFileSync(new URL(`../prompts/${name}`, import.meta.url), "utf-8");
+
+  it("keeps the base review prompt free of per-lens focus and the precision bar", () => {
+    const base = read("review.md");
+    expect(base).toContain("---REVIEW---");
+    expect(base).not.toMatch(/Do not pad|good and common outcome|If you cannot show how it breaks/);
+  });
+
+  it("has a prompt file per lens that sits on the base", () => {
+    for (const lens of ["bugs", "spec", "reuse"]) {
+      expect(read(`review-${lens}.md`)).toMatch(/on top of the review instructions above/);
+    }
+  });
+
+  it("puts the precision bar and the CONFIRM contract in confirm.md, layered on the base", () => {
+    const confirm = read("confirm.md");
+    expect(confirm).toMatch(/on top of the review instructions above/);
+    expect(confirm).toContain("---CONFIRM---");
+    expect(confirm).toMatch(/show how it breaks/i);
+  });
+
+  it("builds the finder system prompt from the base plus the lens file", () => {
+    for (const lens of ["bugs", "spec", "reuse"] as const) {
+      expect(finderSystemPrompt(lens)).toBe([read("review.md"), read(`review-${lens}.md`)].join("\n\n---\n\n"));
+    }
+  });
+
+  it("builds the confirm system prompt from the base plus confirm.md", () => {
+    expect(confirmSystemPrompt()).toBe([read("review.md"), read("confirm.md")].join("\n\n---\n\n"));
+  });
+
+  it("keeps verify.md layered on the base", () => {
+    expect(read("verify.md")).toMatch(/on top of the review instructions above/);
+  });
+
+  it("states the bugs checks generically and never names a project", () => {
+    const bugs = read("review-bugs.md");
+    for (const name of ["example-client", "DEMO-560", "privateHelperName"]) expect(bugs).not.toMatch(new RegExp(name, "i"));
+    expect(bugs).toMatch(/Behaviour over time/);
+  });
+
+  it("tells every producer of risk text to word it as a plain statement about the code", () => {
+    for (const name of ["review.md", "confirm.md", "review-bugs.md"]) {
+      expect(read(name)).toMatch(/never mention a review, a reviewer or how the change was produced/);
+    }
+  });
+
+  it("carries decisions over in the fix report", () => {
+    expect(read("fix.md")).toMatch(/`followups` and `decisions`/);
   });
 });
 

@@ -39,12 +39,24 @@ export interface TestResult {
 
 export type Severity = "blocker" | "major" | "minor";
 
+export type ReviewLens = "bugs" | "spec" | "reuse";
+export const REVIEW_LENSES: ReviewLens[] = ["bugs", "bugs", "spec", "reuse"];
+
+export type ReviewStage = `review-${ReviewLens}` | `review-${ReviewLens}-${number}`;
+
+export const lensStage = (lens: ReviewLens, pass = 1): ReviewStage => pass > 1 ? `review-${lens}-${pass}` : `review-${lens}`;
+
+export const lensLabel = (lens: ReviewLens, pass = 1): string => pass > 1 ? `${lens} (pass ${pass})` : lens;
+
+export type Confidence = "proven" | "suspected";
+
 export interface ReviewFinding {
   id: string;
   severity: Severity;
   file: string;
   issue: string;
   suggestion: string;
+  from?: string;
 }
 
 export interface FixResolution {
@@ -56,6 +68,49 @@ export interface FixResolution {
 export interface ReviewRisk {
   file: string;
   risk: string;
+  data?: boolean;
+}
+
+export interface LensRun {
+  lens: ReviewLens;
+  pass?: number;
+  outcome: "reviewed" | "skipped" | "failed";
+  reason?: string;
+  candidates: number;
+}
+
+export interface ReviewCandidate {
+  id: string;
+  lens: ReviewLens;
+  kind: "finding" | "risk";
+  severity: Severity;
+  confidence: Confidence;
+  file: string;
+  issue: string;
+  suggestion: string;
+  data: boolean;
+  decision?: string;
+}
+
+export type Verdict = "confirmed" | "duplicate" | "unproven" | "rejected";
+
+export interface CandidateVerdict {
+  id: string;
+  verdict: Verdict;
+  duplicateOf?: string;
+  severity?: Severity;
+  data?: boolean;
+  note: string;
+}
+
+export type Ruling = "accept" | "finding" | "risk" | "unruled";
+
+export interface DecisionRuling {
+  id: string;
+  decision: string;
+  file: string;
+  ruling: Ruling;
+  reason: string;
 }
 
 export interface VerifyResult {
@@ -77,6 +132,10 @@ export interface TicketReview {
   resolutions: FixResolution[];
   risks?: ReviewRisk[];
   verification?: FixVerification;
+  lenses?: LensRun[];
+  candidates?: (ReviewCandidate & { verdict?: CandidateVerdict })[];
+  confirmation?: { outcome: "confirmed" | "skipped" | "failed"; reason?: string };
+  decisions?: DecisionRuling[];
 }
 
 export interface CheckRecord {
@@ -94,6 +153,27 @@ export interface Followup {
   note: string;
 }
 
+export interface Decision {
+  file: string;
+  decision: string;
+}
+
+export interface RunUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: number;
+  turns: number;
+  durationMs: number;
+  models: string[];
+}
+
+export interface RunRecord {
+  stage: string;
+  usage?: RunUsage;
+}
+
 export interface TicketResult {
   ticket: Ticket;
   linear: LinearTicket | null;
@@ -106,6 +186,7 @@ export interface TicketResult {
   verifyCommands: string[];
   notes: string;
   followups: Followup[];
+  decisions?: Decision[];
   worktreePath: string;
   branch: string;
   durationSec: number;
@@ -114,6 +195,7 @@ export interface TicketResult {
   pipelineStatus?: PipelineStatus;
   review?: TicketReview;
   checks?: CheckRecord[];
+  runs?: RunRecord[];
 }
 
 export interface NightBudget {
@@ -141,6 +223,7 @@ export interface SessionPostmortem {
   reason?: string;
   suggestions: PostmortemSuggestion[];
   file?: string;
+  usage?: RunUsage;
 }
 
 export interface SessionResult {

@@ -6,7 +6,7 @@ import path from "node:path";
 import {
   REPORT_BASE, countTickets, esc, generateHTML, postmortemActionKey, reportBase, reportFilename, ticketActionKey, writeReport,
 } from "../src/report.js";
-import type { SessionResult, TicketResult } from "../src/types.js";
+import type { RunUsage, SessionResult, TicketResult, TicketReview } from "../src/types.js";
 
 const session = (over: Partial<SessionResult>): SessionResult => ({
   date: "2026-10-01", startedAt: "", endedAt: "", tickets: [],
@@ -312,5 +312,146 @@ describe("shared report helpers", () => {
     expect(html).toContain('data-key="ticket:ENG-1"');
     expect(html).toContain("--bg: #0f1117");
     expect(html).toContain('<div class="stat"><strong style="color:#22c55e">1</strong>done</div>');
+  });
+});
+
+describe("report review stages", () => {
+  type Recorded = NonNullable<TicketReview["candidates"]>[number];
+  const candidate = (id: string, over: Partial<Recorded> = {}): Recorded => ({
+    id, lens: "bugs", kind: "finding", severity: "major", confidence: "proven",
+    file: `src/${id}.ts`, issue: `Issue ${id}.`, suggestion: "", data: false, ...over,
+  });
+  const verdict = (id: string, v: "confirmed" | "duplicate" | "unproven" | "rejected", note = `note ${id}`) => ({ id, verdict: v, note });
+  const staged = (over: Partial<TicketReview> = {}): TicketReview => ({
+    outcome: "reviewed", findings: [], resolutions: [],
+    lenses: [
+      { lens: "bugs", outcome: "reviewed", candidates: 4 },
+      { lens: "spec", outcome: "reviewed", candidates: 3 },
+      { lens: "reuse", outcome: "failed", reason: "crashed <x>", candidates: 0 },
+    ],
+    candidates: [
+      candidate("B1", { verdict: verdict("B1", "confirmed") }),
+      candidate("B2", { verdict: verdict("B2", "unproven") }),
+      candidate("B3", { verdict: verdict("B3", "rejected", "guarded on line 4") }),
+      candidate("S1", { lens: "spec", verdict: { ...verdict("S1", "duplicate"), duplicateOf: "B1" } }),
+    ],
+    confirmation: { outcome: "confirmed" },
+    ...over,
+  });
+
+  it("shows each lens's outcome and the candidate counts", () => {
+    const html = reportFor(ticketResult({ review: staged() }));
+    expect(html).toContain("Review: bugs ✓ · spec ✓ · reuse failed (crashed &lt;x&gt;)");
+    expect(html).toContain("4 candidates → 1 confirmed, 1 unproven, 2 dropped");
+  });
+
+  it("labels the later bugs passes", () => {
+    const html = reportFor(ticketResult({ review: staged({
+      lenses: [
+        { lens: "bugs", outcome: "reviewed", candidates: 1 },
+        { lens: "bugs", pass: 2, outcome: "reviewed", candidates: 1 },
+        { lens: "spec", outcome: "reviewed", candidates: 0 },
+      ],
+    }) }));
+    expect(html).toContain("Review: bugs ✓ · bugs (pass 2) ✓ · spec ✓");
+  });
+
+  it("says the candidates were unconfirmed when confirm did not run", () => {
+    const html = reportFor(ticketResult({ review: staged({
+      candidates: [candidate("B1"), candidate("B2")], confirmation: { outcome: "failed", reason: "boom" },
+    }) }));
+    expect(html).toContain("2 candidates → unconfirmed");
+  });
+
+  it("shows where a finding came from", () => {
+    const html = reportFor(ticketResult({ review: staged({
+      findings: [{ id: "R1", severity: "major", file: "src/B1.ts", issue: "Issue B1.", suggestion: "", from: "B1" }],
+    }) }));
+    expect(html).toContain("(from B1)");
+  });
+
+  it("lists dropped and duplicate candidates collapsed with the reason", () => {
+    const html = reportFor(ticketResult({ review: staged() }));
+    expect(html).toMatch(/<details class="dropped">[\s\S]*B3[\s\S]*rejected[\s\S]*guarded on line 4[\s\S]*<\/details>/);
+    expect(html).toMatch(/<details class="dropped">[\s\S]*S1[\s\S]*duplicate of B1[\s\S]*<\/details>/);
+    expect(html).not.toMatch(/<details class="dropped">[\s\S]*Issue B2[\s\S]*<\/details>/);
+  });
+
+  it("lists decision rulings collapsed", () => {
+    const html = reportFor(ticketResult({ review: staged({ decisions: [
+      { id: "D1", decision: "null when no <row>", file: "src/a.ts", ruling: "accept", reason: "handled downstream" },
+    ] }) }));
+    expect(html).toMatch(/<details class="rulings">[\s\S]*D1<\/span> accept: [\s\S]*null when no &lt;row&gt;[\s\S]*handled downstream[\s\S]*<\/details>/);
+  });
+
+  it("marks risks to recorded data", () => {
+    const html = reportFor(ticketResult({ review: staged({ risks: [
+      { file: "src/a.ts", risk: "Records null.", data: true }, { file: "src/b.ts", risk: "Style.", data: false },
+    ] }) }));
+    expect(html.match(/<span class="data-risk">/g)).toHaveLength(1);
+    expect(html).toMatch(/<span class="data-risk">[\s\S]*Records null\./);
+  });
+
+  it("renders a review recorded before lenses existed without the new sections", () => {
+    const html = reportFor(ticketResult({ review: { outcome: "reviewed", findings: [], resolutions: [], risks: [{ file: "a.ts", risk: "Old." }] } }));
+    expect(html).toContain("Review: no issues found");
+    for (const absent of ["review-stages", "<details class=\"dropped\">", "<details class=\"rulings\">", "<span class=\"data-risk\">", "(from"]) expect(html).not.toContain(absent);
+  });
+
+  it("keeps the skipped and failed lines", () => {
+    const html = reportFor(ticketResult({ review: staged({ outcome: "failed", reason: "all lenses failed" }) }));
+    expect(html).toContain("Review failed: all lenses failed");
+  });
+});
+
+describe("report usage", () => {
+  const usage = (over: Partial<RunUsage> = {}): RunUsage => ({
+    inputTokens: 1000, outputTokens: 500, cacheReadTokens: 8000, cacheCreationTokens: 1000, costUsd: 2, turns: 3, durationMs: 1000, models: [], ...over,
+  });
+
+  it("shows each ticket's usage with the share per stage", () => {
+    const html = reportFor(ticketResult({ runs: [
+      { stage: "implement", usage: usage({ costUsd: 3 }) },
+      { stage: "review", usage: usage({ costUsd: 1 }) },
+    ] }));
+    expect(html).toContain("Usage: 20.0k in / 1.0k out");
+    expect(html).toContain("$4.00 API-equivalent");
+    expect(html).toContain("implement 75% · review 25%");
+  });
+
+  it("totals usage for the night", () => {
+    const html = generateHTML(session({ tickets: [
+      ticketResult({ runs: [{ stage: "implement", usage: usage() }] }),
+      ticketResult({ ticket: { id: "ENG-2", name: "Other", context: [], repo: "main" }, runs: [{ stage: "implement", usage: usage() }] }),
+    ] }));
+    expect(html).toContain("$4.00");
+    expect(html).toContain("20.0k in / 1.0k out");
+    expect(html).toContain("night-usage");
+  });
+
+  it("adds the postmortem run to the night total", () => {
+    const html = generateHTML(session({
+      tickets: [ticketResult({ runs: [{ stage: "implement", usage: usage() }] })],
+      postmortem: { outcome: "done", suggestions: [], usage: usage({ costUsd: 1 }) },
+    }));
+    expect(html).toContain("<strong>$3.00</strong>");
+    expect(html).toContain("20.0k in / 1.0k out");
+  });
+
+  it("counts runs without usage as unmeasured", () => {
+    const html = reportFor(ticketResult({ runs: [
+      { stage: "implement", usage: usage() },
+      { stage: "fix" },
+      { stage: "verify" },
+    ] }));
+    expect(html).toContain("2 runs unmeasured");
+    expect(reportFor(ticketResult({ runs: [{ stage: "implement" }] }))).toContain("1 run unmeasured");
+  });
+
+  it("renders a session recorded before usage existed", () => {
+    const html = reportFor(ticketResult());
+    expect(html).not.toContain("Usage:");
+    expect(html).not.toContain("night-usage");
+    expect(html).not.toContain("unmeasured");
   });
 });

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { openNightBudget } from "../src/budget.js";
 import {
-  buildPostmortemPrompt, parsePostmortemBlock, postmortemMarkdown, postmortemSkipReason, postmortemSystemPrompt, sessionLogData,
+  buildPostmortemPrompt, parsePostmortemBlock, postmortemOutcome, postmortemMarkdown, postmortemSkipReason, postmortemSystemPrompt, sessionLogData,
 } from "../src/postmortem.js";
 import type { SessionResult, TicketResult } from "../src/types.js";
 
@@ -99,6 +99,11 @@ describe("sessionLogData", () => {
     expect(data.tickets[0].logFiles).toEqual(["logs/acme/ENG-1-output.txt", "logs/acme/ENG-1-review.txt", "logs/acme/ENG-1-diff.txt"]);
     expect(data.tickets[1].logFiles).toEqual([]);
   });
+  it("lists the per-lens and confirm review logs in run order when they exist", () => {
+    const names = ["output", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm", "fix", "diff"].map(n => `ENG-1-${n}.txt`);
+    const data = sessionLogData(session, name => names.includes(name), "logs/acme") as { tickets: { logFiles: string[] }[] };
+    expect(data.tickets[0].logFiles).toEqual(names.map(n => `logs/acme/${n}`));
+  });
   it("keeps the session data", () => {
     const data = sessionLogData(session, () => false, "logs/acme") as { date: string; tickets: { status: string }[] };
     expect(data.date).toBe("2026-10-01");
@@ -119,4 +124,25 @@ describe("postmortemMarkdown", () => {
     expect(md).toContain("Change: chg");
   });
   it("says so when there is nothing to suggest", () => expect(postmortemMarkdown("2026-10-01", [])).toContain("No suggestions."));
+});
+
+describe("postmortemOutcome", () => {
+  const usage = {
+    inputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheCreationTokens: 4, costUsd: 0.5, turns: 2, durationMs: 1000, models: ["claude-opus-5-5"],
+  };
+  const output = ["---POSTMORTEM---", "suggestions: []", "---"].join("\n");
+
+  it("records the run's usage when the output has it", () => {
+    expect(postmortemOutcome({ stdout: output, rawOutput: output, usage }).usage).toEqual(usage);
+  });
+
+  it("records the usage of a failed run too", () => {
+    const outcome = postmortemOutcome({ stdout: "nothing", rawOutput: "nothing", failure: "claude stopped: x", usage });
+    expect(outcome.outcome).toBe("failed");
+    expect(outcome.usage).toEqual(usage);
+  });
+
+  it("leaves usage unset when the run has none", () => {
+    expect(postmortemOutcome({ stdout: output, rawOutput: output })).not.toHaveProperty("usage");
+  });
 });

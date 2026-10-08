@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import type { AgentReport, FixRunResult, ReviewRunResult, VerifyRunResult } from "../src/claude.js";
-import { mergeFixReport, reviewAndFix, type ReviewDeps } from "../src/review.js";
-import type { FixResolution, ReviewFinding, VerifyResult } from "../src/types.js";
+import { describe, expect, it, vi } from "vitest";
+import type { AgentReport, ConfirmRunResult, FixRunResult, ReviewRunResult, VerifyRunResult } from "../src/claude.js";
+import { findAndConfirm, mergeFixReport, reviewAndFix, type ReviewDeps } from "../src/review.js";
+import type { CandidateVerdict, FixResolution, ReviewCandidate, ReviewFinding, ReviewLens, VerifyResult } from "../src/types.js";
 
 const finding = (id: string, severity: ReviewFinding["severity"] = "major"): ReviewFinding => ({
   id, severity, file: "src/a.ts", issue: `Problem ${id}.`, suggestion: `Fix ${id}.`,
@@ -10,7 +10,7 @@ const finding = (id: string, severity: ReviewFinding["severity"] = "major"): Rev
 const reviewed = (...findings: ReviewFinding[]): ReviewRunResult => ({ success: true, rawOutput: "review out", findings });
 
 const report = (over: Partial<AgentReport> = {}): AgentReport => ({
-  status: "done", title: "", summary: "Fixed it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [], ...over,
+  status: "done", title: "", summary: "Fixed it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [], decisions: [], ...over,
 });
 
 const fixed = (fixes: FixResolution[], over: Partial<FixRunResult> = {}): FixRunResult =>
@@ -18,18 +18,26 @@ const fixed = (fixes: FixResolution[], over: Partial<FixRunResult> = {}): FixRun
 
 const resolution = (id: string, status: FixResolution["status"] = "fixed"): FixResolution => ({ id, status, how: `how ${id}` });
 
+const judged = (candidates: ReviewCandidate[], verdict: CandidateVerdict["verdict"] = "confirmed"): ConfirmRunResult => ({
+  success: true, rawOutput: "confirm out", verdicts: candidates.map(c => ({ id: c.id, verdict, note: `note ${c.id}` })),
+});
+
 const harness = (overrides: Partial<ReviewDeps> = {}) => {
-  const calls = { review: 0, fix: [] as ReviewFinding[][], saved: [] as string[], logged: [] as string[] };
+  const calls = { find: [] as ReviewLens[], confirm: [] as ReviewCandidate[][], fix: [] as ReviewFinding[][], saved: [] as string[], logged: [] as string[] };
   const deps: ReviewDeps = {
     hasChanges: () => true,
     snapshot: () => "same",
     gateOpen: () => true,
-    review: async () => { calls.review++; return reviewed(); },
+    lenses: ["bugs"],
+    find: async lens => { calls.find.push(lens); return reviewed(); },
     fix: async findings => { calls.fix.push(findings); return fixed(findings.map(f => resolution(f.id))); },
     saveOutput: (stage, raw) => calls.saved.push(`${stage}:${raw}`),
     log: m => calls.logged.push(m),
+    confirm: async candidates => judged(candidates),
     ...overrides,
   };
+  const confirm = deps.confirm;
+  deps.confirm = async candidates => { calls.confirm.push(candidates); return confirm(candidates); };
   return { calls, run: (publishable = true) => reviewAndFix(publishable, deps) };
 };
 
@@ -37,7 +45,7 @@ describe("reviewAndFix", () => {
   it("skips quietly when the implementation is not publishable", async () => {
     const { calls, run } = harness();
     const outcome = await run(false);
-    expect(calls.review).toBe(0);
+    expect(calls.find).toHaveLength(0);
     expect(outcome.review).toMatchObject({ outcome: "skipped" });
     expect(outcome.needsReview).toBe(false);
   });
@@ -45,7 +53,7 @@ describe("reviewAndFix", () => {
   it("skips quietly when there are no changes against base", async () => {
     const { calls, run } = harness({ hasChanges: () => false });
     const outcome = await run();
-    expect(calls.review).toBe(0);
+    expect(calls.find).toHaveLength(0);
     expect(outcome.review.outcome).toBe("skipped");
     expect(outcome.review.reason).toMatch(/no changes/i);
     expect(outcome.needsReview).toBe(false);
@@ -54,7 +62,7 @@ describe("reviewAndFix", () => {
   it("skips and flags needs_review when the budget gate is closed", async () => {
     const { calls, run } = harness({ gateOpen: () => false });
     const outcome = await run();
-    expect(calls.review).toBe(0);
+    expect(calls.find).toHaveLength(0);
     expect(outcome.review).toMatchObject({ outcome: "skipped", reason: expect.stringMatching(/budget/i) });
     expect(outcome).toMatchObject({ needsReview: true, publish: true });
   });
@@ -63,30 +71,30 @@ describe("reviewAndFix", () => {
     const { calls, run } = harness();
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
-    expect(outcome.review).toEqual({ outcome: "reviewed", findings: [], resolutions: [], risks: [] });
+    expect(outcome.review).toMatchObject({ outcome: "reviewed", findings: [], resolutions: [], risks: [] });
     expect(outcome).toMatchObject({ needsReview: false, publish: true });
   });
 
   it("runs the fix with the findings and records the resolutions", async () => {
     const findings = [finding("R1", "blocker"), finding("R2", "minor")];
-    const { calls, run } = harness({ review: async () => reviewed(...findings) });
+    const { calls, run } = harness({ find: async () => reviewed(...findings) });
     const outcome = await run();
-    expect(calls.fix).toEqual([findings]);
-    expect(outcome.review.findings).toEqual(findings);
+    expect(calls.fix).toEqual([findings.map(f => ({ ...f, from: `B${f.id.slice(1)}` }))]);
+    expect(outcome.review.findings).toEqual(calls.fix[0]);
     expect(outcome.review.resolutions.map(r => r.status)).toEqual(["fixed", "fixed"]);
     expect(outcome).toMatchObject({ needsReview: false, publish: true });
     expect(outcome.fixReport).toBeDefined();
   });
 
   it("saves the raw review and fix output", async () => {
-    const { calls, run } = harness({ review: async () => reviewed(finding("R1")) });
+    const { calls, run } = harness({ find: async () => reviewed(finding("R1")) });
     await run();
-    expect(calls.saved).toEqual(["review:review out", "fix:fix out"]);
+    expect(calls.saved).toEqual(["review-bugs:review out", "review-confirm:confirm out", "fix:fix out"]);
   });
 
   it("gives needs_review for an unfixed major but still publishes", async () => {
     const { run } = harness({
-      review: async () => reviewed(finding("R1", "major")),
+      find: async () => reviewed(finding("R1", "major")),
       fix: async () => fixed([resolution("R1", "not_fixed")]),
     });
     expect(await run()).toMatchObject({ needsReview: true, publish: true });
@@ -94,7 +102,7 @@ describe("reviewAndFix", () => {
 
   it("does not publish an unfixed blocker", async () => {
     const { run } = harness({
-      review: async () => reviewed(finding("R1", "blocker")),
+      find: async () => reviewed(finding("R1", "blocker")),
       fix: async () => fixed([resolution("R1", "not_fixed")]),
     });
     expect(await run()).toMatchObject({ needsReview: true, publish: false });
@@ -102,7 +110,7 @@ describe("reviewAndFix", () => {
 
   it("ignores an unfixed minor", async () => {
     const { run } = harness({
-      review: async () => reviewed(finding("R1", "minor")),
+      find: async () => reviewed(finding("R1", "minor")),
       fix: async () => fixed([resolution("R1", "not_fixed")]),
     });
     expect(await run()).toMatchObject({ needsReview: false, publish: true });
@@ -110,7 +118,7 @@ describe("reviewAndFix", () => {
 
   it("treats a finding missing from the fix output as not fixed", async () => {
     const { run } = harness({
-      review: async () => reviewed(finding("R1", "major"), finding("R2", "minor")),
+      find: async () => reviewed(finding("R1", "major"), finding("R2", "minor")),
       fix: async () => fixed([resolution("R2")]),
     });
     const outcome = await run();
@@ -123,7 +131,7 @@ describe("reviewAndFix", () => {
 
   it("treats a fix run without a FIXES block as all not fixed", async () => {
     const { run } = harness({
-      review: async () => reviewed(finding("R1", "major")),
+      find: async () => reviewed(finding("R1", "major")),
       fix: async () => fixed([], { fixes: undefined, fixesError: "No ---FIXES--- block" }),
     });
     const outcome = await run();
@@ -133,7 +141,7 @@ describe("reviewAndFix", () => {
 
   it("keeps the implementer's work but holds back on a crashed fix with a blocker", async () => {
     const { run } = harness({
-      review: async () => reviewed(finding("R1", "blocker")),
+      find: async () => reviewed(finding("R1", "blocker")),
       fix: async () => ({ success: false, rawOutput: "", failure: "claude exited with status 1" }),
     });
     const outcome = await run();
@@ -144,7 +152,7 @@ describe("reviewAndFix", () => {
 
   it("publishes after a crashed fix when no blocker was found", async () => {
     const { run } = harness({
-      review: async () => reviewed(finding("R1", "major")),
+      find: async () => reviewed(finding("R1", "major")),
       fix: async () => ({ success: false, rawOutput: "", failure: "boom" }),
     });
     expect(await run()).toMatchObject({ needsReview: true, publish: true });
@@ -154,7 +162,7 @@ describe("reviewAndFix", () => {
     let open = true;
     const { calls, run } = harness({
       gateOpen: () => open,
-      review: async () => { open = false; return reviewed(finding("R1", "major")); },
+      find: async () => { open = false; return reviewed(finding("R1", "major")); },
     });
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
@@ -168,7 +176,7 @@ describe("reviewAndFix", () => {
     let snap = "before";
     const { calls, run } = harness({
       snapshot: () => snap,
-      review: async () => { snap = "after"; return reviewed(finding("R1")); },
+      find: async () => { snap = "after"; return reviewed(finding("R1")); },
     });
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
@@ -179,7 +187,7 @@ describe("reviewAndFix", () => {
 
   it("continues to publish when the review output cannot be parsed", async () => {
     const { calls, run } = harness({
-      review: async () => ({ success: true, rawOutput: "waffle", parseError: "No ---REVIEW--- block found in agent output" }),
+      find: async () => ({ success: true, rawOutput: "waffle", parseError: "No ---REVIEW--- block found in agent output" }),
     });
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
@@ -189,7 +197,7 @@ describe("reviewAndFix", () => {
 
   it("continues to publish when the review run crashes", async () => {
     const { run } = harness({
-      review: async () => ({ success: false, rawOutput: "", failure: "claude stopped: timed out" }),
+      find: async () => ({ success: false, rawOutput: "", failure: "claude stopped: timed out" }),
     });
     const outcome = await run();
     expect(outcome.review).toMatchObject({ outcome: "failed", reason: "claude stopped: timed out" });
@@ -198,10 +206,470 @@ describe("reviewAndFix", () => {
 
   it("takes needs_review from a fix run that reports it", async () => {
     const { run } = harness({
-      review: async () => reviewed(finding("R1", "minor")),
+      find: async () => reviewed(finding("R1", "minor")),
       fix: async () => fixed([resolution("R1")], { report: report({ status: "needs_review" }) }),
     });
     expect(await run()).toMatchObject({ needsReview: true });
+  });
+});
+
+const byLens = (results: Partial<Record<ReviewLens, ReviewRunResult>>): ReviewDeps["find"] =>
+  async lens => results[lens] ?? reviewed();
+
+const verdictsFor = (verdicts: Record<string, Partial<CandidateVerdict>>): ReviewDeps["confirm"] => async candidates => ({
+  success: true, rawOutput: "confirm out",
+  verdicts: candidates.map(c => ({ id: c.id, verdict: "confirmed", note: `note ${c.id}`, ...verdicts[c.id] })),
+});
+
+const risk = (text: string, data = false) => ({ file: "src/r.ts", risk: text, data });
+
+describe("reviewAndFix lenses", () => {
+  it("runs each lens in the order given and saves its output as review-<lens>", async () => {
+    const { calls, run } = harness({
+      lenses: ["bugs", "spec", "reuse"],
+      find: async lens => ({ success: true, rawOutput: `${lens} out`, findings: [] }),
+    });
+    await run();
+    expect(calls.saved).toEqual(["review-bugs:bugs out", "review-spec:spec out", "review-reuse:reuse out"]);
+  });
+
+  it("runs the bugs lens twice, saving the second pass as review-bugs-2 and logging the pass", async () => {
+    const { calls, run } = harness({
+      lenses: ["bugs", "bugs", "spec", "reuse"],
+      find: async lens => ({ success: true, rawOutput: `${lens} out`, findings: [] }),
+    });
+    const outcome = await run();
+    expect(calls.saved).toEqual(["review-bugs:bugs out", "review-bugs-2:bugs out", "review-spec:spec out", "review-reuse:reuse out"]);
+    expect(calls.logged).toContain("  Reviewing change (bugs)");
+    expect(calls.logged).toContain("  Reviewing change (bugs, pass 2)");
+    expect(outcome.review.lenses).toEqual([
+      { lens: "bugs", outcome: "reviewed", candidates: 0 },
+      { lens: "bugs", pass: 2, outcome: "reviewed", candidates: 0 },
+      { lens: "spec", outcome: "reviewed", candidates: 0 },
+      { lens: "reuse", outcome: "reviewed", candidates: 0 },
+    ]);
+  });
+
+  it("numbers bugs candidates continuously across both passes", async () => {
+    let pass = 0;
+    const { calls, run } = harness({
+      lenses: ["bugs", "bugs"],
+      find: async () => reviewed(finding(`R${++pass}`, "minor"), finding(`R${++pass}`, "minor")),
+    });
+    await run();
+    expect(calls.confirm[0].map(c => c.id)).toEqual(["B1", "B2", "B3", "B4"]);
+  });
+
+  it("still confirms the other bugs pass's candidates when one pass fails, with a note", async () => {
+    let pass = 0;
+    const { calls, run } = harness({
+      lenses: ["bugs", "bugs"],
+      find: async () => ++pass === 1 ? reviewed(finding("R1", "minor")) : { success: false, rawOutput: "", failure: "timed out" },
+    });
+    const outcome = await run();
+    expect(calls.confirm[0].map(c => c.id)).toEqual(["B1"]);
+    expect(outcome.review.lenses?.[1]).toEqual({ lens: "bugs", pass: 2, outcome: "failed", reason: "timed out", candidates: 0 });
+    expect(outcome.notes.join(" ")).toContain("Review lens bugs (pass 2) failed: timed out");
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("fails the stage only when every pass failed", async () => {
+    const { run } = harness({
+      lenses: ["bugs", "bugs"],
+      find: async () => ({ success: false, rawOutput: "", failure: "timed out" }),
+    });
+    const outcome = await run();
+    expect(outcome.review.outcome).toBe("failed");
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("skips a lens when the gate closes before it, still confirms the earlier candidates and flags needs_review", async () => {
+    let gateChecks = 0;
+    const { calls, run } = harness({
+      lenses: ["bugs", "spec"],
+      gateOpen: () => ++gateChecks !== 3,
+      find: byLens({ bugs: reviewed(finding("R1", "minor")) }),
+    });
+    const outcome = await run();
+    expect(calls.confirm[0].map(c => c.id)).toEqual(["B1"]);
+    expect(outcome.review.lenses).toEqual([
+      { lens: "bugs", outcome: "reviewed", candidates: 1 },
+      { lens: "spec", outcome: "skipped", reason: "budget cap reached", candidates: 0 },
+    ]);
+    expect(outcome.notes).toContain("Review lens spec skipped: budget cap reached.");
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("records a failed lens and carries on with the others", async () => {
+    const { calls, run } = harness({
+      lenses: ["bugs", "spec"],
+      find: byLens({ bugs: { success: false, rawOutput: "", failure: "claude stopped: timed out" }, spec: reviewed(finding("R1", "minor")) }),
+    });
+    const outcome = await run();
+    expect(calls.confirm[0].map(c => c.id)).toEqual(["S1"]);
+    expect(outcome.review.lenses?.[0]).toEqual({ lens: "bugs", outcome: "failed", reason: "claude stopped: timed out", candidates: 0 });
+    expect(outcome.notes.join(" ")).toContain("Review lens bugs failed: claude stopped: timed out");
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("records a lens whose block does not parse as failed", async () => {
+    const { run } = harness({
+      lenses: ["bugs", "spec"],
+      find: byLens({ bugs: { success: true, rawOutput: "waffle", parseError: "No ---REVIEW--- block found in agent output" } }),
+    });
+    const outcome = await run();
+    expect(outcome.review.lenses?.[0]).toMatchObject({ lens: "bugs", outcome: "failed", reason: expect.stringContaining("---REVIEW---") });
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("fails the review but still publishes when every lens fails", async () => {
+    const { run } = harness({
+      lenses: ["bugs", "spec"],
+      find: async () => ({ success: false, rawOutput: "", failure: "crashed" }),
+    });
+    const outcome = await run();
+    expect(outcome.review).toMatchObject({ outcome: "failed", reason: expect.stringContaining("crashed") });
+    expect(outcome).toMatchObject({ needsReview: true, publish: true });
+  });
+
+  it("stops without publishing when a lens changes the worktree, running no later lens or confirm", async () => {
+    let snap = "before";
+    const { calls, run } = harness({
+      lenses: ["bugs", "spec"],
+      snapshot: () => snap,
+      find: async lens => { calls.find.push(lens); snap = "after"; return reviewed(finding("R1")); },
+    });
+    const outcome = await run();
+    expect(calls.find).toEqual(["bugs"]);
+    expect(calls.confirm).toHaveLength(0);
+    expect(outcome.review).toMatchObject({ outcome: "failed", reason: expect.stringMatching(/modified/i) });
+    expect(outcome).toMatchObject({ needsReview: true, publish: false });
+  });
+});
+
+describe("reviewAndFix confirmation", () => {
+  it("does not run confirm when no lens found anything", async () => {
+    const { calls, run } = harness();
+    const outcome = await run();
+    expect(calls.confirm).toHaveLength(0);
+    expect(outcome.review.confirmation).toBeUndefined();
+    expect(outcome).toMatchObject({ needsReview: false, publish: true });
+  });
+
+  it("goes straight to the fix with only check regressions and no candidates", async () => {
+    const regression: ReviewFinding = { id: "C1", severity: "blocker", file: ".", issue: "npm test fails after the change", suggestion: "Fix it." };
+    const { calls, run } = harness({ regressions: [regression] });
+    await run();
+    expect(calls.confirm).toHaveLength(0);
+    expect(calls.fix).toEqual([[regression]]);
+  });
+
+  it("sends confirm every finding and risk from every lens with lens-prefixed ids", async () => {
+    const { calls, run } = harness({
+      lenses: ["bugs", "spec", "reuse"],
+      find: byLens({
+        bugs: { ...reviewed(finding("R1"), finding("R2")), risks: [risk("maybe")] },
+        spec: reviewed(finding("R1")),
+        reuse: { ...reviewed(), risks: [risk("dup helper")] },
+      }),
+    });
+    await run();
+    expect(calls.confirm[0].map(c => `${c.id}:${c.lens}:${c.kind}`)).toEqual([
+      "B1:bugs:finding", "B2:bugs:finding", "B3:bugs:risk", "S1:spec:finding", "U1:reuse:risk",
+    ]);
+  });
+
+  it("carries the finder's confidence, decision and data flag onto the candidate", async () => {
+    const found = { ...finding("R1"), confidence: "suspected" as const, decision: "D1" };
+    const { calls, run } = harness({ find: async () => ({ ...reviewed(), findings: [found], risks: [risk("x", true)] }) });
+    await run();
+    expect(calls.confirm[0][0]).toMatchObject({ confidence: "suspected", decision: "D1", data: false });
+    expect(calls.confirm[0][1]).toMatchObject({ kind: "risk", data: true, file: "src/r.ts", issue: "x" });
+  });
+
+  it("fixes only confirmed candidates, renumbered R1.. after the C regressions, keeping from", async () => {
+    const regression: ReviewFinding = { id: "C1", severity: "blocker", file: ".", issue: "npm test fails after the change", suggestion: "Fix it." };
+    const { calls, run } = harness({
+      regressions: [regression],
+      lenses: ["bugs", "spec"],
+      find: byLens({ bugs: reviewed(finding("R1"), finding("R2")), spec: reviewed(finding("R1")) }),
+      confirm: verdictsFor({ B2: { verdict: "rejected" } }),
+    });
+    const outcome = await run();
+    expect(calls.fix[0].map(f => `${f.id}:${f.from}`)).toEqual(["C1:undefined", "R1:B1", "R2:S1"]);
+    expect(outcome.review.findings.map(f => f.id)).toEqual(["C1", "R1", "R2"]);
+  });
+
+  it("does not send check regressions to confirm", async () => {
+    const regression: ReviewFinding = { id: "C1", severity: "blocker", file: ".", issue: "npm test fails after the change", suggestion: "Fix it." };
+    const { calls, run } = harness({ regressions: [regression], find: byLens({ bugs: reviewed(finding("R1")) }) });
+    await run();
+    expect(calls.confirm[0].map(c => c.id)).toEqual(["B1"]);
+  });
+
+  it("takes the severity from confirm when it gives one", async () => {
+    const { calls, run } = harness({
+      find: byLens({ bugs: reviewed(finding("R1", "minor")) }),
+      confirm: verdictsFor({ B1: { severity: "blocker" } }),
+    });
+    await run();
+    expect(calls.fix[0][0].severity).toBe("blocker");
+  });
+
+  it("promotes a confirmed risk to a finding", async () => {
+    const { calls, run } = harness({
+      find: async () => ({ ...reviewed(), risks: [risk("null recorded as success")] }),
+      confirm: verdictsFor({ B1: { severity: "major" } }),
+    });
+    const outcome = await run();
+    expect(calls.fix[0]).toMatchObject([{ id: "R1", from: "B1", severity: "major", file: "src/r.ts", issue: "null recorded as success" }]);
+    expect(outcome.review.risks).toEqual([]);
+  });
+
+  it("drops duplicates and rejected candidates but records them with their verdicts", async () => {
+    const { run } = harness({
+      lenses: ["bugs", "spec"],
+      find: byLens({ bugs: reviewed(finding("R1")), spec: reviewed(finding("R1"), finding("R2")) }),
+      confirm: verdictsFor({ S1: { verdict: "duplicate", duplicateOf: "B1" }, S2: { verdict: "rejected", note: "guarded on line 4" } }),
+    });
+    const outcome = await run();
+    expect(outcome.review.findings.map(f => f.from)).toEqual(["B1"]);
+    expect(outcome.review.risks).toEqual([]);
+    expect(outcome.review.candidates?.map(c => `${c.id}:${c.verdict?.verdict}`)).toEqual(["B1:confirmed", "S1:duplicate", "S2:rejected"]);
+    expect(outcome.review.candidates?.[1].verdict?.duplicateOf).toBe("B1");
+    expect(outcome.review.confirmation).toEqual({ outcome: "confirmed" });
+  });
+
+  it("turns unproven candidates into risks", async () => {
+    const { calls, run } = harness({
+      find: byLens({ bugs: reviewed(finding("R1")) }),
+      confirm: verdictsFor({ B1: { verdict: "unproven" } }),
+    });
+    const outcome = await run();
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review.risks).toEqual([{ file: "src/a.ts", risk: "Problem R1.", data: false }]);
+  });
+
+  it("treats a candidate confirm did not mention as unproven", async () => {
+    const { run } = harness({
+      find: byLens({ bugs: reviewed(finding("R1")) }),
+      confirm: async () => ({ success: true, rawOutput: "confirm out", verdicts: [] }),
+    });
+    const outcome = await run();
+    expect(outcome.review.risks).toHaveLength(1);
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "unproven" });
+  });
+
+  it("takes the data flag for an unproven candidate from confirm", async () => {
+    const { run } = harness({
+      find: byLens({ bugs: reviewed(finding("R1")) }),
+      confirm: verdictsFor({ B1: { verdict: "unproven", data: true } }),
+    });
+    expect((await run()).review.risks?.[0].data).toBe(true);
+  });
+
+  it("does not publish when confirm changes the worktree", async () => {
+    let snap = "same";
+    const { calls, run } = harness({
+      snapshot: () => snap,
+      find: byLens({ bugs: reviewed(finding("R1")) }),
+      confirm: async candidates => { snap = "changed"; return judged(candidates); },
+    });
+    const outcome = await run();
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review).toMatchObject({ outcome: "failed", reason: expect.stringMatching(/modified/i) });
+    expect(outcome).toMatchObject({ needsReview: true, publish: false });
+  });
+
+  it("sends the finding candidates to the fix unconfirmed and flags needs_review when confirm fails", async () => {
+    const { calls, run } = harness({
+      find: async () => ({ ...reviewed(finding("R1")), risks: [risk("maybe")] }),
+      confirm: async () => ({ success: false, rawOutput: "", failure: "claude exited with status 1" }),
+    });
+    const outcome = await run();
+    expect(calls.fix[0]).toMatchObject([{ id: "R1", from: "B1" }]);
+    expect(outcome.review.risks).toEqual([risk("maybe")]);
+    expect(outcome.review.confirmation).toEqual({ outcome: "failed", reason: "claude exited with status 1" });
+    expect(outcome.notes.join(" ")).toContain("Review candidates unconfirmed: claude exited with status 1");
+    expect(outcome).toMatchObject({ needsReview: true, publish: true });
+  });
+
+  it("treats an unparseable confirm block as a failed confirmation", async () => {
+    const { calls, run } = harness({
+      find: byLens({ bugs: reviewed(finding("R1")) }),
+      confirm: async () => ({ success: true, rawOutput: "x", parseError: "No ---CONFIRM--- block found" }),
+    });
+    const outcome = await run();
+    expect(calls.fix).toHaveLength(1);
+    expect(outcome.review.confirmation).toMatchObject({ outcome: "failed", reason: "No ---CONFIRM--- block found" });
+  });
+
+  it("sends the candidates to the fix unconfirmed when the gate closes before confirm", async () => {
+    let open = true;
+    const { calls, run } = harness({
+      gateOpen: () => open,
+      find: async () => { open = false; return reviewed(finding("R1")); },
+    });
+    const outcome = await run();
+    expect(calls.confirm).toHaveLength(0);
+    expect(outcome.review.confirmation).toEqual({ outcome: "skipped", reason: "budget cap reached" });
+    expect(outcome.review.findings).toMatchObject([{ id: "R1", from: "B1" }]);
+    expect(outcome).toMatchObject({ needsReview: true, publish: true });
+  });
+});
+
+describe("reviewAndFix data risks", () => {
+  it("flags needs_review but still publishes for an unproven risk to recorded data", async () => {
+    const { run } = harness({
+      find: async () => ({ ...reviewed(), risks: [risk("records null", true)] }),
+      confirm: verdictsFor({ B1: { verdict: "unproven" } }),
+    });
+    const outcome = await run();
+    expect(outcome).toMatchObject({ needsReview: true, publish: true });
+    expect(outcome.notes).toContain("Unconfirmed risk to recorded data: src/r.ts");
+  });
+
+  it("does not flag a risk that is not about data", async () => {
+    const { run } = harness({
+      find: async () => ({ ...reviewed(), risks: [risk("style")] }),
+      confirm: verdictsFor({ B1: { verdict: "unproven" } }),
+    });
+    expect((await run()).needsReview).toBe(false);
+  });
+});
+
+describe("reviewAndFix decisions", () => {
+  const decisions = [{ file: "src/a.ts", decision: "null when no row" }, { file: "src/b.ts", decision: "reject the export on invalid CSV" }];
+  const rule = (...rulings: { id: string; ruling: "accept" | "finding" | "risk"; reason: string }[]) => ({ ...reviewed(), rulings });
+
+  it("records accepted decisions without raising anything", async () => {
+    const { calls, run } = harness({
+      decisions,
+      find: async () => rule({ id: "D1", ruling: "accept", reason: "null is handled" }, { id: "D2", ruling: "accept", reason: "logged" }),
+    });
+    const outcome = await run();
+    expect(calls.confirm).toHaveLength(0);
+    expect(outcome.review.decisions).toEqual([
+      { id: "D1", decision: "null when no row", file: "src/a.ts", ruling: "accept", reason: "null is handled" },
+      { id: "D2", decision: "reject the export on invalid CSV", file: "src/b.ts", ruling: "accept", reason: "logged" },
+    ]);
+    expect(outcome).toMatchObject({ needsReview: false, publish: true });
+  });
+
+  it("turns a decision ruled risk into a risk that confirm can still promote", async () => {
+    const { calls, run } = harness({
+      decisions: [decisions[0]],
+      find: async () => rule({ id: "D1", ruling: "risk", reason: "a missing row records null" }),
+      confirm: verdictsFor({ B1: {} }),
+    });
+    const outcome = await run();
+    expect(calls.confirm[0]).toMatchObject([{ id: "B1", kind: "risk", file: "src/a.ts", issue: "a missing row records null" }]);
+    expect(calls.fix[0]).toMatchObject([{ id: "R1", from: "B1", issue: "a missing row records null" }]);
+    expect(outcome.review.decisions?.[0]).toMatchObject({ id: "D1", ruling: "risk" });
+  });
+
+  it("carries a decision ruled finding through to the fixed finding", async () => {
+    const { calls, run } = harness({
+      decisions: [decisions[0]],
+      find: async () => ({ ...rule({ id: "D1", ruling: "finding", reason: "bad" }), findings: [{ ...finding("R1"), decision: "D1" }] }),
+    });
+    const outcome = await run();
+    expect(calls.confirm[0]).toHaveLength(1);
+    expect(calls.fix[0]).toMatchObject([{ id: "R1", from: "B1" }]);
+    expect(outcome.review.decisions?.[0]).toMatchObject({ id: "D1", ruling: "finding" });
+  });
+
+  it("records a decision ruled finding with no matching candidate as a risk", async () => {
+    const { calls, run } = harness({
+      decisions: [decisions[0]],
+      find: async () => rule({ id: "D1", ruling: "finding", reason: "bad but unfiled" }),
+      confirm: verdictsFor({ B1: { verdict: "unproven" } }),
+    });
+    const outcome = await run();
+    expect(calls.confirm[0]).toMatchObject([{ kind: "risk", issue: "bad but unfiled" }]);
+    expect(outcome.review.decisions?.[0]).toMatchObject({ id: "D1", ruling: "risk", reason: "bad but unfiled" });
+  });
+
+  it("turns an unruled decision into a risk with a note", async () => {
+    const { calls, run } = harness({
+      decisions: [decisions[0]],
+      find: async () => rule(),
+      confirm: verdictsFor({ B1: { verdict: "unproven" } }),
+    });
+    const outcome = await run();
+    expect(calls.confirm[0]).toMatchObject([{ kind: "risk", file: "src/a.ts", issue: "null when no row" }]);
+    expect(outcome.review.decisions?.[0]).toMatchObject({ id: "D1", ruling: "unruled" });
+    expect(outcome.notes).toContain("Decision D1 not ruled on");
+    expect(outcome.review.risks).toEqual([{ file: "src/a.ts", risk: "null when no row", data: false }]);
+  });
+
+  describe("across two bugs passes", () => {
+    const twice = (first: ReviewRunResult, second: ReviewRunResult) => {
+      let pass = 0;
+      return harness({ decisions, lenses: ["bugs", "bugs"], find: async () => ++pass === 1 ? first : second });
+    };
+
+    it("keeps the strictest ruling per decision and that pass's reason", async () => {
+      const { run } = twice(
+        { ...rule({ id: "D1", ruling: "accept", reason: "fine" }, { id: "D2", ruling: "risk", reason: "iffy" }) },
+        rule({ id: "D1", ruling: "risk", reason: "null leaks" }, { id: "D2", ruling: "accept", reason: "ok" }),
+      );
+      const outcome = await run();
+      expect(outcome.review.decisions).toMatchObject([
+        { id: "D1", ruling: "risk", reason: "null leaks" },
+        { id: "D2", ruling: "risk", reason: "iffy" },
+      ]);
+    });
+
+    it("counts a finding ruling as matched when the other pass filed the candidate", async () => {
+      const { run } = twice(
+        { ...rule({ id: "D1", ruling: "finding", reason: "bad" }) },
+        { ...rule({ id: "D2", ruling: "accept", reason: "ok" }), findings: [{ ...finding("R1"), decision: "D1" }] },
+      );
+      const outcome = await run();
+      expect(outcome.review.decisions?.[0]).toMatchObject({ id: "D1", ruling: "finding", reason: "bad" });
+    });
+
+    it("leaves a decision unruled only when no pass ruled on it", async () => {
+      const { run } = twice({ ...rule({ id: "D1", ruling: "accept", reason: "fine" }) }, rule({ id: "D1", ruling: "accept", reason: "fine" }));
+      const outcome = await run();
+      expect(outcome.review.decisions?.map(d => d.ruling)).toEqual(["accept", "unruled"]);
+    });
+
+    it("merges notes-derived rulings that share an id across passes, keeping the strictest", async () => {
+      const verdicts = ["accept", "risk"] as const;
+      let pass = 0;
+      const { run } = harness({
+        lenses: ["bugs", "bugs"],
+        find: async () => rule({ id: "N1", ruling: verdicts[pass++], reason: `pass ${pass}` }),
+      });
+      const outcome = await run();
+      expect(outcome.review.decisions).toMatchObject([{ id: "N1", ruling: "risk", reason: "pass 2" }]);
+    });
+  });
+
+  it("records rulings the lens took from the notes when no decisions were listed", async () => {
+    const { run } = harness({ find: async () => rule({ id: "N1", ruling: "accept", reason: "fine" }) });
+    const outcome = await run();
+    expect(outcome.review.decisions).toMatchObject([{ id: "N1", ruling: "accept", reason: "fine" }]);
+  });
+});
+
+describe("findAndConfirm", () => {
+  it("returns the confirmed findings, risks and record without running the fix", async () => {
+    const fix = vi.fn();
+    const found = await findAndConfirm({
+      hasChanges: () => true, snapshot: () => "same", gateOpen: () => true, lenses: ["bugs"],
+      find: async () => ({ ...reviewed(finding("R1")), risks: [risk("maybe")] }),
+      confirm: async candidates => verdictsFor({ B1: {}, B2: { verdict: "unproven" } })(candidates),
+      fix, saveOutput: () => {}, log: () => {},
+    });
+    expect(fix).not.toHaveBeenCalled();
+    expect(found.stopped).toBeUndefined();
+    expect(found).toMatchObject({
+      findings: [{ id: "R1", from: "B1" }], risks: [risk("maybe")],
+      record: { lenses: [{ lens: "bugs", outcome: "reviewed" }], confirmation: { outcome: "confirmed" } },
+    });
   });
 });
 
@@ -223,6 +691,12 @@ describe("mergeFixReport", () => {
   it("unions followups, deduping by file and note", () => {
     const merged = mergeFixReport(base, report({ followups: [{ file: "x.ts", note: "old" }, { file: "x.ts", note: "new" }, { file: "y.ts", note: "old" }] }));
     expect(merged.followups).toEqual([{ file: "x.ts", note: "old" }, { file: "x.ts", note: "new" }, { file: "y.ts", note: "old" }]);
+  });
+
+  it("keeps the original decisions and adds new ones from the fix report, deduping by file and decision", () => {
+    const original = { file: "x.ts", decision: "null when absent" };
+    const merged = mergeFixReport({ ...base, decisions: [original] }, report({ decisions: [original, { file: "x.ts", decision: "retry once" }] }));
+    expect(merged.decisions).toEqual([original, { file: "x.ts", decision: "retry once" }]);
   });
 
   it("unions files and lets the fix run's test results replace same-named ones", () => {
@@ -250,7 +724,7 @@ describe("reviewAndFix with check regressions", () => {
   });
 
   it("puts regressions ahead of the reviewer's findings", async () => {
-    const { calls, run } = harness({ regressions: [regression], review: async () => reviewed(finding("R1")) });
+    const { calls, run } = harness({ regressions: [regression], find: async () => reviewed(finding("R1")) });
     await run();
     expect(calls.fix[0].map(f => f.id)).toEqual(["C1", "R1"]);
   });
@@ -275,7 +749,7 @@ describe("reviewAndFix with check regressions", () => {
   });
 
   it("still names regressions when the review itself fails", async () => {
-    const { run } = harness({ regressions: [regression], review: async () => ({ success: false, rawOutput: "", failure: "crashed" }) });
+    const { run } = harness({ regressions: [regression], find: async () => ({ success: false, rawOutput: "", failure: "crashed" }) });
     const outcome = await run();
     expect(outcome.needsReview).toBe(true);
     expect(outcome.notes.join(" ")).toContain("npm run lint");
@@ -283,17 +757,21 @@ describe("reviewAndFix with check regressions", () => {
 });
 
 describe("reviewAndFix with risks", () => {
-  const risks = [{ file: "a.ts", risk: "Confirm the default." }];
+  const risks = [{ file: "a.ts", risk: "Confirm the default.", data: false }];
+  const confirmRisksUnproven = async (candidates: ReviewCandidate[]): Promise<ConfirmRunResult> => ({
+    success: true, rawOutput: "confirm out",
+    verdicts: candidates.map(c => ({ id: c.id, verdict: c.kind === "risk" ? "unproven" : "confirmed", note: "" })),
+  });
 
   it("keeps risks on the review and never sends them to the fix", async () => {
-    const { calls, run } = harness({ review: async () => ({ ...reviewed(finding("R1")), risks }) });
+    const { calls, run } = harness({ confirm: confirmRisksUnproven, find: async () => ({ ...reviewed(finding("R1")), risks }) });
     const outcome = await run();
     expect(outcome.review.risks).toEqual(risks);
     expect(JSON.stringify(calls.fix)).not.toContain("Confirm the default");
   });
 
   it("keeps risks when there are no findings, without running the fix", async () => {
-    const { calls, run } = harness({ review: async () => ({ ...reviewed(), risks }) });
+    const { calls, run } = harness({ confirm: confirmRisksUnproven, find: async () => ({ ...reviewed(), risks }) });
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
     expect(outcome.review.risks).toEqual(risks);
@@ -306,7 +784,7 @@ describe("reviewAndFix verification", () => {
   const withVerify = (verify: ReviewDeps["verify"], over: Partial<ReviewDeps> = {}) => {
     const seen: { findings: ReviewFinding[]; resolutions: FixResolution[] }[] = [];
     const h = harness({
-      review: async () => reviewed(finding("R1", "blocker"), finding("R2", "major"), finding("R3", "minor")),
+      find: async () => reviewed(finding("R1", "blocker"), finding("R2", "major"), finding("R3", "minor")),
       verify: async (findings, resolutions) => { seen.push({ findings, resolutions }); return verify!(findings, resolutions); },
       ...over,
     });
@@ -362,7 +840,7 @@ describe("reviewAndFix verification", () => {
   it("does not flag needs_review for a skipped verification of only minors", async () => {
     let open = true;
     const { run } = withVerify(async () => verified(), {
-      review: async () => reviewed(finding("R3", "minor")),
+      find: async () => reviewed(finding("R3", "minor")),
       gateOpen: () => open,
       fix: async findings => { open = false; return fixed(findings.map(f => resolution(f.id))); },
     });

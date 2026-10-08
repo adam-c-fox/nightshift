@@ -10,7 +10,7 @@ const pr = (pipelineStatus: PRResult["pipelineStatus"], names: string[] = []): P
 
 const agentResult = (title = "fix: format files", status = "done"): ClaudeResult => ({
   success: true, rawOutput: "",
-  report: { status, title, summary: "Ran prettier.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [] },
+  report: { status, title, summary: "Ran prettier.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [], decisions: [] },
 });
 
 const harness = (overrides: Partial<CiFixDeps> = {}, pushes: PRResult[] = [pr("succeeded")]) => {
