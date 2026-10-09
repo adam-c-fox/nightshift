@@ -24,7 +24,7 @@ export const DASHBOARD_CSS = `
   .btn, select { font: inherit; color: var(--text); background: var(--surface);
           border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.8rem;
           min-height: 2.25rem; }
-  .btn { cursor: pointer; }
+  .btn { cursor: pointer; white-space: nowrap; }
   .btn:hover { border-color: var(--accent); }
   .btn:active { background: var(--accent); }
   .btn:disabled { opacity: 0.5; cursor: progress; }
@@ -49,6 +49,7 @@ export const DASHBOARD_CSS = `
        padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
   td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top;
        overflow-wrap: anywhere; }
+  td.id { white-space: nowrap; }
   tr.not-todo { opacity: 0.6; }
   .badge { display: inline-block; color: #fff; font-size: 0.7rem; font-weight: 700;
            padding: 0.2rem 0.6rem; border-radius: 4px; letter-spacing: 0.5px; white-space: nowrap; }

@@ -82,7 +82,7 @@ function rowHTML(row: ClockOffRow, project: string): string {
   const cell = (label: string, content: string, cls = "") =>
     `<td data-label="${label}"${cls ? ` class="${cls}"` : ""}>${content}</td>`;
   return `<tr${row.inTodo ? "" : ' class="not-todo"'}>
-${cell("ID", idCell(row))}
+${cell("ID", idCell(row), "id")}
 ${cell("Title", titleCell(row))}
 ${cell("Priority", esc(row.priority))}
 ${cell("Est.", row.estimate === null ? EMPTY : String(row.estimate))}
