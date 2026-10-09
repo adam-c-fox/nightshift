@@ -424,6 +424,9 @@ export interface ClaudeResult {
 }
 
 export const MAX_TURNS = 80;
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export const EFFORT: Effort = "high";
+export const REVIEW_MODEL = "claude-opus-5-5";
 const SAFETY_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const USAGE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -432,6 +435,8 @@ export interface ToolProfile {
   allowedTools: string[];
   disallowedTools: string[];
   enforceAllowList?: boolean;
+  model?: string;
+  effort?: Effort;
 }
 
 const NEVER_PUBLISH = ["Bash(git push *)", "Bash(git config *)", "Bash(git commit *)"];
@@ -463,6 +468,7 @@ export const REVIEW_PROFILE: ToolProfile = {
     ...NEVER_PUBLISH,
   ],
   enforceAllowList: true,
+  model: REVIEW_MODEL,
 };
 
 export const POSTMORTEM_PROFILE: ToolProfile = {
@@ -481,6 +487,8 @@ export function buildClaudeArgs(operatingInstructions: string, profile: ToolProf
     "-p",
     "--output-format", "json",
     "--max-turns", String(MAX_TURNS),
+    ...(profile.model ? ["--model", profile.model] : []),
+    "--effort", profile.effort ?? EFFORT,
     "--permission-mode", profile.permissionMode,
     "--allowedTools", profile.allowedTools.join(","),
     "--disallowedTools", profile.disallowedTools.join(","),

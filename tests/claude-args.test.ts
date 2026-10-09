@@ -31,6 +31,32 @@ describe("output format", () => {
   });
 });
 
+describe("effort", () => {
+  it("pins high effort in every profile", () => {
+    for (const profile of [undefined, REVIEW_PROFILE, POSTMORTEM_PROFILE]) {
+      const args = buildClaudeArgs("x", profile);
+      expect(args[args.indexOf("--effort") + 1]).toBe("high");
+    }
+  });
+
+  it("lets a profile override the effort", () => {
+    const args = buildClaudeArgs("x", { ...REVIEW_PROFILE, effort: "low" });
+    expect(args[args.indexOf("--effort") + 1]).toBe("low");
+  });
+});
+
+describe("model", () => {
+  it("pins the Opus model for review runs", () => {
+    const args = buildClaudeArgs("x", REVIEW_PROFILE);
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-opus-5-5");
+  });
+
+  it("passes no --model for the implementer or the postmortem", () => {
+    expect(buildClaudeArgs("x")).not.toContain("--model");
+    expect(buildClaudeArgs("x", POSTMORTEM_PROFILE)).not.toContain("--model");
+  });
+});
+
 describe("agentRunArgs", () => {
   it("adds settings, strict MCP config and user-only setting sources", () => {
     expect(agentRunArgs(["-p"], "{}")).toEqual(
