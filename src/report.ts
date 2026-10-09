@@ -414,6 +414,10 @@ export function generateHTML(session: SessionResult): string {
 <title>Nightshift Report – ${esc(session.date)}</title>
 <style>${THEME_CSS}
   body { padding: 2rem; max-width: 860px; margin: 0 auto; }
+  .home { display: inline-block; margin-bottom: 1rem; padding: 0.4rem 0.8rem; color: var(--text);
+          background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+          text-decoration: none; font-size: 0.9rem; }
+  .home:hover { border-color: var(--accent); }
   h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
   .date { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 1.5rem; }
   .summary-bar { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
@@ -523,6 +527,7 @@ export function generateHTML(session: SessionResult): string {
 </style>
 </head>
 <body>
+  <a class="home" href="${DASHBOARD_ORIGIN}/">← Home</a>
   <h1>🌙 Nightshift Report</h1>
   <div class="date">${esc(session.date)} · ${esc(session.startedAt)} → ${esc(session.endedAt)}</div>
 

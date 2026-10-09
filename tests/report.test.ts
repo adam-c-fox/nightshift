@@ -6,12 +6,19 @@ import path from "node:path";
 import {
   REPORT_BASE, countTickets, esc, generateHTML, postmortemActionKey, reportBase, reportFilename, ticketActionKey, writeReport,
 } from "../src/report.js";
+import { DASHBOARD_ORIGIN } from "../src/dashboard/address.js";
 import type { RunUsage, SessionResult, TicketResult, TicketReview } from "../src/types.js";
 
 const session = (over: Partial<SessionResult>): SessionResult => ({
   date: "2026-10-01", startedAt: "", endedAt: "", tickets: [],
   budget: openNightBudget({ weeklyPercent: 3, resetInfo: "Oct 7" }, 15),
   gateHit: false, skipReason: "", noTasks: false, ...over,
+});
+
+describe("report navigation", () => {
+  it("links back to the dashboard home page", () => {
+    expect(generateHTML(session({}))).toContain(`<a class="home" href="${DASHBOARD_ORIGIN}/">`);
+  });
 });
 
 describe("report ticket loading failure", () => {
