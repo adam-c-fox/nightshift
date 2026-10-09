@@ -51,6 +51,10 @@ For **every** ticket, in this exact order:
    `npm run lint:fix` and `npx prettier --write <files you changed>`, then
    re-run both. Only touch files you changed; never reformat the rest of the
    repo.
+9. **Check against the ticket** before reporting: go through each acceptance
+   criterion and each `## Decisions` line and name the test or code that
+   meets it. A `decisions` entry may only cover what the ticket left open,
+   never depart from what it settled.
 
 Before you finish, decide every operational choice that has an obvious
 answer. Don't leave them as they fall by default. In particular, for anything
