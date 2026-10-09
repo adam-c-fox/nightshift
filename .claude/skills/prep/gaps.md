@@ -7,6 +7,7 @@ Check each ticket for:
 - acceptance criteria that are missing, vague or untestable;
 - edge cases with no stated behaviour (empty or invalid input, errors, permissions, concurrency);
 - for anything that runs repeatedly (a poller, a queue consumer, a retry): the end state of each input it skips, rejects or fails on;
+- for logs or anything that must stay value-free: a rule that keeps values by shape (a regex) instead of a fixed allowlist of known values, or one that logs absent and suppressed as the same value;
 - contradictions between the description and the comments, and decisions settled only in comments;
 - contracts shared with another ticket that neither defines;
 - files, functions or config the ticket names that don't exist in the repo, or that it names ambiguously (more than one match);
