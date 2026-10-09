@@ -8,9 +8,7 @@ export type Log = (msg: string) => void;
 
 export interface WorktreeSpec {
   repoPath: string;
-  worktreesDir: string;
   ticketId: string;
-  repo: string;
   toolchain: Toolchain;
   branchBase: string;
   startFrom?: { branch: string; baseBranch: string };
@@ -81,8 +79,8 @@ export function chooseBranchName(base: string, exists: (name: string) => boolean
   }
 }
 
-export function worktreePath(worktreesDir: string, repo: string, ticketId: string): string {
-  return path.join(worktreesDir, `${repo}-${ticketId}`);
+export function worktreePath(repoPath: string, ticketId: string): string {
+  return `${path.resolve(repoPath)}-${ticketId}`;
 }
 
 function resolveBaseRef(repoPath: string, log: Log): string {
@@ -143,6 +141,18 @@ function isRegisteredWorktree(repoPath: string, wtPath: string): boolean {
     });
 }
 
+function isOrphanedWorktreeOf(repoPath: string, wtPath: string): boolean {
+  const dotGit = path.join(wtPath, ".git");
+  if (!existsSync(dotGit) || !lstatSync(dotGit).isFile()) return false;
+  const gitdir = readFileSync(dotGit, "utf-8").match(/^gitdir: (.+)$/m)?.[1];
+  if (!gitdir) return false;
+  const metaParent = path.dirname(path.resolve(wtPath, gitdir));
+  const commonDir = path.resolve(repoPath, git(["rev-parse", "--git-common-dir"], repoPath).trim());
+  return path.basename(metaParent) === "worktrees"
+    && existsSync(path.dirname(metaParent))
+    && realpathSync(path.dirname(metaParent)) === realpathSync(commonDir);
+}
+
 function salvageUncommittedWork(wtPath: string, ticketId: string, log: Log): void {
   if (git(["status", "--porcelain", ...PATHSPEC], wtPath).trim() === "") return;
   git(["add", "-A", ...PATHSPEC], wtPath);
@@ -150,7 +160,7 @@ function salvageUncommittedWork(wtPath: string, ticketId: string, log: Log): voi
   log(`  Salvaged uncommitted work from interrupted run in ${wtPath}`);
 }
 
-function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: string, ticketId: string, log: Log): void {
+function removeStaleWorktree(repoPath: string, wtPath: string, ticketId: string, log: Log): void {
   git(["worktree", "prune"], repoPath);
   if (!existsSync(wtPath)) return;
   log(`Cleaning stale worktree: ${wtPath}`);
@@ -158,20 +168,19 @@ function removeStaleWorktree(repoPath: string, worktreesDir: string, wtPath: str
   try {
     git(["worktree", "remove", "--force", wtPath], repoPath);
   } catch {
-    const resolved = path.resolve(wtPath);
-    if (!resolved.startsWith(path.resolve(worktreesDir) + path.sep)) {
-      throw new Error(`Refusing to delete ${resolved}: outside ${worktreesDir}`);
+    if (!isOrphanedWorktreeOf(repoPath, wtPath)) {
+      throw new Error(`Refusing to delete ${wtPath}: not a worktree of ${repoPath}`);
     }
-    rmSync(resolved, { recursive: true, force: true });
+    rmSync(wtPath, { recursive: true, force: true });
     git(["worktree", "prune"], repoPath);
   }
 }
 
 export function createWorktree(spec: WorktreeSpec, log: Log, install: (wtPath: string) => void = npmCi): Worktree {
-  const { repoPath, worktreesDir, ticketId, repo, toolchain, branchBase, startFrom, stackedOn } = spec;
-  const wtPath = worktreePath(worktreesDir, repo, ticketId);
+  const { repoPath, ticketId, toolchain, branchBase, startFrom, stackedOn } = spec;
+  const wtPath = worktreePath(repoPath, ticketId);
 
-  removeStaleWorktree(repoPath, worktreesDir, wtPath, ticketId, log);
+  removeStaleWorktree(repoPath, wtPath, ticketId, log);
 
   const defaultBaseRef = resolveBaseRef(repoPath, log);
   const freshBaseRef = stackedOn ? stackBaseRef(repoPath, stackedOn) : defaultBaseRef;

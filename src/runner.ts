@@ -28,7 +28,6 @@ import { localDate, TIME_ZONE } from "./time.js";
 import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const WORKTREES_DIR = path.join(ROOT, "worktrees");
 let logsDir = path.join(ROOT, "logs");
 
 function log(msg: string) {
@@ -208,7 +207,7 @@ async function processTicket(
     return placeholderResult(ticket, "skipped", stack.reason, branchPrefix);
   }
   const parent = stack.kind === "stacked" ? stack.parent : undefined;
-  const plannedPath = worktreePath(WORKTREES_DIR, repo, ticketId);
+  const plannedPath = worktreePath(repoPath, ticketId);
   let wt: Worktree = {
     wtPath: plannedPath, branch: ticketBranchName(branchPrefix, ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
   };
@@ -242,7 +241,7 @@ async function processTicket(
     if (parent) log(`  [dry-run] Would branch from origin/${parent.branch}`);
   } else {
     const startFrom = existing ? { branch: existing.sourceBranch, baseBranch: existing.targetBranch } : undefined;
-    wt = createWorktree({ repoPath, worktreesDir: WORKTREES_DIR, ticketId, repo, toolchain, branchBase, startFrom, stackedOn: parent?.branch }, log);
+    wt = createWorktree({ repoPath, ticketId, toolchain, branchBase, startFrom, stackedOn: parent?.branch }, log);
   }
   const continuing = existing !== null && (dryRun || wt.startedFromPr);
   const agentContext = [...(continuing ? [continuingPrContext(existing.prId)] : []), ...(parent ? [stackedContext(parent)] : []), ...context];
@@ -429,6 +428,9 @@ function freshGate(budgetRef: { current: NightBudget }): UsageGate {
   }
 }
 
+const ticketWorktrees = (session: SessionResult): string[] =>
+  session.tickets.map(t => t.worktreePath).filter(p => p !== "" && existsSync(p));
+
 async function nightPostmortem(session: SessionResult, project: Project, dryRun: boolean, reportsDir: string, budgetRef: { current: NightBudget }, base: string): Promise<SessionPostmortem> {
   const { date } = session;
   try {
@@ -441,7 +443,7 @@ async function nightPostmortem(session: SessionResult, project: Project, dryRun:
     log("Running postmortem");
     await waitForSession();
     const shouldAbort = () => weeklyGate(budgetRef, "during the postmortem") ?? sessionAbortReason(budgetRef.current);
-    const { rawOutput, outcome } = await runPostmortem(ROOT, date, path.relative(ROOT, logsDir), [WORKTREES_DIR], {
+    const { rawOutput, outcome } = await runPostmortem(ROOT, date, path.relative(ROOT, logsDir), ticketWorktrees(session), {
       shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true, secretFiles: projectEnvFiles() }),
     });
     saveLog(`postmortem-${date}.txt`, rawOutput);
@@ -497,7 +499,6 @@ async function main() {
   log(`═══ Nightshift session ${date} started ${dryRun ? "(DRY RUN)" : ""} ═══`);
   log(`Project: ${project.name}`);
 
-  mkdirSync(WORKTREES_DIR, { recursive: true });
   mkdirSync(logsDir, { recursive: true });
   mkdirSync(reportsDir, { recursive: true });
   const base = reportBase(date, name => existsSync(path.join(reportsDir, name)));

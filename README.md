@@ -11,7 +11,7 @@ Nightshift works through Linear tickets overnight with Claude Code. You pick the
 Cron starts the runner at 23:00. It reads the project's `tonight.md` and works the tickets in file order. For each ticket it:
 
 1. **Fetches the Linear ticket** and moves it to In Progress.
-2. **Creates a worktree** off `origin/main`. If the ticket already has an open PR, it continues on that PR's branch instead.
+2. **Creates a worktree** off `origin/main`, beside the repo it targets: `<repo path>-<ticket id>`, e.g. `~/Developer/app-ENG-123` for a repo at `~/Developer/app`. If the ticket already has an open PR, it continues on that PR's branch instead.
 3. **Runs the repo's checks** (tests, typecheck, lint, or `terraform validate` and `fmt`) to get a baseline.
 4. **Runs the agent** with the ticket, your context bullets and [`AGENTS.md`](AGENTS.md) plus the project's own `AGENTS.md`. The agent works test-first and ends with a structured report, including anything it spotted but didn't fix ("Spotted, not fixed" in the report).
 5. **Re-runs the checks** against the baseline, so only failures the change introduced count as regressions.
