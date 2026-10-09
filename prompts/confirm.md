@@ -13,9 +13,9 @@ These instructions apply on top of the review instructions above, and override t
 ## 2 · Verdicts
 
 - `confirmed`: you can show how it breaks. It goes to a fixer. Set `severity` if the reviewer's severity is wrong. A `risk` candidate that you can show breaks is confirmed too.
-- `duplicate`: another candidate in the list reports the same problem. Name that one in `duplicate_of`; keep the one with the better evidence.
+- `duplicate`: another candidate in the list reports the same problem. Name that one in `duplicate_of`; keep the one with the better evidence. When a finding and a risk report the same problem, keep the finding and mark the risk duplicate.
 - `rejected`: the code is correct, or the candidate misreads it. Say what the code does instead.
-- A candidate whose behaviour the ticket explicitly asks for is never `rejected` on that ground alone. If the candidate shows that the behaviour records misleading data or breaks on a path, the ticket's author has made a decision a human should look at again: give it `unproven`, set `data`, and start the note with "The ticket specifies this:" followed by the consequence.
+- A candidate whose behaviour the ticket explicitly asks for is never `rejected` on that ground alone. If the candidate shows that the behaviour records misleading data or breaks on a path, the ticket's author has made a decision a human should look at again: give it `unproven`, set `data`, and start the note with "The ticket specifies this:" followed by the consequence. Use that only when you can quote the ticket line; an implementer decision that departs from the ticket is `confirmed`.
 - `unproven`: you cannot show it breaks and you cannot show it is correct. It is published for a human to weigh. Set `data` for it.
 
 ## 3 · Output contract
