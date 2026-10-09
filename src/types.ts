@@ -44,6 +44,8 @@ export const REVIEW_LENSES: ReviewLens[] = ["bugs", "bugs", "spec", "reuse"];
 
 export type ReviewStage = `review-${ReviewLens}` | `review-${ReviewLens}-${number}`;
 
+export type ConfirmStage = "review-dedupe" | `review-confirm-${number}`;
+
 export const lensStage = (lens: ReviewLens, pass = 1): ReviewStage => pass > 1 ? `review-${lens}-${pass}` : `review-${lens}`;
 
 export const lensLabel = (lens: ReviewLens, pass = 1): string => pass > 1 ? `${lens} (pass ${pass})` : lens;
@@ -57,6 +59,7 @@ export interface ReviewFinding {
   issue: string;
   suggestion: string;
   from?: string;
+  evidence?: string;
 }
 
 export interface FixResolution {
@@ -92,7 +95,9 @@ export interface ReviewCandidate {
   decision?: string;
 }
 
-export type Verdict = "confirmed" | "duplicate" | "unproven" | "rejected";
+export type Verdict = "confirmed" | "duplicate" | "ticket_conflict" | "unproven" | "rejected";
+
+export type Citation = "holds" | "missing" | "unreadable" | "mismatch";
 
 export interface CandidateVerdict {
   id: string;
@@ -100,7 +105,47 @@ export interface CandidateVerdict {
   duplicateOf?: string;
   severity?: Severity;
   data?: boolean;
+  evidence?: string;
+  code?: string;
+  ticket?: string;
+  change?: string;
+  citation?: Citation;
+  quoted?: boolean;
+  adjusted?: { from: Verdict };
   note: string;
+}
+
+export type RecordedCandidate = ReviewCandidate & { verdict?: CandidateVerdict };
+
+export interface ConfirmBatch {
+  n: number;
+  candidates: ReviewCandidate[];
+  groupedWith: Record<string, string>;
+}
+
+export interface ConfirmBatchRun {
+  n: number;
+  ids: string[];
+  outcome: "confirmed" | "skipped" | "failed";
+  reason?: string;
+}
+
+export interface Confirmation {
+  outcome: "confirmed" | "partial" | "skipped" | "failed";
+  reason?: string;
+  dedupe?: { outcome: "grouped" | "failed"; reason?: string; merged: number };
+  batches?: ConfirmBatchRun[];
+}
+
+export interface TicketConflict {
+  from: string;
+  file: string;
+  ticket: string;
+  quoted: boolean;
+  consequence: string;
+  change: string;
+  data: boolean;
+  evidence?: string;
 }
 
 export type Ruling = "accept" | "finding" | "risk" | "unruled";
@@ -131,10 +176,11 @@ export interface TicketReview {
   findings: ReviewFinding[];
   resolutions: FixResolution[];
   risks?: ReviewRisk[];
+  conflicts?: TicketConflict[];
   verification?: FixVerification;
   lenses?: LensRun[];
-  candidates?: (ReviewCandidate & { verdict?: CandidateVerdict })[];
-  confirmation?: { outcome: "confirmed" | "skipped" | "failed"; reason?: string };
+  candidates?: RecordedCandidate[];
+  confirmation?: Confirmation;
   decisions?: DecisionRuling[];
 }
 

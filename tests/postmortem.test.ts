@@ -104,6 +104,15 @@ describe("sessionLogData", () => {
     const data = sessionLogData(session, name => names.includes(name), "logs/acme") as { tickets: { logFiles: string[] }[] };
     expect(data.tickets[0].logFiles).toEqual(names.map(n => `logs/acme/${n}`));
   });
+  it("lists the dedupe and numbered confirm logs in run order", () => {
+    const withRuns: SessionResult = {
+      ...session,
+      tickets: [{ ...ticket("ENG-1", "done"), runs: ["review-bugs", "review-dedupe", "review-confirm-1", "review-confirm-2", "fix"].map(stage => ({ stage })) }],
+    };
+    const names = ["review-bugs", "review-dedupe", "review-confirm-1", "review-confirm-2", "fix"].map(n => `ENG-1-${n}.txt`);
+    const data = sessionLogData(withRuns, name => names.includes(name), "logs/acme") as { tickets: { logFiles: string[] }[] };
+    expect(data.tickets[0].logFiles).toEqual(names.map(n => `logs/acme/${n}`));
+  });
   it("keeps the session data", () => {
     const data = sessionLogData(session, () => false, "logs/acme") as { date: string; tickets: { status: string }[] };
     expect(data.date).toBe("2026-10-01");

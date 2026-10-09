@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { TicketScore } from "../src/golden.js";
 import { briefFromSession, buildIfScripted, goldenPath, parseReplayArgs, prepareScratch, replayLogDir, replayRecord, replaySummary } from "../src/replay-review.js";
 import type { FindAndConfirmResult } from "../src/review.js";
-import type { RunRecord, RunUsage } from "../src/types.js";
+import type { CandidateVerdict, RecordedCandidate, RunRecord, RunUsage } from "../src/types.js";
 
 const required = ["--project", "acme", "--ticket", "ENG-1", "--base", "abc123", "--diff", "d.txt", "--report", "r.txt"];
 
@@ -101,6 +101,50 @@ describe("replaySummary", () => {
     const empty = replaySummary({ ...found, findings: [], risks: [], record: {} }, []);
     expect(empty).toContain("Confirmed findings: none");
     expect(empty).toContain("Risks: none");
+  });
+
+  const conflict = { from: "B1", file: "src/d.ts", ticket: "never retry", quoted: true, consequence: "drops uploads", change: "retry once", data: false };
+
+  it("prints ticket conflicts with the ticket line and the change", () => {
+    const withConflict = replaySummary({ ...found, record: { ...found.record, conflicts: [{ ...conflict, data: true }] } }, []);
+    expect(withConflict).toContain("Ticket conflicts:");
+    expect(withConflict).toContain('  src/d.ts [data]: "never retry" -> retry once');
+    expect(withConflict).not.toContain("not found verbatim");
+  });
+
+  it("flags a conflict whose ticket line was not found", () => {
+    const withConflict = replaySummary({ ...found, record: { ...found.record, conflicts: [{ ...conflict, quoted: false }] } }, []);
+    expect(withConflict).toContain('  src/d.ts: "never retry" -> retry once (not found verbatim in the ticket)');
+  });
+
+  it("names rejections kept as risks for want of a checkable line", () => {
+    const candidate = (id: string, verdict: CandidateVerdict): RecordedCandidate =>
+      ({ id, lens: "bugs", kind: "finding", severity: "major", confidence: "proven", file: "src/a.ts", issue: "i", suggestion: "s", data: false, verdict });
+    const text = replaySummary({
+      ...found,
+      record: {
+        ...found.record,
+        candidates: [
+          candidate("B1", { id: "B1", verdict: "unproven", adjusted: { from: "rejected" }, note: "n" }),
+          candidate("B2", { id: "B2", verdict: "rejected", note: "n" }),
+          candidate("B3", { id: "B3", verdict: "unproven", adjusted: { from: "rejected" }, note: "n" }),
+        ],
+      },
+    }, []);
+    expect(text).toContain("Rejections kept as risks for want of a checkable line: B1, B3");
+    expect(replaySummary(found, [])).not.toContain("Rejections kept");
+    expect(replaySummary(found, [])).not.toContain("Ticket conflicts");
+  });
+
+  it("prints usage for dedupe and each confirm batch", () => {
+    const staged = replaySummary(found, [
+      { stage: "review-dedupe", usage: usage({ inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0.01 }) },
+      { stage: "review-confirm-1", usage: usage() },
+      { stage: "review-confirm-2", usage: usage({ inputTokens: 500, outputTokens: 50, costUsd: 0.25 }) },
+    ]);
+    expect(staged).toContain("review-dedupe: 100 in / 10 out, $0.01");
+    expect(staged).toContain("review-confirm-1: 6,300 in / 200 out, $0.50");
+    expect(staged).toContain("review-confirm-2: 5,800 in / 50 out, $0.25");
   });
 
   it("reports why a stopped review stopped", () => {

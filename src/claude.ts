@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { runWithWatchdog } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
-import type { CandidateVerdict, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, Verdict, VerifyResult } from "./types.js";
+import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, Verdict, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const REVIEW_MD = path.join(ROOT, "prompts", "review.md");
 const FIX_MD = path.join(ROOT, "prompts", "fix.md");
 const VERIFY_MD = path.join(ROOT, "prompts", "verify.md");
 const CONFIRM_MD = path.join(ROOT, "prompts", "confirm.md");
+const DEDUPE_MD = path.join(ROOT, "prompts", "dedupe.md");
 const lensMd = (lens: ReviewLens) => path.join(ROOT, "prompts", `review-${lens}.md`);
 const LAYER_SEPARATOR = "\n\n---\n\n";
 
@@ -153,16 +154,25 @@ export function buildFinderPrompt(
   );
 }
 
-export function buildConfirmPrompt(brief: TicketBrief, baseRef: string, candidates: ReviewCandidate[]): string {
-  const listed = candidates.map(c =>
+export function buildConfirmPrompt(
+  brief: TicketBrief, report: AgentReport | undefined, baseRef: string, batch: ConfirmBatch, extras: ReviewPromptExtras = {},
+): string {
+  const listed = batch.candidates.map(c =>
     [
       `- id: ${c.id}`, `  lens: ${c.lens}`, `  kind: ${c.kind}`, `  severity: ${c.severity}`, `  confidence: ${c.confidence}`,
       `  data: ${c.data ? "yes" : "no"}`, `  file: ${c.file}`, `  issue: ${c.issue}`, `  suggestion: ${c.suggestion}`,
+      ...(batch.groupedWith[c.id] ? [`  grouped_with: ${batch.groupedWith[c.id]}`] : []),
     ].join("\n"));
+  const decisions = report?.decisions ?? [];
   return [
     ...ticketSection(brief),
+    `**The implementer's report. Its notes and decisions are the implementer's own claims and choices, not ticket text:**`,
+    ...reportSummary(report).map(l => `  ${l}`),
+    ...(decisions.length > 0 ? [`  Decisions:`, ...decisions.map((d, i) => `  - D${i + 1} (${d.file}): ${d.decision}`)] : [`  Decisions: (none)`]),
+    ``,
     `**Base ref:** \`${baseRef}\``,
     `Inspect the current change with \`git diff ${baseRef}\` and \`git status --porcelain\` (untracked files are not in the diff; read them directly).`,
+    ...checksSection(extras.checks),
     ``,
     `These candidates were reported against the change:`,
     ``,
@@ -172,9 +182,21 @@ export function buildConfirmPrompt(brief: TicketBrief, baseRef: string, candidat
   ].join("\n");
 }
 
+export function buildDedupePrompt(candidates: ReviewCandidate[]): string {
+  const listed = candidates.map(c =>
+    [`- id: ${c.id}`, `  lens: ${c.lens}`, `  kind: ${c.kind}`, `  file: ${c.file}`, `  issue: ${c.issue}`].join("\n"));
+  return [
+    `These candidates were reported against one change:`,
+    ``,
+    ...listed,
+    ``,
+    `Group the ones that report the same problem. End your final message with the ---DEDUPE--- block.`,
+  ].join("\n");
+}
+
 export function buildFixPrompt(brief: TicketBrief, findings: ReviewFinding[]): string {
   const listed = findings.map(f =>
-    [`- id: ${f.id}`, `  severity: ${f.severity}`, `  file: ${f.file}`, `  issue: ${f.issue}`, `  suggestion: ${f.suggestion}`].join("\n"));
+    [`- id: ${f.id}`, `  severity: ${f.severity}`, `  file: ${f.file}`, ...(f.evidence ? [`  evidence: ${f.evidence}`] : []), `  issue: ${f.issue}`, `  suggestion: ${f.suggestion}`].join("\n"));
   return [
     ...ticketSection(brief),
     `The change for this ticket is already in the worktree. These issues were found in it:`,
@@ -221,6 +243,7 @@ const REVIEW_START = "---REVIEW---";
 const FIXES_START = "---FIXES---";
 const VERIFY_START = "---VERIFY---";
 const CONFIRM_START = "---CONFIRM---";
+const DEDUPE_START = "---DEDUPE---";
 const BLOCK_END = "---";
 const SEVERITIES: Severity[] = ["blocker", "major", "minor"];
 
@@ -338,7 +361,7 @@ export interface ParsedReview {
 }
 
 const RULINGS: Ruling[] = ["accept", "finding", "risk"];
-const VERDICTS: Verdict[] = ["confirmed", "duplicate", "rejected"];
+const VERDICTS: Verdict[] = ["confirmed", "duplicate", "ticket_conflict", "rejected"];
 const isYes = (value: string | undefined): boolean => /^(yes|true)$/i.test(value ?? "");
 
 function parseRisks(lines: string[] | undefined): ReviewRisk[] {
@@ -370,7 +393,7 @@ export function parseReviewBlock(output: string): ParsedReview {
 }
 
 export function parseConfirmBlock(output: string): CandidateVerdict[] {
-  return parseRecords(extractBlock(output, CONFIRM_START), ["id", "verdict", "duplicate_of", "severity", "data", "note"])
+  return parseRecords(extractBlock(output, CONFIRM_START), ["id", "verdict", "duplicate_of", "severity", "data", "evidence", "code", "ticket", "change", "note"])
     .filter(r => r.id)
     .map((r): CandidateVerdict => ({
       id: r.id,
@@ -378,8 +401,24 @@ export function parseConfirmBlock(output: string): CandidateVerdict[] {
       ...(r.duplicate_of ? { duplicateOf: r.duplicate_of } : {}),
       ...(SEVERITIES.includes(r.severity as Severity) ? { severity: r.severity as Severity } : {}),
       ...(r.data ? { data: isYes(r.data) } : {}),
+      ...(r.evidence ? { evidence: r.evidence } : {}),
+      ...(r.code ? { code: r.code } : {}),
+      ...(r.ticket ? { ticket: r.ticket } : {}),
+      ...(r.change ? { change: r.change } : {}),
       note: r.note ?? "",
     }));
+}
+
+export interface DedupeGroup {
+  keep: string;
+  same: string[];
+}
+
+export function parseDedupeBlock(output: string): DedupeGroup[] {
+  return parseRecords(extractBlock(output, DEDUPE_START), ["keep", "same"])
+    .filter(r => r.keep)
+    .map((r): DedupeGroup => ({ keep: r.keep, same: (r.same ?? "").split(/[\s,]+/).filter(id => id !== "") }))
+    .filter(g => g.same.length > 0);
 }
 
 export function parseFixesBlock(output: string): FixResolution[] {
@@ -427,6 +466,7 @@ export const MAX_TURNS = 80;
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export const EFFORT: Effort = "high";
 export const REVIEW_MODEL = "claude-opus-5-5";
+export const DEDUPE_MODEL = "claude-sonnet-5-5";
 const SAFETY_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const USAGE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -435,6 +475,7 @@ export interface ToolProfile {
   allowedTools: string[];
   disallowedTools: string[];
   enforceAllowList?: boolean;
+  tools?: string[];
   model?: string;
   effort?: Effort;
 }
@@ -471,6 +512,16 @@ export const REVIEW_PROFILE: ToolProfile = {
   model: REVIEW_MODEL,
 };
 
+export const DEDUPE_PROFILE: ToolProfile = {
+  permissionMode: "default",
+  allowedTools: [],
+  disallowedTools: ["Edit", "Write", "NotebookEdit", ...NEVER_PUBLISH],
+  enforceAllowList: true,
+  tools: [],
+  model: DEDUPE_MODEL,
+  effort: "low",
+};
+
 export const POSTMORTEM_PROFILE: ToolProfile = {
   permissionMode: "default",
   allowedTools: [
@@ -489,8 +540,9 @@ export function buildClaudeArgs(operatingInstructions: string, profile: ToolProf
     "--max-turns", String(MAX_TURNS),
     ...(profile.model ? ["--model", profile.model] : []),
     "--effort", profile.effort ?? EFFORT,
+    ...(profile.tools ? ["--tools", profile.tools.join(",")] : []),
     "--permission-mode", profile.permissionMode,
-    "--allowedTools", profile.allowedTools.join(","),
+    ...(profile.allowedTools.length > 0 ? ["--allowedTools", profile.allowedTools.join(",")] : []),
     "--disallowedTools", profile.disallowedTools.join(","),
     "--append-system-prompt", operatingInstructions,
     ...addDirs.flatMap(dir => ["--add-dir", dir]),
@@ -624,6 +676,7 @@ const layered = (...files: string[]): string => files.map(f => readFileSync(f, "
 
 export const finderSystemPrompt = (lens: ReviewLens): string => layered(REVIEW_MD, lensMd(lens));
 export const confirmSystemPrompt = (): string => layered(REVIEW_MD, CONFIRM_MD);
+export const dedupeSystemPrompt = (): string => readFileSync(DEDUPE_MD, "utf-8");
 
 async function execFinder(worktreePath: string, prompt: string, systemPrompt: string, options: RunAgentOptions): Promise<ReviewRunResult> {
   const run = await execClaude(worktreePath, prompt, systemPrompt, REVIEW_PROFILE, options);
@@ -691,10 +744,27 @@ export interface ConfirmRunResult {
 }
 
 export async function runConfirm(
-  worktreePath: string, brief: TicketBrief, baseRef: string, candidates: ReviewCandidate[], options: RunAgentOptions,
+  worktreePath: string, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, batch: ConfirmBatch, options: RunAgentOptions,
+  extras: ReviewPromptExtras = {},
 ): Promise<ConfirmRunResult> {
-  const prompt = buildConfirmPrompt(brief, baseRef, candidates);
+  const prompt = buildConfirmPrompt(brief, report, baseRef, batch, extras);
   const run = await execClaude(worktreePath, prompt, confirmSystemPrompt(), REVIEW_PROFILE, options);
   const { value: verdicts, error: parseError } = parseOrError(run.stdout, run.failure, parseConfirmBlock);
   return { success: run.failure === undefined, rawOutput: run.rawOutput, verdicts, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
+}
+
+export interface DedupeRunResult {
+  success: boolean;
+  rawOutput: string;
+  groups?: DedupeGroup[];
+  parseError?: string;
+  failure?: string;
+  abortReason?: string;
+  usage?: RunUsage;
+}
+
+export async function runDedupe(worktreePath: string, candidates: ReviewCandidate[], options: RunAgentOptions): Promise<DedupeRunResult> {
+  const run = await execClaude(worktreePath, buildDedupePrompt(candidates), dedupeSystemPrompt(), DEDUPE_PROFILE, options);
+  const { value: groups, error: parseError } = parseOrError(run.stdout, run.failure, parseDedupeBlock);
+  return { success: run.failure === undefined, rawOutput: run.rawOutput, groups, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }

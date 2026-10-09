@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, finderSystemPrompt, POSTMORTEM_PROFILE, REVIEW_PROFILE } from "../src/claude.js";
+import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, DEDUPE_PROFILE, dedupeSystemPrompt, finderSystemPrompt, POSTMORTEM_PROFILE, REVIEW_PROFILE } from "../src/claude.js";
 
 describe("agent instructions", () => {
   const agentsMd = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf-8");
@@ -24,7 +24,7 @@ describe("agent instructions", () => {
 
 describe("output format", () => {
   it("asks for JSON output in every profile", () => {
-    for (const profile of [undefined, REVIEW_PROFILE, POSTMORTEM_PROFILE]) {
+    for (const profile of [undefined, REVIEW_PROFILE, DEDUPE_PROFILE, POSTMORTEM_PROFILE]) {
       const args = buildClaudeArgs("x", profile);
       expect(args[args.indexOf("--output-format") + 1]).toBe("json");
     }
@@ -126,6 +126,23 @@ describe("review run args", () => {
   });
 });
 
+describe("dedupe run args", () => {
+  const args = buildClaudeArgs("x", DEDUPE_PROFILE);
+  const value = (flag: string) => args[args.indexOf(flag) + 1];
+
+  it("runs dedupe on Sonnet at low effort with every tool disabled", () => {
+    expect(value("--tools")).toBe("");
+    expect(value("--model")).toBe("claude-sonnet-5-5");
+    expect(value("--effort")).toBe("low");
+    expect(args).not.toContain("--allowedTools");
+  });
+
+  it("still denies edits and publishing", () => {
+    expect(value("--disallowedTools")).toContain("Edit");
+    expect(value("--disallowedTools")).toContain("Bash(git push *)");
+  });
+});
+
 describe("review and fix prompts", () => {
   const read = (name: string) => readFileSync(new URL(`../prompts/${name}`, import.meta.url), "utf-8");
 
@@ -165,6 +182,23 @@ describe("review prompt layering", () => {
     expect(confirm).toMatch(/on top of the review instructions above/);
     expect(confirm).toContain("---CONFIRM---");
     expect(confirm).toMatch(/show how it breaks/i);
+  });
+
+  it("drops the last-resort rule and requires a cited line for a rejection in confirm.md", () => {
+    const confirm = read("confirm.md");
+    expect(confirm).not.toMatch(/last resort/i);
+    expect(confirm).toMatch(/A rejection without them/);
+    expect(confirm).toMatch(/`evidence`/);
+  });
+
+  it("defines ticket_conflict with a quoted ticket line and a change in confirm.md", () => {
+    const confirm = read("confirm.md");
+    for (const text of ["ticket_conflict", "ticket:", "change:"]) expect(confirm).toContain(text);
+  });
+
+  it("builds the dedupe system prompt from dedupe.md alone", () => {
+    expect(dedupeSystemPrompt()).toBe(read("dedupe.md"));
+    expect(dedupeSystemPrompt()).toContain("---DEDUPE---");
   });
 
   it("builds the finder system prompt from the base plus the lens file", () => {

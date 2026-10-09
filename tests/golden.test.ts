@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { candidateOrigin, matchCandidate, parseGolden, scoreSummary, scoreTicket, totalSummary } from "../src/golden.js";
 import type { GoldenItem, GoldenSet } from "../src/golden.js";
-import { NOT_COVERED_NOTE } from "../src/review.js";
+import { NOT_COVERED_NOTE } from "../src/confirm.js";
 import type { CandidateVerdict, ReviewCandidate, RunRecord, RunUsage, TicketReview } from "../src/types.js";
 
 const rawItem = (over: Record<string, unknown> = {}) => ({

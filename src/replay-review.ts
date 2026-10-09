@@ -6,7 +6,8 @@ import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import type { ClassifiedCheck } from "./checks.js";
-import { parseReportBlock, runConfirm, runFinder, type AgentReport, type ReviewPromptExtras, type TicketBrief } from "./claude.js";
+import { parseReportBlock, runConfirm, runDedupe, runFinder, type AgentReport, type ReviewPromptExtras, type TicketBrief } from "./claude.js";
+import { readCited, ticketText } from "./confirm.js";
 import { getEnv, useProjectEnv } from "./env.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { fetchTicket } from "./linear.js";
@@ -89,6 +90,7 @@ function summaryText(found: FindAndConfirmResult, runs: RunRecord[]): string {
   if (found.stopped) return [`Review stopped: ${found.stopped.review.reason ?? "no reason recorded"}`, ...usage].join("\n");
 
   const { findings, risks, record } = found;
+  const keptAsRisks = (record.candidates ?? []).filter(c => c.verdict?.adjusted?.from === "rejected").map(c => c.id);
   return [
     "Lenses:",
     ...(record.lenses ?? []).map(l => `  ${lensLabel(l.lens, l.pass)} ${l.outcome}${l.reason ? `: ${l.reason}` : ` (${l.candidates} candidates)`}`),
@@ -96,6 +98,10 @@ function summaryText(found: FindAndConfirmResult, runs: RunRecord[]): string {
     ...findings.map(f => `  ${f.id}${f.from ? ` (from ${f.from})` : ""} ${f.severity} ${f.file}: ${f.issue}`),
     risks.length > 0 ? "Risks:" : "Risks: none",
     ...risks.map(r => `  ${r.file}${r.data ? " [data]" : ""}: ${r.risk}`),
+    ...(record.conflicts?.length
+      ? ["Ticket conflicts:", ...record.conflicts.map(c => `  ${c.file}${c.data ? " [data]" : ""}: "${c.ticket}" -> ${c.change}${c.quoted ? "" : " (not found verbatim in the ticket)"}`)]
+      : []),
+    ...(keptAsRisks.length > 0 ? [`Rejections kept as risks for want of a checkable line: ${keptAsRisks.join(", ")}`] : []),
     ...(record.decisions?.length ? ["Rulings:", ...record.decisions.map(d => `  ${d.id} ${d.ruling}: ${d.reason}`)] : []),
     ...usage,
   ].join("\n");
@@ -213,7 +219,10 @@ async function runReview(args: ReplayArgs, scratch: string, inputs: ReviewInputs
     lenses: REVIEW_LENSES,
     decisions: report.decisions,
     find: async (lens, pass) => record(lensStage(lens, pass), await runFinder(scratch, lens, brief, report, args.base, options, extras)),
-    confirm: async candidates => record("review-confirm", await runConfirm(scratch, brief, args.base, candidates, options)),
+    dedupe: async candidates => record("review-dedupe", await runDedupe(scratch, candidates, options)),
+    confirm: async batch => record(`review-confirm-${batch.n}`, await runConfirm(scratch, brief, report, args.base, batch, options, extras)),
+    source: file => readCited(scratch, file),
+    ticketText: ticketText(brief),
     fix: () => Promise.reject(new Error("replay does not fix")),
     saveOutput: (stage, raw) => writeFileSync(path.join(logDir, `${args.ticket}-${stage}.txt`), raw, "utf-8"),
     log: console.log,

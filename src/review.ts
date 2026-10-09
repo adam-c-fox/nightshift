@@ -1,25 +1,22 @@
 import { deriveOutcome } from "./status.js";
-import type { AgentReport, ConfirmRunResult, FixRunResult, FoundFinding, ParsedRuling, ReviewRunResult, VerifyRunResult } from "./claude.js";
+import type { AgentReport, FixRunResult, FoundFinding, ParsedRuling, ReviewRunResult, VerifyRunResult } from "./claude.js";
 import type {
-  CandidateVerdict, Decision, DecisionRuling, Followup, FixResolution, FixVerification, LensRun, ReviewCandidate, ReviewFinding,
-  ReviewLens, ReviewRisk, ReviewStage, Severity, TestResult, TicketReview,
+  ConfirmStage, Decision, DecisionRuling, Followup, FixResolution, FixVerification, LensRun, ReviewCandidate, ReviewFinding,
+  ReviewLens, ReviewRisk, ReviewStage, TestResult, TicketReview,
 } from "./types.js";
 import { lensLabel, lensStage } from "./types.js";
+import { confirmAll, sortVerdicts, type ConfirmDeps } from "./confirm.js";
 
-export interface ReviewDeps {
+export interface ReviewDeps extends ConfirmDeps {
   hasChanges(): boolean;
-  snapshot(): string;
-  gateOpen(): boolean;
   lenses: ReviewLens[];
   find(lens: ReviewLens, pass: number): Promise<ReviewRunResult>;
-  confirm(candidates: ReviewCandidate[]): Promise<ConfirmRunResult>;
   decisions?: Decision[];
   fix(findings: ReviewFinding[]): Promise<FixRunResult>;
   regressions?: ReviewFinding[];
   recheck?(): Promise<ReviewFinding[]>;
   verify?(findings: ReviewFinding[], resolutions: FixResolution[]): Promise<VerifyRunResult>;
-  saveOutput(stage: ReviewStage | "review-confirm" | "fix" | "verify", raw: string): void;
-  log(msg: string): void;
+  saveOutput(stage: ReviewStage | ConfirmStage | "fix" | "verify", raw: string): void;
 }
 
 export interface ReviewStageOutcome {
@@ -132,8 +129,7 @@ const regressionNames = (findings: ReviewFinding[]): string =>
   findings.map(f => f.issue.split(" fails after the change")[0]).join(", ");
 
 type Pending = Omit<ReviewCandidate, "id">;
-type RecordedCandidate = ReviewCandidate & { verdict?: CandidateVerdict };
-type ReviewRecord = Pick<TicketReview, "lenses" | "candidates" | "confirmation" | "decisions">;
+type ReviewRecord = Pick<TicketReview, "lenses" | "candidates" | "confirmation" | "decisions" | "conflicts">;
 
 export interface FoundReview {
   stopped?: undefined;
@@ -237,40 +233,6 @@ function ruleOnDecisions(decisions: Decision[], parsed: ParsedRuling[], pending:
 const withIds = (lenses: ReviewLens[], pending: Pending[]): ReviewCandidate[] =>
   lenses.flatMap(lens => pending.filter(p => p.lens === lens).map((p, i): ReviewCandidate => ({ id: `${LENS_PREFIX[lens]}${i + 1}`, ...p })));
 
-const toFinding = (c: ReviewCandidate, n: number, severity: Severity = c.severity): ReviewFinding =>
-  ({ id: `R${n}`, severity, file: c.file, issue: c.issue, suggestion: c.suggestion, from: c.id });
-
-const toRisk = (c: ReviewCandidate, data: boolean = c.data): ReviewRisk => ({ file: c.file, risk: c.issue, data });
-
-interface Judgement {
-  findings: ReviewFinding[];
-  risks: ReviewRisk[];
-  candidates: RecordedCandidate[];
-}
-
-export const NOT_COVERED_NOTE = "not covered by the confirm step";
-
-function judgeCandidates(candidates: ReviewCandidate[], verdicts: CandidateVerdict[]): Judgement {
-  const recorded = candidates.map((c): RecordedCandidate =>
-    ({ ...c, verdict: verdicts.find(v => v.id === c.id) ?? { id: c.id, verdict: "unproven", note: NOT_COVERED_NOTE } }));
-  const confirmed = recorded.filter(c => c.verdict?.verdict === "confirmed");
-  const unproven = recorded.filter(c => c.verdict?.verdict === "unproven");
-  return {
-    findings: confirmed.map((c, i) => toFinding(c, i + 1, c.verdict?.severity)),
-    risks: unproven.map(c => toRisk(c, c.verdict?.data ?? c.data)),
-    candidates: recorded,
-  };
-}
-
-function unconfirmed(candidates: ReviewCandidate[]): Judgement {
-  const asked = candidates.filter(c => c.kind === "finding");
-  return {
-    findings: asked.map((c, i) => toFinding(c, i + 1)),
-    risks: candidates.filter(c => c.kind === "risk").map(c => toRisk(c)),
-    candidates,
-  };
-}
-
 const dataRiskNotes = (risks: ReviewRisk[]): string[] => {
   const files = [...new Set(risks.filter(r => r.data).map(r => r.file))];
   return files.length > 0 ? [`Unconfirmed risk to recorded data: ${files.join(", ")}`] : [];
@@ -281,33 +243,6 @@ const lensNotes = (runs: LensRun[]): string[] =>
 
 const allLensesFailedReason = (runs: LensRun[]): string =>
   runs.length === 1 ? runs[0].reason! : runs.map(r => `${lensLabel(r.lens, r.pass)}: ${r.reason}`).join("; ");
-
-type Confirmation =
-  | { verdicts: CandidateVerdict[] }
-  | { unconfirmed: { outcome: "skipped" | "failed"; reason: string } }
-  | { stopped: ReviewStageOutcome };
-
-async function confirmCandidates(candidates: ReviewCandidate[], deps: ReviewDeps, regressions: ReviewFinding[]): Promise<Confirmation> {
-  if (!deps.gateOpen()) return { unconfirmed: { outcome: "skipped", reason: "budget cap reached" } };
-
-  const before = deps.snapshot();
-  deps.log(`  Confirming ${candidates.length} candidate(s)`);
-  const run = await deps.confirm(candidates);
-  deps.saveOutput("review-confirm", run.rawOutput);
-
-  if (deps.snapshot() !== before) {
-    const reason = "the confirm run modified the worktree";
-    deps.log(`  Review failed: ${reason}; not publishing`);
-    return { stopped: failedReview(reason, false, [`Review failed: ${reason}; work kept on local branch, not pushed.`], regressions) };
-  }
-  const failure = run.failure ?? run.parseError;
-  if (failure || !run.verdicts) {
-    const reason = failure ?? "no verdicts reported";
-    deps.log(`  Confirm failed: ${reason}`);
-    return { unconfirmed: { outcome: "failed", reason } };
-  }
-  return { verdicts: run.verdicts };
-}
 
 const withRecord = (outcome: ReviewStageOutcome, record: ReviewRecord): ReviewStageOutcome =>
   ({ ...outcome, review: { ...outcome.review, ...record } });
@@ -334,28 +269,29 @@ export async function findAndConfirm(deps: ReviewDeps): Promise<FindAndConfirmRe
   const notes = [...lensNotes(lenses), ...ruled.notes];
   const decisions = ruled.rulings.length > 0 ? { decisions: ruled.rulings } : {};
 
-  let judgement: Judgement = { findings: [], risks: [], candidates };
+  let recorded: ReviewCandidate[] = candidates;
   let confirmation: TicketReview["confirmation"];
   if (candidates.length > 0) {
-    const step = await confirmCandidates(candidates, deps, regressions);
-    if ("stopped" in step) return { stopped: withRecord(step.stopped, { lenses, candidates, ...decisions }) };
-    if ("verdicts" in step) {
-      judgement = judgeCandidates(candidates, step.verdicts);
-      confirmation = { outcome: "confirmed" };
-    } else {
-      judgement = unconfirmed(candidates);
-      confirmation = step.unconfirmed;
-      notes.push(`Review candidates unconfirmed: ${step.unconfirmed.reason}.`);
+    const step = await confirmAll(candidates, deps);
+    if ("stopped" in step) {
+      deps.log(`  Review failed: ${step.stopped}; not publishing`);
+      const outcome = failedReview(step.stopped, false, [`Review failed: ${step.stopped}; work kept on local branch, not pushed.`], regressions);
+      return { stopped: withRecord(outcome, { lenses, candidates, ...decisions }) };
     }
+    recorded = step.candidates;
+    confirmation = step.confirmation;
+    notes.push(...step.notes);
   }
+  const { findings, risks, conflicts } = sortVerdicts(recorded);
 
-  const dataNotes = dataRiskNotes(judgement.risks);
+  const conflictNotes = conflicts.length > 0 ? [`Ticket conflicts to decide: ${[...new Set(conflicts.map(c => c.file))].join(", ")}.`] : [];
+  const dataNotes = dataRiskNotes(risks);
   return {
-    findings: [...regressions, ...judgement.findings],
-    risks: judgement.risks,
-    record: { lenses, candidates: judgement.candidates, ...(confirmation ? { confirmation } : {}), ...decisions },
-    notes: [...notes, ...dataNotes],
-    needsReview: notes.length > 0 || dataNotes.length > 0,
+    findings: [...regressions, ...findings],
+    risks,
+    record: { lenses, candidates: recorded, ...(confirmation ? { confirmation } : {}), ...decisions, ...(conflicts.length > 0 ? { conflicts } : {}) },
+    notes: [...notes, ...conflictNotes, ...dataNotes],
+    needsReview: notes.length > 0 || conflictNotes.length > 0 || dataNotes.length > 0,
   };
 }
 

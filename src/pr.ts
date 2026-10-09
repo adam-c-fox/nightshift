@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { getEnv, requireEnv } from "./env.js";
-import type { PipelineStatus, ReviewRisk, TicketResult } from "./types.js";
+import type { PipelineStatus, ReviewRisk, TicketConflict, TicketResult } from "./types.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -97,6 +97,7 @@ export interface PrContent {
   verifyCommands: string[];
   ticketUrl?: string;
   risks: ReviewRisk[];
+  conflicts: TicketConflict[];
   stackedOn?: { ticketId: string; prId: number };
 }
 
@@ -105,14 +106,21 @@ export function prContent(result: TicketResult): PrContent {
     ticketId: result.ticket.id, title: result.title ?? "", summary: result.summary,
     verifyCommands: result.verifyCommands, ticketUrl: result.linear?.url,
     risks: result.review?.risks ?? [],
+    conflicts: result.review?.conflicts ?? [],
   };
 }
 
+const sentence = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`);
+
 export function buildPrDescription(
   ticketId: string, summary: string, verifyCommands: string[], ticketUrl?: string, risks: ReviewRisk[] = [],
-  stackedOn?: { ticketId: string; prId: number },
+  stackedOn?: { ticketId: string; prId: number }, conflicts: TicketConflict[] = [],
 ): string {
   const ticket = ticketUrl ? `[${ticketId}](${ticketUrl})` : ticketId;
+  const needsDecision = conflicts.length > 0
+    ? ["", "Needs a decision before merge:", ...conflicts.map(c =>
+        `- \`${c.file}\`: ${c.ticket ? `The ticket asks for "${c.ticket}". ` : ""}${sentence(c.consequence)} Suggested change: ${sentence(c.change)}`)]
+    : [];
   const worthALook = risks.length > 0
     ? ["", "Worth a closer look:", ...risks.map(r => `- \`${r.file}\`: ${r.risk}`)]
     : [];
@@ -120,7 +128,7 @@ export function buildPrDescription(
     ? ["", "To verify locally:", ...verifyCommands.map(c => `- \`${c}\``)]
     : [];
   const stacked = stackedOn ? [`Stacked on PR #${stackedOn.prId} (${stackedOn.ticketId}); merge that first.`, ""] : [];
-  return [`Ticket: ${ticket}`, "", ...stacked, summary, ...worthALook, ...verify].join("\n").slice(0, 4000);
+  return [`Ticket: ${ticket}`, "", ...stacked, summary, ...needsDecision, ...worthALook, ...verify].join("\n").slice(0, 4000);
 }
 
 export function azEnvFrom(lookup: (name: string) => string | undefined): NodeJS.ProcessEnv {
@@ -464,7 +472,7 @@ export async function createAndCheckPR(
     sourceBranch: branch,
     targetBranch,
     title: buildPrTitle(content.ticketId, content.title, content.summary),
-    description: buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl, content.risks, content.stackedOn),
+    description: buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl, content.risks, content.stackedOn, content.conflicts),
   }), worktreePath) as { pullRequestId: number; repository: { name: string } };
 
   const prId = created.pullRequestId;

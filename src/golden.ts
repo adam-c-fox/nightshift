@@ -1,4 +1,4 @@
-import { NOT_COVERED_NOTE } from "./review.js";
+import { NOT_COVERED_NOTE } from "./confirm.js";
 import { lensLabel, type ReviewCandidate, type RunRecord, type TicketReview } from "./types.js";
 
 export type Expect = "finding" | "surfaced";

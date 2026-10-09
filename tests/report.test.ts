@@ -350,7 +350,7 @@ describe("report review stages", () => {
     id, lens: "bugs", kind: "finding", severity: "major", confidence: "proven",
     file: `src/${id}.ts`, issue: `Issue ${id}.`, suggestion: "", data: false, ...over,
   });
-  const verdict = (id: string, v: "confirmed" | "duplicate" | "unproven" | "rejected", note = `note ${id}`) => ({ id, verdict: v, note });
+  const verdict = (id: string, v: "confirmed" | "duplicate" | "unproven" | "rejected" | "ticket_conflict", note = `note ${id}`) => ({ id, verdict: v, note });
   const staged = (over: Partial<TicketReview> = {}): TicketReview => ({
     outcome: "reviewed", findings: [], resolutions: [],
     lenses: [
@@ -425,6 +425,114 @@ describe("report review stages", () => {
     const html = reportFor(ticketResult({ review: { outcome: "reviewed", findings: [], resolutions: [], risks: [{ file: "a.ts", risk: "Old." }] } }));
     expect(html).toContain("Review: no issues found");
     for (const absent of ["review-stages", "<details class=\"dropped\">", "<details class=\"rulings\">", "<span class=\"data-risk\">", "(from"]) expect(html).not.toContain(absent);
+  });
+
+  const conflict = (over: Partial<NonNullable<TicketReview["conflicts"]>[number]> = {}) => ({
+    from: "S1", file: "src/export.ts", ticket: "Drop rows with no id", quoted: true,
+    consequence: "Silently loses records", change: "Keep them and flag them.", data: false, ...over,
+  });
+
+  it("lists ticket conflicts at the top of the report with the ticket line and the suggested change, linking to the ticket", () => {
+    const html = reportFor(ticketResult({ review: staged({ conflicts: [conflict({ ticket: 'Drop "orphan" rows', data: true })] }) }));
+    const top = html.slice(html.indexOf('<section class="decisions"'), html.indexOf("</section>"));
+    expect(html.indexOf('<section class="decisions"')).toBeLessThan(html.indexOf('id="ticket-ENG-1"'));
+    expect(top).toContain("<h2>Decisions needed</h2>");
+    expect(top).toContain('<a class="ticket-id" href="#ticket-ENG-1">ENG-1</a>');
+    expect(top).toContain("<q>Drop &quot;orphan&quot; rows</q>");
+    expect(top).toContain("Silently loses records");
+    expect(top).toContain('<div class="finding-suggestion">Suggested change: Keep them and flag them.</div>');
+    expect(top).toContain('<span class="data-risk">recorded data</span>');
+    expect(top).not.toContain("not found verbatim");
+  });
+
+  it("leaves out the decisions section when no ticket has a conflict", () => {
+    const html = reportFor(ticketResult({ review: staged({ conflicts: [] }) }));
+    expect(html).not.toContain('<section class="decisions"');
+    expect(html).not.toContain("Conflicts with the ticket");
+    expect(reportFor(ticketResult({ review: staged() }))).not.toContain('<section class="decisions"');
+  });
+
+  it("flags a conflict whose ticket line was not found in the ticket", () => {
+    const html = reportFor(ticketResult({ review: staged({ conflicts: [conflict({ quoted: false })] }) }));
+    expect(html).toContain('<span class="unverified">not found verbatim in the ticket</span>');
+    const bare = reportFor(ticketResult({ review: staged({ conflicts: [conflict({ ticket: "", quoted: false })] }) }));
+    expect(bare).toContain('<span class="unverified">no ticket line quoted</span>');
+    expect(bare).not.toContain("The ticket asks for:");
+  });
+
+  it("shows a ticket's conflicts ahead of its findings", () => {
+    const review = staged({
+      conflicts: [conflict()],
+      findings: [{ id: "R1", severity: "major", file: "src/B1.ts", issue: "Issue B1.", suggestion: "" }],
+    });
+    const card = reportFor(ticketResult({ review })).split('id="ticket-ENG-1"')[1];
+    expect(card).toContain("Conflicts with the ticket (1)");
+    expect(card.indexOf("Conflicts with the ticket (1)")).toBeGreaterThan(card.indexOf("review-stages"));
+    expect(card.indexOf("Conflicts with the ticket (1)")).toBeLessThan(card.indexOf('<ul class="findings">'));
+    const clean = reportFor(ticketResult({ review: staged({ conflicts: [conflict()] }) })).split('id="ticket-ENG-1"')[1];
+    expect(clean.indexOf("Review: no issues found")).toBeLessThan(clean.indexOf("Conflicts with the ticket (1)"));
+    expect(clean.indexOf("review-stages")).toBeLessThan(clean.indexOf("Conflicts with the ticket (1)"));
+  });
+
+  it("escapes every interpolated value of a conflict", () => {
+    const html = reportFor(ticketResult({ review: staged({ conflicts: [conflict({ ticket: "a < b", file: "src/<x>.ts", consequence: "c <i>", change: "d <b>" })] }) }));
+    for (const raw of ["a < b", "src/<x>.ts", "c <i>", "d <b>"]) expect(html).not.toContain(raw);
+    for (const escaped of ["a &lt; b", "src/&lt;x&gt;.ts", "c &lt;i&gt;", "d &lt;b&gt;"]) expect(html).toContain(escaped);
+  });
+
+  it("counts conflicts, batches and rejections kept as risks in the candidate tally", () => {
+    const html = reportFor(ticketResult({ review: staged({
+      candidates: [
+        candidate("B1", { verdict: verdict("B1", "confirmed") }),
+        candidate("B2", { verdict: verdict("B2", "ticket_conflict") }),
+        candidate("B3", { verdict: { ...verdict("B3", "unproven"), adjusted: { from: "rejected" } } }),
+        candidate("B4", { verdict: verdict("B4", "rejected") }),
+      ],
+      confirmation: { outcome: "partial", dedupe: { outcome: "failed", reason: "boom", merged: 0 }, batches: [
+        { n: 1, ids: ["B1", "B2"], outcome: "confirmed" }, { n: 2, ids: ["B3", "B4"], outcome: "failed", reason: "x" },
+      ] },
+    }) }));
+    expect(html).toContain("4 candidates → 1 confirmed, 1 ticket conflict, 1 unproven (1 rejected without a checkable line), 1 dropped · confirm in 2 batches (1 failed or skipped) · dedupe failed");
+  });
+
+  it("pluralises ticket conflicts and leaves a single clean batch out of the tally", () => {
+    const html = reportFor(ticketResult({ review: staged({
+      candidates: [candidate("B1", { verdict: verdict("B1", "ticket_conflict") }), candidate("B2", { verdict: verdict("B2", "ticket_conflict") })],
+      confirmation: { outcome: "confirmed", batches: [{ n: 1, ids: ["B1", "B2"], outcome: "confirmed" }] },
+    }) }));
+    expect(html).toContain("2 candidates → 0 confirmed, 2 ticket conflicts, 0 unproven, 0 dropped</div>");
+  });
+
+  it("counts candidates left unconfirmed by a failed batch", () => {
+    const html = reportFor(ticketResult({ review: staged({
+      candidates: [candidate("B1", { verdict: verdict("B1", "confirmed") }), candidate("B2")],
+      confirmation: { outcome: "partial", batches: [{ n: 1, ids: ["B1"], outcome: "confirmed" }, { n: 2, ids: ["B2"], outcome: "skipped", reason: "budget" }] },
+    }) }));
+    expect(html).toContain("2 candidates → 1 confirmed, 0 unproven, 0 dropped, 1 unconfirmed · confirm in 2 batches (1 failed or skipped)");
+  });
+
+  it("shows the evidence line of a rejected candidate", () => {
+    const html = reportFor(ticketResult({ review: staged({
+      candidates: [candidate("B3", { verdict: { ...verdict("B3", "rejected", "guarded"), evidence: "if (!row) return;" } })],
+    }) }));
+    expect(html).toContain('rejected <code class="finding-file">if (!row) return;</code>');
+  });
+
+  it("folds confirm batches into one review-confirm share of usage", () => {
+    const usage = (costUsd: number): RunUsage => ({ inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd, turns: 1, durationMs: 1, models: [] });
+    const html = reportFor(ticketResult({ runs: [
+      { stage: "implement", usage: usage(2) },
+      { stage: "review-confirm-1", usage: usage(1) },
+      { stage: "review-confirm-2", usage: usage(1) },
+      { stage: "review-bugs-2", usage: usage(4) },
+    ] }));
+    expect(html).toContain("implement 25% · review-confirm 25% · review-bugs-2 50%");
+    expect(html).not.toContain("review-confirm-1");
+  });
+
+  it("renders a review recorded before confirm batches", () => {
+    const html = reportFor(ticketResult({ review: staged({ confirmation: { outcome: "confirmed" } }) }));
+    expect(html).toContain("4 candidates → 1 confirmed, 1 unproven, 2 dropped</div>");
   });
 
   it("keeps the skipped and failed lines", () => {

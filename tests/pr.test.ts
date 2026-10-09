@@ -115,6 +115,28 @@ describe("buildPrDescription", () => {
     expect(withRisks.indexOf("Worth a closer look:")).toBeLessThan(withRisks.indexOf("To verify locally:"));
   });
 
+  const conflicts = [{ from: "S1", file: "src/export.ts", ticket: "Drop rows with no id", quoted: true, consequence: "Silently loses records.", change: "Keep them and flag them", data: false }];
+
+  it("adds a decision section with the ticket line and suggested change before the closer-look section", () => {
+    const text = buildPrDescription("ENG-1", "Done.", ["npx vitest run"], undefined, [{ file: "src/a.ts", risk: "Confirm the default." }], undefined, conflicts);
+    expect(text).toContain('Needs a decision before merge:\n- `src/export.ts`: The ticket asks for "Drop rows with no id". Silently loses records. Suggested change: Keep them and flag them.');
+    expect(text.indexOf("Done.")).toBeLessThan(text.indexOf("Needs a decision before merge:"));
+    expect(text.indexOf("Needs a decision before merge:")).toBeLessThan(text.indexOf("Worth a closer look:"));
+    expect(text.indexOf("Needs a decision before merge:")).toBeLessThan(text.indexOf("To verify locally:"));
+    expect(text.toLowerCase()).not.toMatch(/review|night|automated|generated/);
+  });
+
+  it("leaves out the ticket sentence when no ticket line was quoted", () => {
+    const text = buildPrDescription("ENG-1", "Done.", [], undefined, [], undefined, [{ ...conflicts[0], ticket: "", consequence: "Loses records?", change: "Keep them." }]);
+    expect(text).toContain("- `src/export.ts`: Loses records? Suggested change: Keep them.");
+    expect(text).not.toContain("The ticket asks for");
+  });
+
+  it("omits the decision section without conflicts", () => {
+    expect(buildPrDescription("ENG-1", "Done.", [], undefined, [], undefined, [])).not.toContain("decision");
+    expect(text).not.toContain("decision");
+  });
+
   it("omits the closer-look section without risks", () => {
     expect(buildPrDescription("ENG-1", "Done.", [], undefined, [])).not.toContain("closer look");
     expect(text).not.toContain("closer look");
@@ -350,6 +372,13 @@ describe("PR content", () => {
     expect(buildPrDescription(content.ticketId, content.summary, content.verifyCommands, content.ticketUrl, content.risks))
       .toContain("- `src/export.ts`: Confirm the batch size.");
     expect(prContent(result).risks).toEqual([]);
+  });
+
+  it("carries the review's conflicts into the PR content", () => {
+    const conflicts = [{ from: "S1", file: "src/export.ts", ticket: "Drop rows", quoted: true, consequence: "Loses data.", change: "Keep them.", data: true }];
+    const content = prContent({ ...result, review: { ...result.review!, conflicts } });
+    expect(content.conflicts).toEqual(conflicts);
+    expect(prContent(result).conflicts).toEqual([]);
   });
 });
 

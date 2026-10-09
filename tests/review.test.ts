@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentReport, ConfirmRunResult, FixRunResult, ReviewRunResult, VerifyRunResult } from "../src/claude.js";
 import { findAndConfirm, mergeFixReport, reviewAndFix, type ReviewDeps } from "../src/review.js";
-import type { CandidateVerdict, FixResolution, ReviewCandidate, ReviewFinding, ReviewLens, VerifyResult } from "../src/types.js";
+import type { CandidateVerdict, ConfirmBatch, FixResolution, ReviewCandidate, ReviewFinding, ReviewLens, VerifyResult } from "../src/types.js";
 
 const finding = (id: string, severity: ReviewFinding["severity"] = "major"): ReviewFinding => ({
   id, severity, file: "src/a.ts", issue: `Problem ${id}.`, suggestion: `Fix ${id}.`,
@@ -18,12 +18,20 @@ const fixed = (fixes: FixResolution[], over: Partial<FixRunResult> = {}): FixRun
 
 const resolution = (id: string, status: FixResolution["status"] = "fixed"): FixResolution => ({ id, status, how: `how ${id}` });
 
-const judged = (candidates: ReviewCandidate[], verdict: CandidateVerdict["verdict"] = "confirmed"): ConfirmRunResult => ({
-  success: true, rawOutput: "confirm out", verdicts: candidates.map(c => ({ id: c.id, verdict, note: `note ${c.id}` })),
+const SOURCE: Record<string, string> = {
+  "src/a.ts": ["export function a(input: string[]) {", "  if (!input.length) return [];", "  return input.map(String);", "}"].join("\n"),
+};
+
+const TICKET_TEXT = "Rows must never be dropped silently.\nExport the report as CSV.";
+
+const holds = { evidence: "src/a.ts:2", code: "if (!input.length) return [];" };
+
+const judged = (batch: ConfirmBatch, verdict: CandidateVerdict["verdict"] = "confirmed"): ConfirmRunResult => ({
+  success: true, rawOutput: "confirm out", verdicts: batch.candidates.map(c => ({ id: c.id, verdict, note: `note ${c.id}`, ...(verdict === "rejected" ? holds : {}) })),
 });
 
 const harness = (overrides: Partial<ReviewDeps> = {}) => {
-  const calls = { find: [] as ReviewLens[], confirm: [] as ReviewCandidate[][], fix: [] as ReviewFinding[][], saved: [] as string[], logged: [] as string[] };
+  const calls = { find: [] as ReviewLens[], confirm: [] as ReviewCandidate[][], batches: [] as ConfirmBatch[], dedupe: [] as ReviewCandidate[][], fix: [] as ReviewFinding[][], saved: [] as string[], logged: [] as string[] };
   const deps: ReviewDeps = {
     hasChanges: () => true,
     snapshot: () => "same",
@@ -33,11 +41,15 @@ const harness = (overrides: Partial<ReviewDeps> = {}) => {
     fix: async findings => { calls.fix.push(findings); return fixed(findings.map(f => resolution(f.id))); },
     saveOutput: (stage, raw) => calls.saved.push(`${stage}:${raw}`),
     log: m => calls.logged.push(m),
-    confirm: async candidates => judged(candidates),
+    confirm: async batch => judged(batch),
+    source: file => SOURCE[file],
+    ticketText: TICKET_TEXT,
     ...overrides,
   };
   const confirm = deps.confirm;
-  deps.confirm = async candidates => { calls.confirm.push(candidates); return confirm(candidates); };
+  deps.confirm = async batch => { calls.confirm.push(batch.candidates); calls.batches.push(batch); return confirm(batch); };
+  const dedupe = deps.dedupe;
+  if (dedupe) deps.dedupe = async candidates => { calls.dedupe.push(candidates); return dedupe(candidates); };
   return { calls, run: (publishable = true) => reviewAndFix(publishable, deps) };
 };
 
@@ -89,7 +101,7 @@ describe("reviewAndFix", () => {
   it("saves the raw review and fix output", async () => {
     const { calls, run } = harness({ find: async () => reviewed(finding("R1")) });
     await run();
-    expect(calls.saved).toEqual(["review-bugs:review out", "review-confirm:confirm out", "fix:fix out"]);
+    expect(calls.saved).toEqual(["review-bugs:review out", "review-confirm-1:confirm out", "fix:fix out"]);
   });
 
   it("gives needs_review for an unfixed major but still publishes", async () => {
@@ -216,9 +228,9 @@ describe("reviewAndFix", () => {
 const byLens = (results: Partial<Record<ReviewLens, ReviewRunResult>>): ReviewDeps["find"] =>
   async lens => results[lens] ?? reviewed();
 
-const verdictsFor = (verdicts: Record<string, Partial<CandidateVerdict>>): ReviewDeps["confirm"] => async candidates => ({
+const verdictsFor = (verdicts: Record<string, Partial<CandidateVerdict>>): ReviewDeps["confirm"] => async batch => ({
   success: true, rawOutput: "confirm out",
-  verdicts: candidates.map(c => ({ id: c.id, verdict: "confirmed", note: `note ${c.id}`, ...verdicts[c.id] })),
+  verdicts: batch.candidates.map(c => ({ id: c.id, verdict: "confirmed", note: `note ${c.id}`, ...verdicts[c.id] })),
 });
 
 const risk = (text: string, data = false) => ({ file: "src/r.ts", risk: text, data });
@@ -374,8 +386,8 @@ describe("reviewAndFix confirmation", () => {
       }),
     });
     await run();
-    expect(calls.confirm[0].map(c => `${c.id}:${c.lens}:${c.kind}`)).toEqual([
-      "B1:bugs:finding", "B2:bugs:finding", "B3:bugs:risk", "S1:spec:finding", "U1:reuse:risk",
+    expect(calls.confirm.flat().map(c => `${c.id}:${c.lens}:${c.kind}`)).toEqual([
+      "B1:bugs:finding", "B2:bugs:finding", "S1:spec:finding", "B3:bugs:risk", "U1:reuse:risk",
     ]);
   });
 
@@ -393,7 +405,7 @@ describe("reviewAndFix confirmation", () => {
       regressions: [regression],
       lenses: ["bugs", "spec"],
       find: byLens({ bugs: reviewed(finding("R1"), finding("R2")), spec: reviewed(finding("R1")) }),
-      confirm: verdictsFor({ B2: { verdict: "rejected" } }),
+      confirm: verdictsFor({ B2: { verdict: "rejected", ...holds } }),
     });
     const outcome = await run();
     expect(calls.fix[0].map(f => `${f.id}:${f.from}`)).toEqual(["C1:undefined", "R1:B1", "R2:S1"]);
@@ -430,14 +442,14 @@ describe("reviewAndFix confirmation", () => {
     const { run } = harness({
       lenses: ["bugs", "spec"],
       find: byLens({ bugs: reviewed(finding("R1")), spec: reviewed(finding("R1"), finding("R2")) }),
-      confirm: verdictsFor({ S1: { verdict: "duplicate", duplicateOf: "B1" }, S2: { verdict: "rejected", note: "guarded on line 4" } }),
+      confirm: verdictsFor({ S1: { verdict: "duplicate", duplicateOf: "B1" }, S2: { verdict: "rejected", note: "guarded on line 4", ...holds } }),
     });
     const outcome = await run();
     expect(outcome.review.findings.map(f => f.from)).toEqual(["B1"]);
     expect(outcome.review.risks).toEqual([]);
     expect(outcome.review.candidates?.map(c => `${c.id}:${c.verdict?.verdict}`)).toEqual(["B1:confirmed", "S1:duplicate", "S2:rejected"]);
     expect(outcome.review.candidates?.[1].verdict?.duplicateOf).toBe("B1");
-    expect(outcome.review.confirmation).toEqual({ outcome: "confirmed" });
+    expect(outcome.review.confirmation).toMatchObject({ outcome: "confirmed" });
   });
 
   it("turns unproven candidates into risks", async () => {
@@ -473,7 +485,7 @@ describe("reviewAndFix confirmation", () => {
     const { calls, run } = harness({
       snapshot: () => snap,
       find: byLens({ bugs: reviewed(finding("R1")) }),
-      confirm: async candidates => { snap = "changed"; return judged(candidates); },
+      confirm: async batch => { snap = "changed"; return judged(batch); },
     });
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
@@ -489,8 +501,8 @@ describe("reviewAndFix confirmation", () => {
     const outcome = await run();
     expect(calls.fix[0]).toMatchObject([{ id: "R1", from: "B1" }]);
     expect(outcome.review.risks).toEqual([risk("maybe")]);
-    expect(outcome.review.confirmation).toEqual({ outcome: "failed", reason: "claude exited with status 1" });
-    expect(outcome.notes.join(" ")).toContain("Review candidates unconfirmed: claude exited with status 1");
+    expect(outcome.review.confirmation).toMatchObject({ outcome: "failed", reason: "claude exited with status 1" });
+    expect(outcome.notes).toContain("Confirm batch 1 of 1 failed: claude exited with status 1; 2 candidate(s) unconfirmed.");
     expect(outcome).toMatchObject({ needsReview: true, publish: true });
   });
 
@@ -512,9 +524,232 @@ describe("reviewAndFix confirmation", () => {
     });
     const outcome = await run();
     expect(calls.confirm).toHaveLength(0);
-    expect(outcome.review.confirmation).toEqual({ outcome: "skipped", reason: "budget cap reached" });
+    expect(outcome.review.confirmation).toMatchObject({ outcome: "skipped", reason: "budget cap reached" });
     expect(outcome.review.findings).toMatchObject([{ id: "R1", from: "B1" }]);
     expect(outcome).toMatchObject({ needsReview: true, publish: true });
+  });
+
+  const manyFindings = (count: number) => reviewed(...Array.from({ length: count }, (_, i) => finding(`R${i + 1}`)));
+  const dedupeGroups = (groups: { keep: string; same: string[] }[]): ReviewDeps["dedupe"] => async () => ({ success: true, rawOutput: "dedupe out", groups });
+
+  it("confirms in batches of at most four groups, saving each as review-confirm-<n>", async () => {
+    const { calls, run } = harness({ find: async () => manyFindings(5), fix: async () => fixed([]) });
+    const outcome = await run();
+    expect(calls.batches.map(b => [b.n, b.candidates.map(c => c.id)])).toEqual([[1, ["B1", "B2", "B3", "B4"]], [2, ["B5"]]]);
+    expect(calls.saved).toContain("review-confirm-1:confirm out");
+    expect(calls.saved).toContain("review-confirm-2:confirm out");
+    expect(calls.logged).toContain("  Confirming batch 2 of 2 (1 candidate(s))");
+    expect(outcome.review.confirmation).toMatchObject({
+      outcome: "confirmed",
+      batches: [{ n: 1, ids: ["B1", "B2", "B3", "B4"], outcome: "confirmed" }, { n: 2, ids: ["B5"], outcome: "confirmed" }],
+    });
+    expect(outcome.review.findings).toHaveLength(5);
+  });
+
+  it("runs dedupe before the first batch and saves it as review-dedupe", async () => {
+    const { calls, run } = harness({
+      find: async () => manyFindings(3),
+      dedupe: dedupeGroups([{ keep: "B1", same: ["B3"] }]),
+      fix: async () => fixed([]),
+    });
+    const outcome = await run();
+    expect(calls.dedupe[0].map(c => c.id)).toEqual(["B1", "B2", "B3"]);
+    expect(calls.saved.indexOf("review-dedupe:dedupe out")).toBeLessThan(calls.saved.indexOf("review-confirm-1:confirm out"));
+    expect(calls.logged).toContain("  Grouping 3 candidate(s)");
+    expect(outcome.review.confirmation).toMatchObject({ dedupe: { outcome: "grouped", merged: 1 } });
+  });
+
+  it("sends grouped members in their keeper's batch", async () => {
+    const { calls, run } = harness({
+      find: async () => manyFindings(6),
+      dedupe: dedupeGroups([{ keep: "B1", same: ["B6"] }]),
+      fix: async () => fixed([]),
+    });
+    await run();
+    expect(calls.batches[0].candidates.map(c => c.id)).toEqual(["B1", "B6", "B2", "B3", "B4"]);
+    expect(calls.batches[0].groupedWith).toEqual({ B6: "B1" });
+    expect(calls.batches[1].candidates.map(c => c.id)).toEqual(["B5"]);
+  });
+
+  it("confirms without groups and without needs_review when dedupe fails", async () => {
+    const { calls, run } = harness({
+      find: async () => manyFindings(2),
+      dedupe: async () => ({ success: false, rawOutput: "", failure: "claude exited with status 1" }),
+      fix: async () => fixed([]),
+    });
+    const outcome = await run();
+    expect(calls.batches[0].candidates.map(c => c.id)).toEqual(["B1", "B2"]);
+    expect(calls.batches[0].groupedWith).toEqual({});
+    expect(calls.logged).toContain("  Dedupe failed: claude exited with status 1");
+    expect(outcome.review.confirmation).toMatchObject({ outcome: "confirmed", dedupe: { outcome: "failed", reason: "claude exited with status 1", merged: 0 } });
+    expect(outcome.notes).toEqual([`Review found 2 issue(s); 0 fixed.`]);
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("does not run dedupe for a single candidate", async () => {
+    const { calls, run } = harness({ find: async () => manyFindings(1), dedupe: dedupeGroups([]) });
+    const outcome = await run();
+    expect(calls.dedupe).toHaveLength(0);
+    expect(outcome.review.confirmation?.dedupe).toBeUndefined();
+  });
+
+  it("stops without publishing when dedupe changes the worktree", async () => {
+    let snap = "same";
+    const { calls, run } = harness({
+      snapshot: () => snap,
+      find: async () => manyFindings(2),
+      dedupe: async () => { snap = "changed"; return { success: true, rawOutput: "dedupe out", groups: [] }; },
+    });
+    const outcome = await run();
+    expect(calls.batches).toHaveLength(0);
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review).toMatchObject({ outcome: "failed", reason: "the dedupe run modified the worktree" });
+    expect(outcome).toMatchObject({ needsReview: true, publish: false });
+  });
+
+  it("stops without publishing when a batch changes the worktree, running no later batch", async () => {
+    let snap = "same";
+    const { calls, run } = harness({
+      snapshot: () => snap,
+      find: async () => manyFindings(5),
+      confirm: async batch => { snap = "changed"; return judged(batch); },
+    });
+    const outcome = await run();
+    expect(calls.batches).toHaveLength(1);
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review).toMatchObject({ outcome: "failed", reason: "confirm batch 1 modified the worktree" });
+    expect(outcome).toMatchObject({ needsReview: true, publish: false });
+  });
+
+  it("uses the other batches' verdicts when one batch fails, sending its findings to the fix unconfirmed", async () => {
+    const { calls, run } = harness({
+      find: async () => manyFindings(5),
+      confirm: async batch => batch.n === 1
+        ? { success: false, rawOutput: "", failure: "claude exited with status 1" }
+        : verdictsFor({ B5: { verdict: "unproven" } })(batch),
+    });
+    const outcome = await run();
+    expect(calls.fix[0].map(f => f.from)).toEqual(["B1", "B2", "B3", "B4"]);
+    expect(outcome.review.risks).toEqual([{ file: "src/a.ts", risk: "Problem R5.", data: false }]);
+    expect(outcome.review.candidates?.map(c => c.verdict?.verdict)).toEqual([undefined, undefined, undefined, undefined, "unproven"]);
+  });
+
+  it("marks the confirmation partial and names the failed batch in the notes", async () => {
+    const { run } = harness({
+      find: async () => manyFindings(5),
+      confirm: async batch => batch.n === 2 ? { success: true, rawOutput: "x", parseError: "No ---CONFIRM--- block found" } : judged(batch),
+    });
+    const outcome = await run();
+    expect(outcome.review.confirmation).toMatchObject({
+      outcome: "partial",
+      batches: [{ n: 1, outcome: "confirmed" }, { n: 2, ids: ["B5"], outcome: "failed", reason: "No ---CONFIRM--- block found" }],
+    });
+    expect(outcome.notes).toContain("Confirm batch 2 of 2 failed: No ---CONFIRM--- block found; 1 candidate(s) unconfirmed.");
+    expect(outcome.needsReview).toBe(true);
+  });
+
+  it("leaves the remaining candidates unconfirmed when the gate closes between batches", async () => {
+    let open = true;
+    const { calls, run } = harness({
+      gateOpen: () => open,
+      find: async () => manyFindings(6),
+      confirm: async batch => { open = false; return judged(batch); },
+    });
+    const outcome = await run();
+    expect(calls.batches).toHaveLength(1);
+    expect(outcome.review.confirmation).toMatchObject({
+      outcome: "partial",
+      batches: [{ n: 1, outcome: "confirmed" }, { n: 2, ids: ["B5", "B6"], outcome: "skipped", reason: "budget cap reached" }],
+    });
+    expect(outcome.notes).toContain("Confirm stopped after batch 1 of 2: budget cap reached; 2 candidate(s) unconfirmed.");
+    expect(outcome.needsReview).toBe(true);
+  });
+});
+
+describe("reviewAndFix evidence", () => {
+  const one = (verdict: Partial<CandidateVerdict>) =>
+    harness({ find: byLens({ bugs: reviewed(finding("R1")) }), confirm: verdictsFor({ B1: verdict }) });
+
+  it("keeps a rejection whose cited line holds", async () => {
+    const { calls, run } = one({ verdict: "rejected", ...holds });
+    const outcome = await run();
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review.risks).toEqual([]);
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "rejected", citation: "holds" });
+  });
+
+  it("turns a rejection without evidence into a risk, recording that it was rejected", async () => {
+    const { run } = one({ verdict: "rejected" });
+    const outcome = await run();
+    expect(outcome.review.risks).toEqual([{ file: "src/a.ts", risk: "Problem R1.", data: false }]);
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "unproven", citation: "missing", adjusted: { from: "rejected" } });
+  });
+
+  it("turns a rejection whose quoted code is not at the cited line into a risk", async () => {
+    const { run } = one({ verdict: "rejected", evidence: "src/a.ts:2", code: "return somethingElseEntirely();" });
+    const outcome = await run();
+    expect(outcome.review.risks).toHaveLength(1);
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "unproven", citation: "mismatch", adjusted: { from: "rejected" } });
+  });
+
+  it("keeps a confirmed candidate whose cited line does not hold, without passing the line to the fix", async () => {
+    const { calls, run } = one({ evidence: "src/a.ts:2", code: "return somethingElseEntirely();" });
+    const outcome = await run();
+    expect(calls.fix[0]).toMatchObject([{ id: "R1", from: "B1" }]);
+    expect(calls.fix[0][0].evidence).toBeUndefined();
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "confirmed", citation: "mismatch" });
+  });
+
+  it("passes a confirmed candidate's checked line to the fix", async () => {
+    const { calls, run } = one(holds);
+    await run();
+    expect(calls.fix[0]).toMatchObject([{ id: "R1", evidence: "src/a.ts:2" }]);
+  });
+
+  it("turns a duplicate of a candidate that was not kept into a risk", async () => {
+    const { run } = harness({
+      lenses: ["bugs", "spec"],
+      find: byLens({ bugs: reviewed(finding("R1")), spec: reviewed(finding("R1")) }),
+      confirm: verdictsFor({ B1: { verdict: "rejected", ...holds }, S1: { verdict: "duplicate", duplicateOf: "B1" } }),
+    });
+    const outcome = await run();
+    expect(outcome.review.risks).toEqual([{ file: "src/a.ts", risk: "Problem R1.", data: false }]);
+    expect(outcome.review.candidates?.[1].verdict).toMatchObject({ verdict: "unproven", adjusted: { from: "duplicate" } });
+  });
+});
+
+describe("reviewAndFix ticket conflicts", () => {
+  const conflict = { verdict: "ticket_conflict", ticket: "Rows must never be dropped silently.", note: "the guard drops rows", change: "return an error instead", ...holds } as const;
+  const withConflict = (over: Partial<CandidateVerdict> = {}) =>
+    harness({ find: byLens({ bugs: reviewed(finding("R1")) }), confirm: verdictsFor({ B1: { ...conflict, ...over } }) });
+
+  it("records a ticket conflict under conflicts, never in the fix or the risks", async () => {
+    const { calls, run } = withConflict();
+    const outcome = await run();
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review.risks).toEqual([]);
+    expect(outcome.review.findings).toEqual([]);
+    expect(outcome.review.conflicts).toEqual([{
+      from: "B1", file: "src/a.ts", ticket: "Rows must never be dropped silently.", quoted: true,
+      consequence: "the guard drops rows", change: "return an error instead", data: false, evidence: "src/a.ts:2",
+    }]);
+  });
+
+  it("flags needs_review with the conflicting files in the notes", async () => {
+    const { run } = withConflict();
+    const outcome = await run();
+    expect(outcome.needsReview).toBe(true);
+    expect(outcome.notes).toContain("Ticket conflicts to decide: src/a.ts.");
+  });
+
+  it("records whether the conflict's ticket line is in the ticket text", async () => {
+    const { run } = withConflict({ ticket: "Rows are retained forever." });
+    expect((await run()).review.conflicts?.[0].quoted).toBe(false);
+  });
+
+  it("names no change when the conflict suggests none", async () => {
+    const { run } = withConflict({ change: undefined });
+    expect((await run()).review.conflicts?.[0].change).toBe("no change suggested");
   });
 });
 
@@ -661,7 +896,8 @@ describe("findAndConfirm", () => {
     const found = await findAndConfirm({
       hasChanges: () => true, snapshot: () => "same", gateOpen: () => true, lenses: ["bugs"],
       find: async () => ({ ...reviewed(finding("R1")), risks: [risk("maybe")] }),
-      confirm: async candidates => verdictsFor({ B1: {}, B2: { verdict: "unproven" } })(candidates),
+      confirm: verdictsFor({ B1: {}, B2: { verdict: "unproven" } }),
+      source: file => SOURCE[file], ticketText: TICKET_TEXT,
       fix, saveOutput: () => {}, log: () => {},
     });
     expect(fix).not.toHaveBeenCalled();
@@ -758,7 +994,7 @@ describe("reviewAndFix with check regressions", () => {
 
 describe("reviewAndFix with risks", () => {
   const risks = [{ file: "a.ts", risk: "Confirm the default.", data: false }];
-  const confirmRisksUnproven = async (candidates: ReviewCandidate[]): Promise<ConfirmRunResult> => ({
+  const confirmRisksUnproven = async ({ candidates }: ConfirmBatch): Promise<ConfirmRunResult> => ({
     success: true, rawOutput: "confirm out",
     verdicts: candidates.map(c => ({ id: c.id, verdict: c.kind === "risk" ? "unproven" : "confirmed", note: "" })),
   });

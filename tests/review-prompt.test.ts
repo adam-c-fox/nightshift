@@ -1,13 +1,17 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildConfirmPrompt, buildFinderPrompt, buildVerifyPrompt, type AgentReport, type TicketBrief } from "../src/claude.js";
+import { buildConfirmPrompt, buildDedupePrompt, buildFinderPrompt, buildFixPrompt, buildVerifyPrompt, type AgentReport, type TicketBrief } from "../src/claude.js";
 import type { ClassifiedCheck } from "../src/checks.js";
-import type { ReviewCandidate } from "../src/types.js";
+import type { ReviewCandidate, ReviewFinding } from "../src/types.js";
 
 const brief: TicketBrief = { ticketId: "ENG-12", ticketName: "Poll", context: [], linearDesc: "", linearComments: [], linearUrl: "u", state: "Todo" };
 
 const check = (command: string, status: ClassifiedCheck["status"], passed: boolean, outputTail = ""): ClassifiedCheck =>
   ({ name: command, command, status, passed, durationSec: 7, outputTail });
+
+const report = (over: Partial<AgentReport> = {}): AgentReport => ({
+  status: "done", title: "t", summary: "s", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "(1) skip empty rows", followups: [], decisions: [], ...over,
+});
 
 describe("finder prompt sections", () => {
   it("has no checks or related sections by default", () => {
@@ -100,9 +104,6 @@ describe("buildVerifyPrompt", () => {
 
 describe("buildFinderPrompt", () => {
   const related = [{ ticketId: "ENG-10", branch: "feat/eng-10-x" }];
-  const report = (over: Partial<AgentReport> = {}): AgentReport => ({
-    status: "done", title: "t", summary: "s", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "(1) skip empty rows", followups: [], decisions: [], ...over,
-  });
 
   it("gives related tickets only to the reuse lens", () => {
     expect(buildFinderPrompt("reuse", brief, report(), "origin/main", { related })).toContain("Related ticket ENG-10");
@@ -145,7 +146,7 @@ describe("buildConfirmPrompt", () => {
     { id: "B1", lens: "bugs", kind: "finding", severity: "major", confidence: "suspected", file: "src/a.ts", issue: "Reads only the first row.", suggestion: "Read all rows.", data: false },
     { id: "U2", lens: "reuse", kind: "risk", severity: "minor", confidence: "proven", file: "src/b.ts", issue: "Duplicates the download helper.", suggestion: "", data: true },
   ];
-  const prompt = buildConfirmPrompt(brief, "origin/main", candidates);
+  const prompt = buildConfirmPrompt(brief, undefined, "origin/main", { n: 1, candidates, groupedWith: {} });
 
   it("lists each candidate with id, lens, kind, confidence, file and issue", () => {
     expect(prompt).toContain("id: B1");
@@ -163,5 +164,60 @@ describe("buildConfirmPrompt", () => {
     expect(prompt).toContain("git diff origin/main");
     expect(prompt).toContain("---CONFIRM---");
     expect(prompt).toMatch(/Do not modify any file/);
+  });
+
+  it("marks a grouped member with grouped_with its keeper", () => {
+    const grouped = buildConfirmPrompt(brief, undefined, "origin/main", { n: 1, candidates, groupedWith: { U2: "B1" } });
+    expect(grouped).toContain("  grouped_with: B1");
+    expect(prompt).not.toContain("grouped_with");
+  });
+
+  it("lists the implementer's decisions as D1.. under a heading that says they are not ticket text", () => {
+    const decisions = [{ file: "src/a.ts", decision: "Empty rows are skipped." }, { file: "src/b.ts", decision: "Invalid files throw." }];
+    const withDecisions = buildConfirmPrompt(brief, report({ decisions }), "origin/main", { n: 1, candidates, groupedWith: {} });
+    expect(withDecisions).toMatch(/not ticket text/);
+    expect(withDecisions).toContain("  - D1 (src/a.ts): Empty rows are skipped.");
+    expect(withDecisions).toContain("  - D2 (src/b.ts): Invalid files throw.");
+  });
+
+  it("says when the implementer listed no decisions", () => {
+    expect(buildConfirmPrompt(brief, report(), "origin/main", { n: 1, candidates, groupedWith: {} })).toContain("  Decisions: (none)");
+    expect(prompt).toContain("  Decisions: (none)");
+  });
+
+  it("includes the check results", () => {
+    const withChecks = buildConfirmPrompt(brief, undefined, "origin/main", { n: 1, candidates, groupedWith: {} }, { checks: [check("npm run lint", "regression", false, "LINT-BOOM")] });
+    expect(withChecks).toMatch(/`npm run lint`: REGRESSION/);
+    expect(withChecks).toContain("LINT-BOOM");
+  });
+});
+
+describe("buildDedupePrompt", () => {
+  const candidates: ReviewCandidate[] = [
+    { id: "B1", lens: "bugs", kind: "finding", severity: "major", confidence: "suspected", file: "src/a.ts", issue: "Reads only the first row.", suggestion: "Read all rows.", data: false },
+    { id: "S2", lens: "spec", kind: "risk", severity: "minor", confidence: "proven", file: "src/b.ts", issue: "Skips the header.", suggestion: "", data: true },
+  ];
+  const prompt = buildDedupePrompt(candidates);
+
+  it("lists each candidate's id, file and issue without the ticket or the diff", () => {
+    for (const text of ["id: B1", "id: S2", "file: src/a.ts", "file: src/b.ts", "issue: Reads only the first row.", "issue: Skips the header."]) expect(prompt).toContain(text);
+    expect(prompt).not.toContain("git diff");
+    expect(prompt).not.toContain("ENG-12");
+  });
+
+  it("asks for the DEDUPE block", () => {
+    expect(prompt).toContain("---DEDUPE---");
+  });
+});
+
+describe("buildFixPrompt", () => {
+  const finding = (over: Partial<ReviewFinding> = {}): ReviewFinding => ({ id: "R1", severity: "major", file: "src/a.ts", issue: "Buffers rows.", suggestion: "Stream.", ...over });
+
+  it("adds the evidence line to a finding that has one", () => {
+    expect(buildFixPrompt(brief, [finding({ evidence: "src/a.ts:12" })])).toContain("  file: src/a.ts\n  evidence: src/a.ts:12\n  issue: Buffers rows.");
+  });
+
+  it("leaves out the evidence line when a finding has none", () => {
+    expect(buildFixPrompt(brief, [finding()])).not.toContain("evidence:");
   });
 });

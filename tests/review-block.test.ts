@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfirmBlock, parseFixesBlock, parseReviewBlock, parseVerifyBlock } from "../src/claude.js";
+import { parseConfirmBlock, parseDedupeBlock, parseFixesBlock, parseReviewBlock, parseVerifyBlock } from "../src/claude.js";
 
 describe("parseReviewBlock", () => {
   it("parses every field of each finding", () => {
@@ -153,6 +153,31 @@ describe("parseConfirmBlock", () => {
     expect(parseConfirmBlock(output).find(v => v.id === "B3")?.verdict).toBe("unproven");
   });
 
+  it("parses evidence, code, ticket and change", () => {
+    const block = `---CONFIRM---
+- id: U1
+  verdict: rejected
+  evidence: src/a.ts:12
+  code: "if (!rows.length) return [];"
+  note: Guarded.
+- id: S1
+  verdict: ticket_conflict
+  data: yes
+  ticket: "Log only the extension"
+  change: Log a closed list of extensions.
+  note: Logs arbitrary text.
+---
+`;
+    expect(parseConfirmBlock(block)).toEqual([
+      { id: "U1", verdict: "rejected", evidence: "src/a.ts:12", code: "if (!rows.length) return [];", note: "Guarded." },
+      { id: "S1", verdict: "ticket_conflict", data: true, ticket: "Log only the extension", change: "Log a closed list of extensions.", note: "Logs arbitrary text." },
+    ]);
+  });
+
+  it("parses a ticket_conflict verdict", () => {
+    expect(parseConfirmBlock("---CONFIRM---\n- id: S1\n  verdict: ticket_conflict\n  note: n\n---\n")[0].verdict).toBe("ticket_conflict");
+  });
+
   it("throws when there is no block", () => {
     expect(() => parseConfirmBlock("---REVIEW---\nfindings: []\n---\n")).toThrow(/---CONFIRM---/);
   });
@@ -160,6 +185,21 @@ describe("parseConfirmBlock", () => {
   it("uses the last block when the format is quoted earlier", () => {
     const quoted = "---CONFIRM---\n- id: X\n  verdict: rejected\n---\nlater\n---CONFIRM---\n- id: B1\n  verdict: confirmed\n  note: n\n---\n";
     expect(parseConfirmBlock(quoted).map(v => v.id)).toEqual(["B1"]);
+  });
+});
+
+describe("parseDedupeBlock", () => {
+  it("parses each group's keeper and the ids it absorbs", () => {
+    const output = "Grouped.\n\n---DEDUPE---\n- keep: S2\n  same: B1, B5\n- keep: B3\n  same: B12\n---\n";
+    expect(parseDedupeBlock(output)).toEqual([{ keep: "S2", same: ["B1", "B5"] }, { keep: "B3", same: ["B12"] }]);
+  });
+
+  it("is empty when the block lists no group", () => {
+    expect(parseDedupeBlock("---DEDUPE---\n---\n")).toEqual([]);
+  });
+
+  it("throws when there is no block", () => {
+    expect(() => parseDedupeBlock("---CONFIRM---\n---\n")).toThrow(/---DEDUPE---/);
   });
 });
 

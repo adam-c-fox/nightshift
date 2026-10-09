@@ -6,7 +6,9 @@ import type { PostmortemSuggestion, SessionPostmortem, SessionResult, TicketResu
 const SKILL_MD = path.resolve(import.meta.dirname, "..", ".claude", "skills", "postmortem", "SKILL.md");
 const POSTMORTEM_START = "---POSTMORTEM---";
 const FIELDS = ["id", "target", "tickets", "problem", "cause", "change"];
-const LOG_SUFFIXES = ["output", "review", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm", "fix", "verify", "diff-review", "diff"];
+const LOG_HEAD = ["output", "review", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm"];
+const LOG_TAIL = ["fix", "verify", "diff-review", "diff"];
+const CONFIRM_STAGE = /^review-(dedupe|confirm-\d+)$/;
 
 export type UsageGate = "open" | "hit" | "unreadable";
 
@@ -54,7 +56,7 @@ export function sessionLogData(session: SessionResult, logExists: (name: string)
     ...session,
     tickets: session.tickets.map(t => ({
       ...t,
-      logFiles: LOG_SUFFIXES.map(s => `${t.ticket.id}-${s}.txt`).filter(logExists).map(f => `${logsRel}/${f}`),
+      logFiles: [...LOG_HEAD, ...new Set((t.runs ?? []).map(r => r.stage).filter(stage => CONFIRM_STAGE.test(stage))), ...LOG_TAIL].map(s => `${t.ticket.id}-${s}.txt`).filter(logExists).map(f => `${logsRel}/${f}`),
     })),
   };
 }

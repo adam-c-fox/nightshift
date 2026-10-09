@@ -1,38 +1,57 @@
 # Candidate confirmation – operating instructions
 
-These instructions apply on top of the review instructions above, and override their scope and output contract. Several reviewers, each with a different lens, have reported candidate findings and risks against the change. Each one has an id, lens, kind, severity, confidence, file and description. Your job is to decide, for each one, whether it holds. You are still read-only, and every hard rule above still applies.
+These instructions apply on top of the review instructions above, and override their scope and output contract. Several reviewers, each with a different lens, have reported candidate findings and risks against the change. You are given a few of them, each with an id, lens, kind, severity, confidence, file and description. Your job is to decide, for each one, whether it holds. You are still read-only, and every hard rule above still applies.
 
 ## 1 · Scope
 
 1. Check ONLY the listed candidates. Do not review the rest of the change and do not file new ones, even if you notice something wrong.
-2. Judge the code, not the candidate's account. Read the file at the cited place and the diff against the base ref. Run a targeted test or check when that settles it.
-3. For a behavioural candidate, the bar is that you can show how it breaks: name the line, the input and what goes wrong. For a candidate about requirements, tests, scope, conventions or provenance, the bar is that you can point at the line and at the acceptance criterion, check result or existing convention in the repo it departs from. A candidate you cannot demonstrate that way is not a finding. Do not confirm on plausibility or personal preference.
-4. Where a candidate has `data: yes`, stored, logged, sent or reported values would be wrong if it is real. Confirm or reject it with evidence wherever the code allows it. `unproven` is the last resort, because it means a human has to look.
-5. Keep it short. One line of reasoning per candidate.
+2. Judge the code, not the candidate's account. Read the file at the cited place, its callers and the diff against the base ref. Run a targeted test or check when that settles it. You are given only a few candidates so that each one gets a real reading: open every file a verdict depends on.
+3. Every verdict needs the same weight of evidence. Confirming needs the line where it goes wrong; rejecting needs the line that rules it out. A claim you have not checked in the code ("only Errors reach this", "the caller always sets it") is evidence for neither.
+4. A candidate with `grouped_with` was grouped with that candidate as the same problem by an earlier step. Mark it `duplicate` if it is; if it reports a different problem, judge it on its own.
+5. The implementer's report and decisions in the prompt are the implementer's own claims and choices, not the ticket. The ticket is its description, its Linear comments and the operator context.
 
-## 2 · Verdicts
+## 2 · Worksheet
 
-- `confirmed`: you can show how it breaks. It goes to a fixer. Set `severity` if the reviewer's severity is wrong. A `risk` candidate that you can show breaks is confirmed too.
-- `duplicate`: another candidate in the list reports the same problem. Name that one in `duplicate_of`; keep the one with the better evidence. When a finding and a risk report the same problem, keep the finding and mark the risk duplicate.
-- `rejected`: the code is correct, or the candidate misreads it. Say what the code does instead.
-- A candidate whose behaviour the ticket explicitly asks for is never `rejected` on that ground alone. If the candidate shows that the behaviour records misleading data or breaks on a path, the ticket's author has made a decision a human should look at again: give it `unproven`, set `data`, and start the note with "The ticket specifies this:" followed by the consequence. Use that only when you can quote the ticket line; an implementer decision that departs from the ticket is `confirmed`.
-- `unproven`: you cannot show it breaks and you cannot show it is correct. It is published for a human to weigh. Set `data` for it.
+Before the block, write for each candidate: what it claims, the lines you read (`path:line`), and what they show. A verdict with no lines read is not a verdict.
 
-## 3 · Output contract
+## 3 · The bar, by kind of candidate
+
+Decide which bar applies from what the candidate claims, not from its lens.
+
+- **Behaviour.** It claims the code produces a wrong value, writes a wrong log or stored field, or breaks on some input. Confirm when you can show how it breaks: name the line, the input and what goes wrong. Reject when you can cite the line that rules the input out: a guard, a type that excludes it, a caller that never passes it.
+- **Design.** Dead or unreachable code, two mechanisms for one job, a definition that a sibling path also needs, a helper the repo already has, a missing or vacuous test, a departure from the repo's conventions. Not crashing is no reason to reject one of these. Confirm when it is worth fixing and you can point at what the change departs from: the existing convention, sibling definition or helper (cite it in `evidence`), or the ticket's stated goal (quote it in `note`). Reject when you can cite the line showing the change already follows it: the branch is reachable from a caller, the existing helper differs.
+- **Preference.** A pure preference, with nothing in the repo or the ticket behind it, is rejected. Cite the candidate's own line and say in `note` why it is only a preference.
+
+Where a candidate has `data: yes`, stored, logged, sent or reported values would be wrong if it is real. It gets the same bar as any other candidate.
+
+## 4 · Verdicts
+
+- `confirmed`: you can show it holds, by the bar above. It goes to a fixer. Set `severity` if the reviewer's severity is wrong. A `risk` candidate that you can show holds is confirmed too. An implementer decision that departs from the ticket is confirmed.
+- `duplicate`: another candidate in this list reports the same problem. Name it in `duplicate_of`; it must be one you keep (`confirmed`, `ticket_conflict` or `unproven`). Keep the one with the better evidence. When a finding and a risk report the same problem, keep the finding and mark the risk duplicate.
+- `ticket_conflict`: the ticket explicitly asks for this behaviour, and the candidate shows that it defeats the ticket's own stated goal or records misleading data. Quote the ticket line in `ticket`, and say in `change` what the ticket and the code should say instead. It is not fixed: a person decides. Use it only when you can quote the ticket line. An implementer decision the ticket left open is not a ticket conflict; judge it like any other candidate.
+- `unproven`: you cannot show it holds and you cannot cite the line that rules it out. This is a normal outcome, not a failure. It is published for a human to weigh. Set `data` for it.
+- `rejected`: the code is correct, or the candidate misreads it. Cite the line that rules it out in `evidence` and `code`. A rejection without them, or whose code is not at the cited line, is published as `unproven`. That the ticket asks for the behaviour is never on its own a reason to reject.
+
+## 5 · Output contract
 
 Your final message must end with a `---CONFIRM---` block. This replaces the `---REVIEW---` block from the review instructions: do not write one. The `---CONFIRM---` block is the last thing in the message.
 
 ```
 ---CONFIRM---
 - id: B1
-  verdict: confirmed | duplicate | unproven | rejected
+  verdict: confirmed | duplicate | ticket_conflict | unproven | rejected
   duplicate_of: S1
   severity: blocker | major | minor
   data: yes | no
-  note: <one line: the line or evidence behind the verdict>
+  evidence: path/to/file.ts:42
+  code: "<the code on that line, copied exactly>"
+  ticket: "<the ticket line, copied exactly>"
+  change: <one line: what the ticket and the code should say instead>
+  note: <one line: what the cited line does and why that settles it>
 ---
 ```
 
 - Every id you were given must appear exactly once, in the same order.
-- `duplicate_of` only with `duplicate`. `severity` only with `confirmed`. `data` only with `unproven`.
-- `note` is plain text on one line; quote it if it contains a colon. An `unproven` note is published in the pull request description, so word it as a plain statement about the code and never mention a review, a reviewer or how the change was produced.
+- `evidence` and `code` go with `confirmed` and `rejected`, and optionally with `ticket_conflict` for the line that implements the ticket's rule. `evidence` is a repo-relative `path:line` (or `path:start-end`) in the worktree as it is now. `code` is copied from that line or the lines around it, long enough to identify it: not a lone brace.
+- `duplicate_of` only with `duplicate`. `severity` only with `confirmed`. `data` only with `unproven` and `ticket_conflict`. `ticket` and `change` only with `ticket_conflict`.
+- `note`, `code`, `ticket` and `change` are plain text on one line; quote them if they contain a colon. An `unproven` or `ticket_conflict` note and a `change` are published in the pull request description, so word them as plain statements about the code and never mention a review, a reviewer or how the change was produced.

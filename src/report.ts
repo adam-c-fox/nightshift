@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { lensLabel } from "./types.js";
-import type { CheckRecord, FixResolution, FixVerification, LensRun, ReviewFinding, RunRecord, RunUsage, SessionPostmortem, SessionResult, TicketResult, TicketReview, VerifyResult } from "./types.js";
+import type { CheckRecord, FixResolution, FixVerification, LensRun, ReviewFinding, RunRecord, RunUsage, SessionPostmortem, SessionResult, TicketConflict, TicketResult, TicketReview, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
 
@@ -92,6 +92,30 @@ function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefin
          </li>`;
 }
 
+function conflictHTML(c: TicketConflict, ticketId?: string): string {
+  const asks = c.ticket
+    ? `The ticket asks for: <q>${esc(c.ticket)}</q>${c.quoted ? "" : ` <span class="unverified">not found verbatim in the ticket</span>`}`
+    : `<span class="unverified">no ticket line quoted</span>`;
+  return `<div class="finding conflict">
+           <div class="finding-head">${ticketId ? `<a class="ticket-id" href="#ticket-${esc(ticketId)}">${esc(ticketId)}</a>` : ""}<code class="finding-file">${esc(c.file)}</code>${c.data ? `<span class="data-risk">recorded data</span>` : ""}</div>
+           <div>${asks}</div>
+           <div>${prose(c.consequence)}</div>
+           <div class="finding-suggestion">Suggested change: ${prose(c.change)}</div>
+         </div>`;
+}
+
+function decisionsHTML(tickets: TicketResult[]): string {
+  const items = tickets.flatMap(t => (t.review?.conflicts ?? []).map(c => conflictHTML(c, t.ticket.id))).join("");
+  if (!items) return "";
+  return `<section class="decisions" id="decisions"><h2>Decisions needed</h2><p class="hint">The ticket asks for each of these, and it works against the ticket's own goal. Nothing was changed: decide, then update the ticket or the code.</p>${items}</section>`;
+}
+
+function conflictsHTML(review: TicketReview): string {
+  const conflicts = review.conflicts ?? [];
+  if (conflicts.length === 0) return "";
+  return `<div class="review conflicts"><strong>Conflicts with the ticket (${conflicts.length})</strong>${conflicts.map(c => conflictHTML(c)).join("")}</div>`;
+}
+
 function risksHTML(t: TicketResult): string {
   const risks = t.review?.risks ?? [];
   if (risks.length === 0) return "";
@@ -125,10 +149,24 @@ function candidateTally(review: TicketReview): string {
   const candidates = review.candidates ?? [];
   if (candidates.length === 0) return "";
   const count = (...verdicts: string[]) => candidates.filter(c => c.verdict && verdicts.includes(c.verdict.verdict)).length;
-  const outcome = candidates.some(c => c.verdict)
-    ? `${count("confirmed")} confirmed, ${count("unproven")} unproven, ${count("duplicate", "rejected")} dropped`
-    : "unconfirmed";
-  return ` · ${candidates.length} candidates → ${outcome}`;
+  const judged = candidates.filter(c => c.verdict).length;
+  if (judged === 0) return ` · ${candidates.length} candidates → unconfirmed`;
+  const conflicts = count("ticket_conflict");
+  const keptAsRisk = candidates.filter(c => c.verdict?.adjusted?.from === "rejected").length;
+  const parts = [
+    `${count("confirmed")} confirmed`,
+    ...(conflicts > 0 ? [`${conflicts} ticket conflict${conflicts === 1 ? "" : "s"}`] : []),
+    `${count("unproven")} unproven${keptAsRisk > 0 ? ` (${keptAsRisk} rejected without a checkable line)` : ""}`,
+    `${count("duplicate", "rejected")} dropped`,
+    ...(judged < candidates.length ? [`${candidates.length - judged} unconfirmed`] : []),
+  ];
+  const batches = review.confirmation?.batches ?? [];
+  const unsettled = batches.filter(b => b.outcome !== "confirmed").length;
+  const batchNote = batches.length > 1 || unsettled > 0
+    ? ` · confirm in ${batches.length} batches${unsettled > 0 ? ` (${unsettled} failed or skipped)` : ""}`
+    : "";
+  const dedupeNote = review.confirmation?.dedupe?.outcome === "failed" ? " · dedupe failed" : "";
+  return ` · ${candidates.length} candidates → ${parts.join(", ")}${batchNote}${dedupeNote}`;
 }
 
 function stagesHTML(review: TicketReview): string {
@@ -141,7 +179,8 @@ function droppedHTML(review: TicketReview): string {
   if (dropped.length === 0) return "";
   const items = dropped.map(c => {
     const why = c.verdict!.verdict === "duplicate" ? `duplicate of ${c.verdict!.duplicateOf ?? "?"}` : "rejected";
-    return `<li><span class="finding-id">${esc(c.id)}</span> ${esc(why)}: <code class="finding-file">${esc(c.file)}</code> ${esc(c.issue)} <span class="dropped-why">— ${esc(c.verdict!.note)}</span></li>`;
+    const evidence = c.verdict!.verdict === "rejected" && c.verdict!.evidence ? ` <code class="finding-file">${esc(c.verdict!.evidence)}</code>` : "";
+    return `<li><span class="finding-id">${esc(c.id)}</span> ${esc(why)}${evidence}: <code class="finding-file">${esc(c.file)}</code> ${esc(c.issue)} <span class="dropped-why">— ${esc(c.verdict!.note)}</span></li>`;
   }).join("");
   return `<details class="dropped"><summary>Dropped candidates (${dropped.length})</summary><ul>${items}</ul></details>`;
 }
@@ -161,12 +200,12 @@ function reviewHTML(t: TicketResult): string {
   }
   const details = `${droppedHTML(review)}${rulingsHTML(review)}`;
   if (review.findings.length === 0) {
-    return `<div class="review"><strong>Review: no issues found</strong></div>${stagesHTML(review)}${details}${risksHTML(t)}`;
+    return `<div class="review"><strong>Review: no issues found</strong></div>${stagesHTML(review)}${conflictsHTML(review)}${details}${risksHTML(t)}`;
   }
   const items = review.findings.map(f => findingHTML(f, review.resolutions.find(r => r.id === f.id), review.verification)).join("");
   const v = review.verification;
   const verifyLine = v && v.outcome !== "verified" ? `<div class="review review-${v.outcome}">Fix verification ${v.outcome}: ${esc(v.reason ?? "")}</div>` : "";
-  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong></div>${stagesHTML(review)}<div class="review"><ul class="findings">${items}</ul></div>${details}${verifyLine}${risksHTML(t)}`;
+  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong></div>${stagesHTML(review)}${conflictsHTML(review)}<div class="review"><ul class="findings">${items}</ul></div>${details}${verifyLine}${risksHTML(t)}`;
 }
 
 const postmortemProblem = (pm: SessionPostmortem): string | undefined =>
@@ -220,10 +259,12 @@ const costLabel = (totals: UsageTotals): string => `$${totals.cost.toFixed(2)}`;
 const unmeasuredNote = (totals: UsageTotals): string =>
   totals.unmeasured > 0 ? ` · ${totals.unmeasured} run${totals.unmeasured === 1 ? "" : "s"} unmeasured` : "";
 
+const shareOf = (stage: string): string => stage.replace(/^review-confirm-\d+$/, "review-confirm");
+
 function stageShares(runs: RunRecord[], cost: number): string {
   if (cost <= 0) return "";
   const byStage = new Map<string, number>();
-  for (const { stage, usage } of runs) if (usage) byStage.set(stage, (byStage.get(stage) ?? 0) + usage.costUsd);
+  for (const { stage, usage } of runs) if (usage) byStage.set(shareOf(stage), (byStage.get(shareOf(stage)) ?? 0) + usage.costUsd);
   return [...byStage].map(([stage, c]) => ` · ${esc(stage)} ${Math.round((c / cost) * 100)}%`).join("");
 }
 
@@ -491,6 +532,12 @@ export function generateHTML(session: SessionResult): string {
   .checks th { color: var(--text-dim); font-weight: 600; }
   .check-pass td:nth-child(2) { color: #22c55e; }
   .check-fail td:nth-child(2) { color: #ef4444; }
+  .decisions { border: 1px solid #f97316; border-radius: 10px; padding: 1rem; margin-bottom: 1.5rem; }
+  .decisions h2 { font-size: 1.1rem; }
+  .decisions a.ticket-id { color: var(--accent); text-decoration: none; }
+  .decisions a.ticket-id:hover { text-decoration: underline; }
+  .conflict { border-left: 3px solid #f97316; }
+  .unverified { color: #eab308; font-size: 0.8rem; }
   .risks { margin: 0.3rem 0 0 1.2rem; }
   .findings { list-style: none; margin-top: 0.4rem; }
   .finding { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; }
@@ -545,6 +592,7 @@ export function generateHTML(session: SessionResult): string {
   ${ticketErrorBanner}
   ${budgetBar}
 
+  ${decisionsHTML(session.tickets)}
   ${toolbar}
   ${ticketsHTML}
 

@@ -4,7 +4,8 @@ import { REVIEW_LENSES, lensStage, type Ticket, type TicketResult, type SessionR
 import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
-import { runAgent, runConfirm, runFinder, runFix, runVerify, type TicketBrief } from "./claude.js";
+import { runAgent, runConfirm, runDedupe, runFinder, runFix, runVerify, type TicketBrief } from "./claude.js";
+import { readCited, ticketText } from "./confirm.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, requireEnv, useProjectEnv } from "./env.js";
@@ -329,10 +330,16 @@ async function processTicket(
         await waitForSession();
         return recordRun(lensStage(lens, pass), await runFinder(wt.wtPath, lens, brief, report, wt.baseRef, agentOptions, { checks, related: related.map(r => ({ ticketId: r.ticketId, branch: r.branch })) }));
       },
-      confirm: async candidates => {
+      dedupe: async candidates => {
         await waitForSession();
-        return recordRun("review-confirm", await runConfirm(wt.wtPath, brief, wt.baseRef, candidates, agentOptions));
+        return recordRun("review-dedupe", await runDedupe(wt.wtPath, candidates, agentOptions));
       },
+      confirm: async batch => {
+        await waitForSession();
+        return recordRun(`review-confirm-${batch.n}`, await runConfirm(wt.wtPath, brief, report, wt.baseRef, batch, agentOptions, { checks }));
+      },
+      source: file => readCited(wt.wtPath, file),
+      ticketText: ticketText(brief),
       fix: async findings => {
         await waitForSession();
         return recordRun("fix", await runFix(wt.wtPath, brief, findings, agentOptions));
