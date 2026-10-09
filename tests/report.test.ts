@@ -77,6 +77,28 @@ describe("report followups section", () => {
   });
 });
 
+describe("report inline code", () => {
+  it("renders backticked spans in the summary, notes and followups as code", () => {
+    const html = reportFor(ticketResult({
+      summary: "Logs `import-worker message ignored` with a `reason`.",
+      notes: "Renamed `isEligible`.",
+      followups: [{ file: "src/a.ts", note: "Duplicates `parse`." }],
+    }));
+    expect(html).toContain('<code class="inline">import-worker message ignored</code> with a <code class="inline">reason</code>.');
+    expect(html).toContain('Renamed <code class="inline">isEligible</code>.');
+    expect(html).toContain('Duplicates <code class="inline">parse</code>.');
+  });
+
+  it("escapes html inside and around code spans", () => {
+    const html = reportFor(ticketResult({ summary: "Wraps `<b>` in <i>." }));
+    expect(html).toContain('Wraps <code class="inline">&lt;b&gt;</code> in &lt;i&gt;.');
+  });
+
+  it("leaves an unpaired backtick as text", () => {
+    expect(reportFor(ticketResult({ summary: "Odd ` tick." }))).toContain("Odd ` tick.");
+  });
+});
+
 describe("report review section", () => {
   const findings = [
     { id: "R1", severity: "blocker" as const, file: "src/export.ts", issue: "Buffers all rows <b>in memory</b>.", suggestion: "Stream them." },

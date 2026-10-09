@@ -19,6 +19,10 @@ export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function prose(s: string): string {
+  return esc(s).replace(/`([^`\n]+)`/g, '<code class="inline">$1</code>');
+}
+
 export const CI_BADGES: Record<string, { label: string; color: string }> = {
   succeeded: { label: "CI passed", color: "#22c55e" },
   failed: { label: "CI failed", color: "#ef4444" },
@@ -74,7 +78,7 @@ function resolutionLabel(resolution: FixResolution, verify: VerifyResult | undef
 function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefined, verification?: FixVerification): string {
   const verify = verification?.results.find(r => r.id === finding.id);
   const resolved = resolution
-    ? `<div class="res res-${resolution.status}"><strong>${resolutionLabel(resolution, verify, verification)}:</strong> ${esc(resolution.how)}</div>`
+    ? `<div class="res res-${resolution.status}"><strong>${resolutionLabel(resolution, verify, verification)}:</strong> ${prose(resolution.how)}</div>`
     : "";
   return `<li class="finding">
            <div class="finding-head">
@@ -82,8 +86,8 @@ function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefin
              <span class="finding-id">${esc(finding.id)}</span>${finding.from ? `<span class="finding-from">(from ${esc(finding.from)})</span>` : ""}
              <code class="finding-file">${esc(finding.file)}</code>
            </div>
-           <div>${esc(finding.issue)}</div>
-           <div class="finding-suggestion">Suggestion: ${esc(finding.suggestion)}</div>
+           <div>${prose(finding.issue)}</div>
+           <div class="finding-suggestion">Suggestion: ${prose(finding.suggestion)}</div>
            ${resolved}
          </li>`;
 }
@@ -91,7 +95,7 @@ function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefin
 function risksHTML(t: TicketResult): string {
   const risks = t.review?.risks ?? [];
   if (risks.length === 0) return "";
-  const items = risks.map(r => `<li>${r.data ? `<span class="data-risk">recorded data</span> ` : ""}<code class="finding-file">${esc(r.file)}</code> ${esc(r.risk)}</li>`).join("");
+  const items = risks.map(r => `<li>${r.data ? `<span class="data-risk">recorded data</span> ` : ""}<code class="finding-file">${esc(r.file)}</code> ${prose(r.risk)}</li>`).join("");
   return `<div class="review"><strong>Worth a closer look</strong><ul class="risks">${items}</ul></div>`;
 }
 
@@ -177,9 +181,9 @@ function postmortemHTML(pm: SessionPostmortem | undefined): string {
       ? `<p class="hint">No suggestions.</p>`
       : pm.suggestions.map(s => `<div class="finding suggestion">
            <div class="finding-head">${actionedBoxHTML(postmortemActionKey(s.id), s.id)}<span class="finding-id">${esc(s.id)}</span><code class="finding-file">${esc(s.target)}</code><span class="finding-file">${esc(s.tickets.join(", "))}</span></div>
-           <div>${esc(s.problem)}</div>
-           <div class="finding-suggestion">Cause: ${esc(s.cause)}</div>
-           <div class="finding-suggestion">Change: ${esc(s.change)}</div>
+           <div>${prose(s.problem)}</div>
+           <div class="finding-suggestion">Cause: ${prose(s.cause)}</div>
+           <div class="finding-suggestion">Change: ${prose(s.change)}</div>
          </div>`).join("");
   const file = pm.file ? `<p class="hint">Suggestions saved to <code>${esc(pm.file)}</code>. Ask Claude to implement the ones you pick by id.</p>` : "";
   const meta = problem ? `<span class="postmortem-flag">⚠️ ${esc(problem)}</span>` : `<span class="section-meta">${pm.suggestions.length} suggestion(s)</span>`;
@@ -259,12 +263,12 @@ function ticketCardHTML(t: TicketResult): string {
     : "";
 
   const notes = t.notes
-    ? `<div class="notes"><strong>Notes:</strong> ${esc(t.notes)}</div>`
+    ? `<div class="notes"><strong>Notes:</strong> ${prose(t.notes)}</div>`
     : "";
 
   const followups = t.followups.length > 0
     ? `<div class="followups"><strong>Spotted, not fixed:</strong><ul>${
-        t.followups.map(f => `<li><code>${esc(f.file)}</code> ${esc(f.note)}</li>`).join("")
+        t.followups.map(f => `<li><code>${esc(f.file)}</code> ${prose(f.note)}</li>`).join("")
       }</ul></div>`
     : "";
 
@@ -280,7 +284,7 @@ function ticketCardHTML(t: TicketResult): string {
       <span class="ticket-duration">${t.durationSec}s</span>
     </summary>
     <div class="card-body">
-      <p class="summary">${esc(t.summary)}</p>
+      <p class="summary">${prose(t.summary)}</p>
       ${t.linear ? `<a href="${esc(t.linear.url)}" target="_blank" class="linear-link">Open in Linear →</a>` : ""}
       ${files ? `<ul class="files">${files}</ul>` : ""}
       ${tests}
@@ -508,6 +512,7 @@ export function generateHTML(session: SessionResult): string {
   .notes { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 0.75rem; }
   .meta { display: flex; gap: 1.5rem; font-size: 0.8rem; color: var(--text-dim);
           border-top: 1px solid var(--border); padding-top: 0.75rem; margin-top: 0.5rem; }
+  code.inline { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
   .meta code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
   .no-tasks { text-align: center; padding: 3rem 1rem; }
   .no-tasks-icon { font-size: 3rem; margin-bottom: 1rem; }
