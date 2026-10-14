@@ -204,6 +204,30 @@ describe("scoreTicket", () => {
     expect(surfaced.counts).toMatchObject({ confirmed: 0, surfaced: 1, met: 1 });
   });
 
+  it("ranks a ticket conflict just below confirmed", () => {
+    const below = scoreTicket(golden(), review([
+      verdicted({ id: "B1" }, { verdict: "unproven" }),
+      verdicted({ id: "S1", lens: "spec" }, { verdict: "ticket_conflict" }),
+    ]));
+    expect(below.items[0]!.outcome).toBe("ticket_conflict");
+    const above = scoreTicket(golden(), review([
+      verdicted({ id: "B1" }, { verdict: "ticket_conflict" }),
+      verdicted({ id: "S1", lens: "spec" }, { verdict: "confirmed" }),
+    ]));
+    expect(above.items[0]!.outcome).toBe("confirmed");
+  });
+
+  it("counts a ticket conflict as surfaced and meets a surfaced item with it", () => {
+    const score = scoreTicket(golden([item({ expect: "surfaced" })]), review([verdicted({ id: "B1" }, { verdict: "ticket_conflict" })]));
+    expect(score.items[0]!.met).toBe(true);
+    expect(score.counts).toMatchObject({ confirmed: 0, surfaced: 1, met: 1 });
+  });
+
+  it("does not meet a finding item with a ticket conflict", () => {
+    const score = scoreTicket(golden([item({ expect: "finding" })]), review([verdicted({ id: "B1" }, { verdict: "ticket_conflict" })]));
+    expect(score.items[0]!.met).toBe(false);
+  });
+
   it("reports not found when no candidate matches", () => {
     const score = scoreTicket(golden(), review([verdicted({ id: "B1", issue: "unrelated", suggestion: "" }, {})]));
     expect(score.items[0]).toMatchObject({ outcome: "not found", found: false, met: false, hits: [] });

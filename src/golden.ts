@@ -98,7 +98,8 @@ export interface TicketScore {
 
 type Reviewed = NonNullable<TicketReview["candidates"]>[number];
 
-const OUTCOME_RANK = ["confirmed", "unproven", "duplicate", "unconfirmed", "missing", "rejected"];
+const OUTCOME_RANK = ["confirmed", "ticket_conflict", "unproven", "duplicate", "unconfirmed", "missing", "rejected"];
+const SURFACED = ["confirmed", "ticket_conflict", "unproven"];
 const rankOf = (outcome: string): number => (outcome === "not found" ? OUTCOME_RANK.length + 1 : OUTCOME_RANK.includes(outcome) ? OUTCOME_RANK.indexOf(outcome) : OUTCOME_RANK.length);
 const LOST = ["rejected", "duplicate", "missing"];
 
@@ -148,7 +149,7 @@ function scoreEntry(entry: GoldenNoise & Partial<GoldenItem>, review: TicketRevi
   const matched = new Set(kinds.filter(k => k.kind === "match").map(k => k.c.id));
   const hits = candidates.filter(c => matched.has(c.id)).map(c => hitFor(c, matched, byId, review));
   const outcome = hits.map(h => h.outcome).sort((a, b) => rankOf(a) - rankOf(b))[0] ?? "not found";
-  const met = entry.expect === "finding" ? outcome === "confirmed" : entry.expect === "surfaced" && (outcome === "confirmed" || outcome === "unproven");
+  const met = entry.expect === "finding" ? outcome === "confirmed" : entry.expect === "surfaced" && SURFACED.includes(outcome);
   return {
     id: entry.id, file: entry.file, issue: entry.issue,
     ...(entry.expect ? { expect: entry.expect } : {}), ...(entry.origin ? { origin: entry.origin } : {}), ...(entry.guard ? { guard: true } : {}),
@@ -160,7 +161,7 @@ const countItems = (items: ItemScore[]): Counts => ({
   items: items.length,
   found: items.filter(i => i.found).length,
   confirmed: items.filter(i => i.outcome === "confirmed").length,
-  surfaced: items.filter(i => i.outcome === "confirmed" || i.outcome === "unproven").length,
+  surfaced: items.filter(i => SURFACED.includes(i.outcome)).length,
   met: items.filter(i => i.met).length,
   lost: items.filter(i => i.found && LOST.includes(i.outcome)).length,
 });
