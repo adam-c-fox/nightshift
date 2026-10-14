@@ -1,7 +1,7 @@
 import { NOT_COVERED_NOTE } from "./confirm.js";
 import { lensLabel, type ReviewCandidate, type RunRecord, type TicketReview } from "./types.js";
 
-export type Expect = "finding" | "surfaced";
+export type Expect = "finding" | "surfaced" | "decision";
 export type Origin = "change" | "fix";
 export interface GoldenMatch { files: string[]; all: string[][] }
 export interface GoldenNoise { id: string; source?: string; file: string; issue: string; match: GoldenMatch }
@@ -37,7 +37,7 @@ function parseNoise(value: unknown, index: number, label: string): GoldenNoise {
 function parseItem(value: unknown, index: number): GoldenItem {
   const raw = (value ?? {}) as Raw;
   const noise = parseNoise(raw, index, "item");
-  if (raw.expect !== "finding" && raw.expect !== "surfaced") throw new Error(`item ${noise.id}: expect must be finding or surfaced`);
+  if (raw.expect !== "finding" && raw.expect !== "surfaced" && raw.expect !== "decision") throw new Error(`item ${noise.id}: expect must be finding, surfaced or decision`);
   if (raw.origin !== "change" && raw.origin !== "fix") throw new Error(`item ${noise.id}: origin must be change or fix`);
   return { ...noise, expect: raw.expect, origin: raw.origin, guard: raw.guard === true };
 }
@@ -100,6 +100,7 @@ type Reviewed = NonNullable<TicketReview["candidates"]>[number];
 
 const OUTCOME_RANK = ["confirmed", "ticket_conflict", "unproven", "duplicate", "unconfirmed", "missing", "rejected"];
 const SURFACED = ["confirmed", "ticket_conflict", "unproven"];
+const MEETS: Record<Expect, string[]> = { finding: ["confirmed"], decision: ["confirmed", "ticket_conflict"], surfaced: SURFACED };
 const rankOf = (outcome: string): number => (outcome === "not found" ? OUTCOME_RANK.length + 1 : OUTCOME_RANK.includes(outcome) ? OUTCOME_RANK.indexOf(outcome) : OUTCOME_RANK.length);
 const LOST = ["rejected", "duplicate", "missing"];
 
@@ -149,7 +150,7 @@ function scoreEntry(entry: GoldenNoise & Partial<GoldenItem>, review: TicketRevi
   const matched = new Set(kinds.filter(k => k.kind === "match").map(k => k.c.id));
   const hits = candidates.filter(c => matched.has(c.id)).map(c => hitFor(c, matched, byId, review));
   const outcome = hits.map(h => h.outcome).sort((a, b) => rankOf(a) - rankOf(b))[0] ?? "not found";
-  const met = entry.expect === "finding" ? outcome === "confirmed" : entry.expect === "surfaced" && SURFACED.includes(outcome);
+  const met = entry.expect !== undefined && MEETS[entry.expect].includes(outcome);
   return {
     id: entry.id, file: entry.file, issue: entry.issue,
     ...(entry.expect ? { expect: entry.expect } : {}), ...(entry.origin ? { origin: entry.origin } : {}), ...(entry.guard ? { guard: true } : {}),

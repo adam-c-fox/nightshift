@@ -44,8 +44,12 @@ describe("parseGolden", () => {
     expect(() => parseGolden(rawGolden({ items: [rawItem({ match: { files: ["src/a.ts"], all: [[1]] } })] }))).toThrow("1-1");
   });
 
-  it("rejects an expect other than finding or surfaced, and an origin other than change or fix", () => {
-    expect(() => parseGolden(rawGolden({ items: [rawItem({ expect: "confirmed" })] }))).toThrow("expect");
+  it("accepts expect decision", () => {
+    expect(parseGolden(rawGolden({ items: [rawItem({ expect: "decision" })] })).items[0]!.expect).toBe("decision");
+  });
+
+  it("rejects an expect other than finding, surfaced or decision, and an origin other than change or fix", () => {
+    expect(() => parseGolden(rawGolden({ items: [rawItem({ expect: "confirmed" })] }))).toThrow("expect must be finding, surfaced or decision");
     expect(() => parseGolden(rawGolden({ items: [rawItem({ origin: "later" })] }))).toThrow("origin");
   });
 
@@ -221,6 +225,18 @@ describe("scoreTicket", () => {
     const score = scoreTicket(golden([item({ expect: "surfaced" })]), review([verdicted({ id: "B1" }, { verdict: "ticket_conflict" })]));
     expect(score.items[0]!.met).toBe(true);
     expect(score.counts).toMatchObject({ confirmed: 0, surfaced: 1, met: 1 });
+  });
+
+  it("meets a decision item with a ticket conflict or a confirmed verdict", () => {
+    for (const verdict of ["ticket_conflict", "confirmed"] as const) {
+      const score = scoreTicket(golden([item({ expect: "decision" })]), review([verdicted({ id: "B1" }, { verdict })]));
+      expect(score.items[0]!.met).toBe(true);
+    }
+  });
+
+  it("does not meet a decision item with an unproven verdict", () => {
+    const score = scoreTicket(golden([item({ expect: "decision" })]), review([verdicted({ id: "B1" }, { verdict: "unproven" })]));
+    expect(score.items[0]!.met).toBe(false);
   });
 
   it("does not meet a finding item with a ticket conflict", () => {
