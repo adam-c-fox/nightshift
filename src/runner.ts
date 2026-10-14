@@ -25,7 +25,7 @@ import { relatedTickets, type ProcessedTicket, type PushedBranch } from "./relat
 import { stackDecision, stackedContext } from "./stack.js";
 import { startTestDb } from "./test-db.js";
 import { localDate, TIME_ZONE } from "./time.js";
-import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
+import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 let logsDir = path.join(ROOT, "logs");
@@ -309,6 +309,11 @@ async function processTicket(
     const after = outcome.publish && hasChangesVsBase(wt) ? await runLoggedChecks("after the change", wt.wtPath, commands) : undefined;
     let checks = after && classifyChecks(baseline, after);
     const related = relatedTickets(ticketId, repo, [...agentContext, linearDesc], processed);
+    try {
+      saveLog(`${ticketId}-diff-review.txt`, reviewDiff(wt));
+    } catch (e) {
+      log(`  Could not save the review diff for ${ticketId}: ${errorMessage(e)}`);
+    }
     const stage = await reviewAndFix(outcome.publish, {
       regressions: checks ? regressionFindings(checks) : [],
       recheck: async () => {

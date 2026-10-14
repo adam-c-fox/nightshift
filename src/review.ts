@@ -248,9 +248,11 @@ interface Judgement {
   candidates: RecordedCandidate[];
 }
 
+export const NOT_COVERED_NOTE = "not covered by the confirm step";
+
 function judgeCandidates(candidates: ReviewCandidate[], verdicts: CandidateVerdict[]): Judgement {
   const recorded = candidates.map((c): RecordedCandidate =>
-    ({ ...c, verdict: verdicts.find(v => v.id === c.id) ?? { id: c.id, verdict: "unproven", note: "not covered by the confirm step" } }));
+    ({ ...c, verdict: verdicts.find(v => v.id === c.id) ?? { id: c.id, verdict: "unproven", note: NOT_COVERED_NOTE } }));
   const confirmed = recorded.filter(c => c.verdict?.verdict === "confirmed");
   const unproven = recorded.filter(c => c.verdict?.verdict === "unproven");
   return {

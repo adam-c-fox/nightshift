@@ -6,7 +6,7 @@ import type { PostmortemSuggestion, SessionPostmortem, SessionResult, TicketResu
 const SKILL_MD = path.resolve(import.meta.dirname, "..", ".claude", "skills", "postmortem", "SKILL.md");
 const POSTMORTEM_START = "---POSTMORTEM---";
 const FIELDS = ["id", "target", "tickets", "problem", "cause", "change"];
-const LOG_SUFFIXES = ["output", "review", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm", "fix", "verify", "diff"];
+const LOG_SUFFIXES = ["output", "review", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm", "fix", "verify", "diff-review", "diff"];
 
 export type UsageGate = "open" | "hit" | "unreadable";
 

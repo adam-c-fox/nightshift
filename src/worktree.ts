@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Toolchain } from "./types.js";
 
@@ -29,6 +30,10 @@ export function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { encoding: "utf-8", cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 10 * 1024 * 1024 });
 }
 
+function gitWithIndex(args: string[], cwd: string, indexFile: string): string {
+  return execFileSync("git", args, { encoding: "utf-8", cwd, env: { ...process.env, GIT_INDEX_FILE: indexFile }, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 10 * 1024 * 1024 });
+}
+
 function stderrOf(e: unknown): string {
   const err = e as { stderr?: string | Buffer; message?: string };
   return err.stderr?.toString().trim() || err.message || String(e);
@@ -36,13 +41,13 @@ function stderrOf(e: unknown): string {
 
 const STDERR_TAIL_LINES = 20;
 
-function npmCi(wtPath: string): void {
+export function npmCi(wtPath: string): void {
   execFileSync("npm", ["ci", "--prefer-offline", "--no-audit"], {
     cwd: wtPath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15 * 60 * 1000, maxBuffer: 10 * 1024 * 1024,
   });
 }
 
-function installDependencies(wtPath: string, install: (wtPath: string) => void, log: Log): void {
+export function installDependencies(wtPath: string, install: (wtPath: string) => void, log: Log): void {
   log(`Installing node_modules in ${wtPath} (npm ci)`);
   try {
     install(wtPath);
@@ -239,6 +244,24 @@ export function excludedPathsInBranch(wt: Worktree): string[] {
 
 export function branchDiff(wt: Worktree): string {
   return git(["diff", `${wt.baseRef}..HEAD`], wt.wtPath);
+}
+
+export function worktreeTree(wt: Worktree): string {
+  const scratch = mkdtempSync(path.join(tmpdir(), "nightshift-index-"));
+  const tempIndex = path.join(scratch, "index");
+  try {
+    const realIndex = path.resolve(wt.wtPath, git(["rev-parse", "--git-path", "index"], wt.wtPath).trim());
+    if (existsSync(realIndex)) copyFileSync(realIndex, tempIndex);
+    else gitWithIndex(["read-tree", "HEAD"], wt.wtPath, tempIndex);
+    gitWithIndex(["add", "-A", ...PATHSPEC], wt.wtPath, tempIndex);
+    return gitWithIndex(["write-tree"], wt.wtPath, tempIndex).trim();
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+export function reviewDiff(wt: Worktree): string {
+  return git(["diff", wt.baseRef, worktreeTree(wt)], wt.wtPath);
 }
 
 export function hasChangesVsBase(wt: Worktree): boolean {

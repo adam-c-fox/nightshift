@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { pushBranch } from "../src/pr.js";
-import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, hasChangesVsBase, ticketBranchName, worktreeSnapshot, worktreePath, type WorktreeSpec } from "../src/worktree.js";
+import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, ticketBranchName, worktreeSnapshot, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -403,5 +403,55 @@ describe("worktreeSnapshot and hasChangesVsBase", () => {
     run(wt.wtPath, "add", "new.ts");
     run(wt.wtPath, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "x");
     expect(hasChangesVsBase(wt)).toBe(true);
+  });
+});
+
+describe("reviewDiff", () => {
+  let wt: ReturnType<typeof createWorktree>;
+  beforeEach(() => {
+    const env = makeRepo();
+    writeFileSync(join(env.repoPath, "a.ts"), "export const a = 1;\n");
+    run(env.repoPath, "add", "-A");
+    run(env.repoPath, "commit", "-q", "-m", "add a");
+    run(env.repoPath, "push", "-q", "origin", "main");
+    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+  });
+
+  it("diffs uncommitted and untracked changes against the base", () => {
+    writeFileSync(join(wt.wtPath, "a.ts"), "export const a = 2;\n");
+    writeFileSync(join(wt.wtPath, "new.ts"), "export const created = true;\n");
+    const diff = reviewDiff(wt);
+    expect(diff).toContain("+export const a = 2;");
+    expect(diff).toContain("+export const created = true;");
+  });
+
+  it("leaves the index, status and snapshot untouched", () => {
+    writeFileSync(join(wt.wtPath, "a.ts"), "export const a = 2;\n");
+    run(wt.wtPath, "add", "a.ts");
+    writeFileSync(join(wt.wtPath, "new.ts"), "export const created = true;\n");
+    const observe = () => [run(wt.wtPath, "status", "--porcelain"), run(wt.wtPath, "diff", "--cached", "--name-only"), worktreeSnapshot(wt)];
+    const before = observe();
+    reviewDiff(wt);
+    expect(observe()).toEqual(before);
+  });
+
+  it("leaves out node_modules and plan files", () => {
+    mkdirSync(join(wt.wtPath, "node_modules"));
+    writeFileSync(join(wt.wtPath, "node_modules", "dep.js"), "x");
+    writeFileSync(join(wt.wtPath, "x.tfplan"), "binary");
+    writeFileSync(join(wt.wtPath, "real.ts"), "export {};\n");
+    const diff = reviewDiff(wt);
+    expect(diff).toContain("real.ts");
+    expect(diff).not.toContain("node_modules");
+    expect(diff).not.toContain("x.tfplan");
+  });
+
+  it("includes commits the agent made itself", () => {
+    writeFileSync(join(wt.wtPath, "a.ts"), "export const a = 2;\n");
+    run(wt.wtPath, "commit", "-q", "-am", "change a");
+    writeFileSync(join(wt.wtPath, "new.ts"), "export const created = true;\n");
+    const diff = reviewDiff(wt);
+    expect(diff).toContain("+export const a = 2;");
+    expect(diff).toContain("+export const created = true;");
   });
 });

@@ -184,10 +184,13 @@ npm run typecheck
 
 ```sh
 npm run -s replay-review -- --project <name> --ticket <ID> --base <sha> \
-  --diff logs/<name>/<ID>-diff.txt --report logs/<name>/<ID>-output.txt [--related ID=branch ...]
+  --diff logs/<name>/<ID>-diff-review.txt --report logs/<name>/<ID>-output.txt \
+  [--session logs/<name>/session-<date>.json] [--related ID=<sha> ...] [--no-install]
 ```
 
-It adds a detached worktree under the system temp directory at `<sha>`, applies the diff and commits it there, fetches the ticket from Linear and parses the implementer's report. It then prints the confirmed findings, the risks (with a `[data]` marker), the rulings on the implementer's decisions, each lens's outcome (the bugs finder runs twice, so it appears as `bugs` and `bugs (pass 2)`), and the usage of every run with a total. Raw outputs go to `logs/<name>/replay-<date>/`, with the second bugs pass in its own `review-bugs-2` log. The temporary worktree is removed afterwards; your branches and other worktrees are never touched. The repo has no `node_modules` in the replay, so the finders can read code but not run tests, and no check results are passed in. `--related` takes branches of related tickets for the reuse lens.
+It adds a detached worktree under the system temp directory at `<sha>` and applies the diff there without committing, so new files stay untracked as they were at night. For a node repo it then runs `npm ci` and the repo's build script, so the finders can run tests; `--no-install` skips both. With `--session`, the ticket brief (the night's context lines and Linear snapshot) and the night's check results come from that session file and Linear isn't called; without it, the ticket is fetched from Linear and no check results are passed in. It parses the implementer's report and prints the confirmed findings, the risks (with a `[data]` marker), the rulings on the implementer's decisions, each lens's outcome (the bugs finder runs twice, so it appears as `bugs` and `bugs (pass 2)`), and the usage of every run with a total. Raw outputs go to `logs/<name>/replay-<date>/` (`replay-<date>-2` and so on for later runs that day), with the second bugs pass in its own `review-bugs-2` log, next to `replay.json`: the review record (candidates with their verdicts, lens runs, rulings), the usage of each run, the arguments and the nightshift commit that ran it. The temporary worktree is removed afterwards; your branches and other worktrees are never touched. `--related` takes related tickets for the reuse lens; give the related ticket's commit from that night, since its branch may have moved.
+
+Replay the diff the finders saw. The runner saves it as `<ID>-diff-review.txt` before the review; `<ID>-diff.txt` is the final diff, after any fix. For a night older than that file whose fix run changed code, rebuild the pre-fix tree from the fix run's transcript (the `entrypoint: "sdk-cli"` session in the ticket's directory under `~/.claude/projects`): each Edit result carries the file's `originalFile`, so putting each edited file's first original back onto the post-fix commit gives the change the finders reviewed.
 
 To judge a replay against a synthetic export example:
 
@@ -197,3 +200,35 @@ To judge a replay against a synthetic export example:
 4. To exercise decision parsing, replay a report with choices in its notes and another with the same choices in a structured `decisions:` list.
 5. Compare each lens's candidates with the confirmation verdicts and compare the usage cost with the original run.
 
+
+#### Scoring against a golden set
+
+A golden set lists the issues a review of one ticket should find, so runs can be compared. It holds client code details, so it lives in the gitignored `projects/<name>/golden/<ID>.json`:
+
+```json
+{
+  "version": 1,
+  "ticket": "ENG-1",
+  "items": [
+    {
+      "id": "1-1",
+      "file": "src/export.ts",
+      "issue": "reads the first row only",
+      "expect": "finding",
+      "origin": "change",
+      "match": { "files": ["src/export.ts"], "all": [["first row", "rows[0]"], ["only", "ignores"]] }
+    }
+  ],
+  "noise": []
+}
+```
+
+A candidate matches an item when its file is in `match.files` and every group in `match.all` has a term in its issue or suggestion, ignoring case; the confirm step's note is never searched. `expect` is `finding` when only a confirmed verdict counts, or `surfaced` when an unproven one, published as a risk, is enough. `origin: "fix"` marks an issue the fixer introduced, which the finders never saw: it is reported but not counted. `guard: true` marks a finding the night confirmed and fixed, counted on its own line so a change that loses it shows up. `noise` lists candidates that were rightly rejected, in the same shape, so confirming everything can't pass for recall.
+
+When `projects/<name>/golden/<ID>.json` exists, `replay-review` scores the run and writes `score.json` beside `replay.json`. `score-review` scores records offline at no cost: a night's session file (every ticket with a golden set) or replay records, in any mix:
+
+```sh
+npm run -s score-review -- --golden projects/<name>/golden logs/<name>/session-<date>.json logs/<name>/replay-*/replay.json
+```
+
+For each item it prints the candidates that match, with the lens and pass that found them or the decision they came from, and what the confirm step did: `confirmed`, `unproven`, `rejected`, `duplicate` (merged into a candidate that isn't this issue), `missing` (no verdict) or `unconfirmed` (the confirm step didn't run). Near misses are listed as `possible`, for you to check. Then the counts: found, confirmed, surfaced (confirmed or unproven), met (what `expect` asks for) and lost at confirm, plus the guards confirmed, the noise confirmed, confirmed findings that match no entry, and the cost of each stage. `--json <file>` also writes the scores as JSON. Scoring the night's own session gives the line to beat.

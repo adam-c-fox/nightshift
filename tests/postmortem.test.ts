@@ -94,13 +94,13 @@ describe("sessionLogData", () => {
   };
 
   it("lists only the log files that exist for each ticket", () => {
-    const exists = (name: string) => ["ENG-1-output.txt", "ENG-1-review.txt", "ENG-1-diff.txt"].includes(name);
+    const exists = (name: string) => ["ENG-1-output.txt", "ENG-1-review.txt", "ENG-1-diff-review.txt", "ENG-1-diff.txt"].includes(name);
     const data = sessionLogData(session, exists, "logs/acme") as { tickets: { ticket: { id: string }; logFiles: string[] }[] };
-    expect(data.tickets[0].logFiles).toEqual(["logs/acme/ENG-1-output.txt", "logs/acme/ENG-1-review.txt", "logs/acme/ENG-1-diff.txt"]);
+    expect(data.tickets[0].logFiles).toEqual(["logs/acme/ENG-1-output.txt", "logs/acme/ENG-1-review.txt", "logs/acme/ENG-1-diff-review.txt", "logs/acme/ENG-1-diff.txt"]);
     expect(data.tickets[1].logFiles).toEqual([]);
   });
   it("lists the per-lens and confirm review logs in run order when they exist", () => {
-    const names = ["output", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm", "fix", "diff"].map(n => `ENG-1-${n}.txt`);
+    const names = ["output", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm", "fix", "diff-review", "diff"].map(n => `ENG-1-${n}.txt`);
     const data = sessionLogData(session, name => names.includes(name), "logs/acme") as { tickets: { logFiles: string[] }[] };
     expect(data.tickets[0].logFiles).toEqual(names.map(n => `logs/acme/${n}`));
   });
