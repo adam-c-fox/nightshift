@@ -165,6 +165,12 @@ describe("review and fix prompts", () => {
 describe("review prompt layering", () => {
   const read = (name: string) => readFileSync(new URL(`../prompts/${name}`, import.meta.url), "utf-8");
 
+  it("defines happens and keeps rejected for claims that don't happen in confirm.md", () => {
+    const confirm = read("confirm.md");
+    expect(confirm).toContain("happens: yes | no");
+    expect(confirm).toContain("does not happen");
+  });
+
   it("keeps the base review prompt free of per-lens focus and the precision bar", () => {
     const base = read("review.md");
     expect(base).toContain("---REVIEW---");

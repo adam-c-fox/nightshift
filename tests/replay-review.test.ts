@@ -117,7 +117,7 @@ describe("replaySummary", () => {
     expect(withConflict).toContain('  src/d.ts: "never retry" -> retry once (not found verbatim in the ticket)');
   });
 
-  it("names rejections kept as risks for want of a checkable line", () => {
+  it("names the overturned rejections", () => {
     const candidate = (id: string, verdict: CandidateVerdict): RecordedCandidate =>
       ({ id, lens: "bugs", kind: "finding", severity: "major", confidence: "proven", file: "src/a.ts", issue: "i", suggestion: "s", data: false, verdict });
     const text = replaySummary({
@@ -131,8 +131,8 @@ describe("replaySummary", () => {
         ],
       },
     }, []);
-    expect(text).toContain("Rejections kept as risks for want of a checkable line: B1, B3");
-    expect(replaySummary(found, [])).not.toContain("Rejections kept");
+    expect(text).toContain("Rejections overturned: B1, B3");
+    expect(replaySummary(found, [])).not.toContain("Rejections overturned");
     expect(replaySummary(found, [])).not.toContain("Ticket conflicts");
   });
 

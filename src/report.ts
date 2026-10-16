@@ -152,12 +152,13 @@ function candidateTally(review: TicketReview): string {
   const judged = candidates.filter(c => c.verdict).length;
   if (judged === 0) return ` · ${candidates.length} candidates → unconfirmed`;
   const conflicts = count("ticket_conflict");
-  const keptAsRisk = candidates.filter(c => c.verdict?.adjusted?.from === "rejected").length;
+  const overturned = candidates.filter(c => c.verdict?.adjusted?.from === "rejected").length;
   const parts = [
     `${count("confirmed")} confirmed`,
     ...(conflicts > 0 ? [`${conflicts} ticket conflict${conflicts === 1 ? "" : "s"}`] : []),
-    `${count("unproven")} unproven${keptAsRisk > 0 ? ` (${keptAsRisk} rejected without a checkable line)` : ""}`,
+    `${count("unproven")} unproven`,
     `${count("duplicate", "rejected")} dropped`,
+    ...(overturned > 0 ? [`${overturned} rejection${overturned === 1 ? "" : "s"} overturned`] : []),
     ...(judged < candidates.length ? [`${candidates.length - judged} unconfirmed`] : []),
   ];
   const batches = review.confirmation?.batches ?? [];

@@ -90,7 +90,7 @@ function summaryText(found: FindAndConfirmResult, runs: RunRecord[]): string {
   if (found.stopped) return [`Review stopped: ${found.stopped.review.reason ?? "no reason recorded"}`, ...usage].join("\n");
 
   const { findings, risks, record } = found;
-  const keptAsRisks = (record.candidates ?? []).filter(c => c.verdict?.adjusted?.from === "rejected").map(c => c.id);
+  const overturned = (record.candidates ?? []).filter(c => c.verdict?.adjusted?.from === "rejected").map(c => c.id);
   return [
     "Lenses:",
     ...(record.lenses ?? []).map(l => `  ${lensLabel(l.lens, l.pass)} ${l.outcome}${l.reason ? `: ${l.reason}` : ` (${l.candidates} candidates)`}`),
@@ -101,7 +101,7 @@ function summaryText(found: FindAndConfirmResult, runs: RunRecord[]): string {
     ...(record.conflicts?.length
       ? ["Ticket conflicts:", ...record.conflicts.map(c => `  ${c.file}${c.data ? " [data]" : ""}: "${c.ticket}" -> ${c.change}${c.quoted ? "" : " (not found verbatim in the ticket)"}`)]
       : []),
-    ...(keptAsRisks.length > 0 ? [`Rejections kept as risks for want of a checkable line: ${keptAsRisks.join(", ")}`] : []),
+    ...(overturned.length > 0 ? [`Rejections overturned: ${overturned.join(", ")}`] : []),
     ...(record.decisions?.length ? ["Rulings:", ...record.decisions.map(d => `  ${d.id} ${d.ruling}: ${d.reason}`)] : []),
     ...usage,
   ].join("\n");

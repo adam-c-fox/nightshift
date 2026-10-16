@@ -105,6 +105,7 @@ export interface CandidateVerdict {
   duplicateOf?: string;
   severity?: Severity;
   data?: boolean;
+  happens?: boolean;
   evidence?: string;
   code?: string;
   ticket?: string;

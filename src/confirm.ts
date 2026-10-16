@@ -115,6 +115,11 @@ const checked = (c: ReviewCandidate, v: CandidateVerdict, source: Source, ticket
   if (v.verdict === "confirmed") return { ...v, citation: citationHolds(v.evidence, v.code, source) };
   if (v.verdict === "rejected") {
     const citation = citationHolds(v.evidence, v.code, source);
+    if (v.happens !== false) {
+      return ticketQuoted(v.ticket, ticket)
+        ? { ...v, verdict: "ticket_conflict", data: v.data ?? c.data, quoted: true, citation, adjusted: { from: "rejected" } }
+        : unproven(c, v, "rejected", citation);
+    }
     return citation === "holds" ? { ...v, citation } : unproven(c, v, "rejected", citation);
   }
   if (v.verdict === "ticket_conflict") {
@@ -162,7 +167,7 @@ export function sortVerdicts(candidates: RecordedCandidate[], firstFinding = 1):
     else if (v.verdict === "unproven") risks.push(toRisk(c, v.data ?? c.data));
     else if (v.verdict === "ticket_conflict") {
       conflicts.push({
-        from: c.id, file: c.file, ticket: v.ticket ?? "", quoted: v.quoted ?? false, consequence: v.note || c.issue,
+        from: c.id, file: c.file, ticket: v.ticket ?? "", quoted: v.quoted ?? false, consequence: v.adjusted ? c.issue : v.note || c.issue,
         change: v.change || "no change suggested", data: v.data ?? c.data,
         ...(v.citation === "holds" && v.evidence ? { evidence: v.evidence } : {}),
       });

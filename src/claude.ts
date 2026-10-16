@@ -393,7 +393,7 @@ export function parseReviewBlock(output: string): ParsedReview {
 }
 
 export function parseConfirmBlock(output: string): CandidateVerdict[] {
-  return parseRecords(extractBlock(output, CONFIRM_START), ["id", "verdict", "duplicate_of", "severity", "data", "evidence", "code", "ticket", "change", "note"])
+  return parseRecords(extractBlock(output, CONFIRM_START), ["id", "verdict", "duplicate_of", "severity", "data", "happens", "evidence", "code", "ticket", "change", "note"])
     .filter(r => r.id)
     .map((r): CandidateVerdict => ({
       id: r.id,
@@ -401,6 +401,7 @@ export function parseConfirmBlock(output: string): CandidateVerdict[] {
       ...(r.duplicate_of ? { duplicateOf: r.duplicate_of } : {}),
       ...(SEVERITIES.includes(r.severity as Severity) ? { severity: r.severity as Severity } : {}),
       ...(r.data ? { data: isYes(r.data) } : {}),
+      ...(r.happens ? { happens: isYes(r.happens) } : {}),
       ...(r.evidence ? { evidence: r.evidence } : {}),
       ...(r.code ? { code: r.code } : {}),
       ...(r.ticket ? { ticket: r.ticket } : {}),

@@ -25,9 +25,10 @@ const SOURCE: Record<string, string> = {
 const TICKET_TEXT = "Rows must never be dropped silently.\nExport the report as CSV.";
 
 const holds = { evidence: "src/a.ts:2", code: "if (!input.length) return [];" };
+const refutes = { ...holds, happens: false };
 
 const judged = (batch: ConfirmBatch, verdict: CandidateVerdict["verdict"] = "confirmed"): ConfirmRunResult => ({
-  success: true, rawOutput: "confirm out", verdicts: batch.candidates.map(c => ({ id: c.id, verdict, note: `note ${c.id}`, ...(verdict === "rejected" ? holds : {}) })),
+  success: true, rawOutput: "confirm out", verdicts: batch.candidates.map(c => ({ id: c.id, verdict, note: `note ${c.id}`, ...(verdict === "rejected" ? refutes : {}) })),
 });
 
 const harness = (overrides: Partial<ReviewDeps> = {}) => {
@@ -405,7 +406,7 @@ describe("reviewAndFix confirmation", () => {
       regressions: [regression],
       lenses: ["bugs", "spec"],
       find: byLens({ bugs: reviewed(finding("R1"), finding("R2")), spec: reviewed(finding("R1")) }),
-      confirm: verdictsFor({ B2: { verdict: "rejected", ...holds } }),
+      confirm: verdictsFor({ B2: { verdict: "rejected", ...refutes } }),
     });
     const outcome = await run();
     expect(calls.fix[0].map(f => `${f.id}:${f.from}`)).toEqual(["C1:undefined", "R1:B1", "R2:S1"]);
@@ -442,7 +443,7 @@ describe("reviewAndFix confirmation", () => {
     const { run } = harness({
       lenses: ["bugs", "spec"],
       find: byLens({ bugs: reviewed(finding("R1")), spec: reviewed(finding("R1"), finding("R2")) }),
-      confirm: verdictsFor({ S1: { verdict: "duplicate", duplicateOf: "B1" }, S2: { verdict: "rejected", note: "guarded on line 4", ...holds } }),
+      confirm: verdictsFor({ S1: { verdict: "duplicate", duplicateOf: "B1" }, S2: { verdict: "rejected", note: "guarded on line 4", ...refutes } }),
     });
     const outcome = await run();
     expect(outcome.review.findings.map(f => f.from)).toEqual(["B1"]);
@@ -671,7 +672,7 @@ describe("reviewAndFix evidence", () => {
     harness({ find: byLens({ bugs: reviewed(finding("R1")) }), confirm: verdictsFor({ B1: verdict }) });
 
   it("keeps a rejection whose cited line holds", async () => {
-    const { calls, run } = one({ verdict: "rejected", ...holds });
+    const { calls, run } = one({ verdict: "rejected", ...refutes });
     const outcome = await run();
     expect(calls.fix).toHaveLength(0);
     expect(outcome.review.risks).toEqual([]);
@@ -679,17 +680,50 @@ describe("reviewAndFix evidence", () => {
   });
 
   it("turns a rejection without evidence into a risk, recording that it was rejected", async () => {
-    const { run } = one({ verdict: "rejected" });
+    const { run } = one({ verdict: "rejected", happens: false });
     const outcome = await run();
     expect(outcome.review.risks).toEqual([{ file: "src/a.ts", risk: "Problem R1.", data: false }]);
     expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "unproven", citation: "missing", adjusted: { from: "rejected" } });
   });
 
   it("turns a rejection whose quoted code is not at the cited line into a risk", async () => {
-    const { run } = one({ verdict: "rejected", evidence: "src/a.ts:2", code: "return somethingElseEntirely();" });
+    const { run } = one({ verdict: "rejected", happens: false, evidence: "src/a.ts:2", code: "return somethingElseEntirely();" });
     const outcome = await run();
     expect(outcome.review.risks).toHaveLength(1);
     expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "unproven", citation: "mismatch", adjusted: { from: "rejected" } });
+  });
+
+  it("turns a rejection that admits the behaviour happens into a risk", async () => {
+    const { calls, run } = one({ verdict: "rejected", happens: true, ...holds });
+    const outcome = await run();
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review.risks).toEqual([{ file: "src/a.ts", risk: "Problem R1.", data: false }]);
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "unproven", citation: "holds", adjusted: { from: "rejected" } });
+  });
+
+  it("turns a rejection that doesn't say whether the behaviour happens into a risk", async () => {
+    const { run } = one({ verdict: "rejected", ...holds });
+    const outcome = await run();
+    expect(outcome.review.risks).toHaveLength(1);
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "unproven", adjusted: { from: "rejected" } });
+  });
+
+  it("turns a rejection that admits the behaviour happens and quotes the ticket into a ticket conflict", async () => {
+    const { calls, run } = one({ verdict: "rejected", happens: true, ticket: "Rows must never be dropped silently.", note: "the ticket asked for it", ...holds });
+    const outcome = await run();
+    expect(calls.fix).toHaveLength(0);
+    expect(outcome.review.risks).toEqual([]);
+    expect(outcome.review.findings).toEqual([]);
+    expect(outcome.review.conflicts).toMatchObject([{ from: "B1", quoted: true, consequence: "Problem R1." }]);
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "ticket_conflict", adjusted: { from: "rejected" } });
+  });
+
+  it("keeps such a rejection as a risk when its ticket line isn't in the ticket", async () => {
+    const { run } = one({ verdict: "rejected", happens: true, ticket: "Rows are retained forever.", ...holds });
+    const outcome = await run();
+    expect(outcome.review.conflicts ?? []).toEqual([]);
+    expect(outcome.review.risks).toHaveLength(1);
+    expect(outcome.review.candidates?.[0].verdict).toMatchObject({ verdict: "unproven", adjusted: { from: "rejected" } });
   });
 
   it("keeps a confirmed candidate whose cited line does not hold, without passing the line to the fix", async () => {
@@ -710,7 +744,7 @@ describe("reviewAndFix evidence", () => {
     const { run } = harness({
       lenses: ["bugs", "spec"],
       find: byLens({ bugs: reviewed(finding("R1")), spec: reviewed(finding("R1")) }),
-      confirm: verdictsFor({ B1: { verdict: "rejected", ...holds }, S1: { verdict: "duplicate", duplicateOf: "B1" } }),
+      confirm: verdictsFor({ B1: { verdict: "rejected", ...refutes }, S1: { verdict: "duplicate", duplicateOf: "B1" } }),
     });
     const outcome = await run();
     expect(outcome.review.risks).toEqual([{ file: "src/a.ts", risk: "Problem R1.", data: false }]);

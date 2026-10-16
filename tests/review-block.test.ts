@@ -149,6 +149,27 @@ describe("parseConfirmBlock", () => {
     ]);
   });
 
+  it("parses happens as yes or no", () => {
+    const block = `---CONFIRM---
+- id: U1
+  verdict: rejected
+  happens: yes
+  note: a
+- id: U2
+  verdict: rejected
+  happens: no
+  note: b
+- id: U3
+  verdict: rejected
+  note: c
+---
+`;
+    const [u1, u2, u3] = parseConfirmBlock(block);
+    expect(u1.happens).toBe(true);
+    expect(u2.happens).toBe(false);
+    expect("happens" in u3).toBe(false);
+  });
+
   it("treats an unknown verdict as unproven", () => {
     expect(parseConfirmBlock(output).find(v => v.id === "B3")?.verdict).toBe("unproven");
   });

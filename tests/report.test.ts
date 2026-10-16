@@ -480,7 +480,7 @@ describe("report review stages", () => {
     for (const escaped of ["a &lt; b", "src/&lt;x&gt;.ts", "c &lt;i&gt;", "d &lt;b&gt;"]) expect(html).toContain(escaped);
   });
 
-  it("counts conflicts, batches and rejections kept as risks in the candidate tally", () => {
+  it("counts conflicts, batches and overturned rejections in the candidate tally", () => {
     const html = reportFor(ticketResult({ review: staged({
       candidates: [
         candidate("B1", { verdict: verdict("B1", "confirmed") }),
@@ -492,7 +492,7 @@ describe("report review stages", () => {
         { n: 1, ids: ["B1", "B2"], outcome: "confirmed" }, { n: 2, ids: ["B3", "B4"], outcome: "failed", reason: "x" },
       ] },
     }) }));
-    expect(html).toContain("4 candidates → 1 confirmed, 1 ticket conflict, 1 unproven (1 rejected without a checkable line), 1 dropped · confirm in 2 batches (1 failed or skipped) · dedupe failed");
+    expect(html).toContain("4 candidates → 1 confirmed, 1 ticket conflict, 1 unproven, 1 dropped, 1 rejection overturned · confirm in 2 batches (1 failed or skipped) · dedupe failed");
   });
 
   it("pluralises ticket conflicts and leaves a single clean batch out of the tally", () => {
@@ -509,6 +509,17 @@ describe("report review stages", () => {
       confirmation: { outcome: "partial", batches: [{ n: 1, ids: ["B1"], outcome: "confirmed" }, { n: 2, ids: ["B2"], outcome: "skipped", reason: "budget" }] },
     }) }));
     expect(html).toContain("2 candidates → 1 confirmed, 0 unproven, 0 dropped, 1 unconfirmed · confirm in 2 batches (1 failed or skipped)");
+  });
+
+  it("counts overturned rejections that became ticket conflicts", () => {
+    const html = reportFor(ticketResult({ review: staged({
+      candidates: [
+        candidate("B1", { verdict: { ...verdict("B1", "ticket_conflict"), adjusted: { from: "rejected" } } }),
+        candidate("B2", { verdict: { ...verdict("B2", "unproven"), adjusted: { from: "rejected" } } }),
+      ],
+      confirmation: { outcome: "confirmed", batches: [{ n: 1, ids: ["B1", "B2"], outcome: "confirmed" }] },
+    }) }));
+    expect(html).toContain("2 candidates → 0 confirmed, 1 ticket conflict, 1 unproven, 0 dropped, 2 rejections overturned");
   });
 
   it("shows the evidence line of a rejected candidate", () => {
