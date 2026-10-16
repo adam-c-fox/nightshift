@@ -13,6 +13,7 @@
     "usage": "tsx src/usage.ts",
     "replay-review": "tsx src/replay-review.ts",
     "score-review": "tsx src/score-review.ts",
+    "replay-fix-review": "tsx src/replay-fix-review.ts",
     "prep-mark": "tsx src/prep-mark.ts",
     "prep-status": "tsx src/prep-status.ts",
     "dashboard": "tsx src/dashboard/server.ts",

@@ -232,3 +232,20 @@ npm run -s score-review -- --golden projects/<name>/golden logs/<name>/session-<
 ```
 
 For each item it prints the candidates that match, with the lens and pass that found them or the decision they came from, and what the confirm step did: `confirmed`, `ticket_conflict`, `unproven`, `rejected`, `duplicate` (merged into a candidate that isn't this issue), `missing` (no verdict) or `unconfirmed` (the confirm step didn't run). Near misses are listed as `possible`, for you to check. Then the counts: found, confirmed, surfaced (confirmed, ticket conflict or unproven), met (what `expect` asks for) and lost at confirm, plus the guards confirmed, the noise confirmed, confirmed findings that match no entry, and the cost of each stage. `--json <file>` also writes the scores as JSON. Scoring the night's own session gives the line to beat.
+
+### Replaying a fix review
+
+`replay-fix-review` re-runs the fix review and its confirm step for one ticket from an earlier night, without the implementer, the fixer or any PR. It spends real usage too:
+
+```sh
+npm run -s replay-fix-review -- --project <name> --ticket <ID> --base <sha> --pre-diff <file> --diff <file> \
+  --report logs/<name>/<ID>-output.txt --fix logs/<name>/<ID>-fix.txt --session logs/<name>/session-<date>.json
+```
+
+It adds a detached worktree under the system temp directory at `<sha>`, applies the pre-fix diff and snapshots the tree, then swaps to the final diff and snapshots that. The fix review sees the change between the two snapshots, the findings the fixer was given (from the session JSON), the fixer's own claims from the fix log, and any decisions the fixer added to the implementer's. It then runs the dedupe and confirm steps on what the fix review found, in batches like the review's, and prints the claim results, the fixer candidates with their verdicts, the confirmed findings with their new ids, the ticket conflicts, the risks, the confirm outcome when it wasn't fully confirmed, and the usage of every run with a total. Raw outputs go to `logs/<name>/replay-fix-<date>/`, with the dedupe run in `fix-review-dedupe` and each confirm batch in its own `fix-review-confirm-<n>` log. Nothing else is touched, and the temporary worktree is removed afterwards. There is no `node_modules` in the replay, so tests can't run.
+
+`--diff` is the night's final `<ID>-diff.txt`, with `<ID>-fix-diff-2.txt` reversed first when a second round ran, so the fix review sees only round 1's change. The findings it is given are those the `--fix` log's FIXES block lists, round 1's inputs, so new fixer findings get ids after them.
+
+To get the pre-fix diff for a night recorded since the fix review landed, apply the final `<ID>-diff.txt` to a checkout of the base, reverse `<ID>-fix-diff-2.txt` if there is one, then reverse `<ID>-fix-diff.txt`, and take the diff against the base. For earlier nights, rebuild it by undoing the fix run's edits from its transcript.
+
+For a synthetic fix-review example, change a shared export-name helper and omit coverage for one of its callers. A useful review should identify the missing caller coverage and verify the fixes it was given. Use commit IDs from your own saved run; this repo does not include another project's source or replay logs.
