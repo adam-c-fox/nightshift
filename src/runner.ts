@@ -1,10 +1,10 @@
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { REVIEW_LENSES, lensStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type LinearComment, type LinearTicket, type NightBudget, type RunUsage } from "./types.js";
+import { REVIEW_LENSES, lensStage, roundStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type LinearComment, type LinearTicket, type NightBudget, type RunUsage } from "./types.js";
 import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
-import { runAgent, runConfirm, runDedupe, runFinder, runFix, runVerify, type TicketBrief } from "./claude.js";
+import { runAgent, runConfirm, runDedupe, runFinder, runFix, runFixReview, type TicketBrief } from "./claude.js";
 import { readCited, ticketText } from "./confirm.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
@@ -26,7 +26,7 @@ import { relatedTickets, type ProcessedTicket, type PushedBranch } from "./relat
 import { stackDecision, stackedContext } from "./stack.js";
 import { startTestDb } from "./test-db.js";
 import { localDate, TIME_ZONE } from "./time.js";
-import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, worktreePath, worktreeSnapshot, type Worktree } from "./worktree.js";
+import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, treeDiff, worktreePath, worktreeSnapshot, worktreeTree, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 let logsDir = path.join(ROOT, "logs");
@@ -167,7 +167,7 @@ function applyReviewStage(result: TicketResult, stage: ReviewStageOutcome): void
   result.review = stage.review;
   result.notes = [result.notes, ...stage.notes].filter(Boolean).join(" | ");
   if (stage.needsReview) result.status = "needs_review";
-  if (stage.fixReport) Object.assign(result, mergeFixReport({ ...result, title: result.title ?? "" }, stage.fixReport));
+  for (const report of stage.fixReports) Object.assign(result, mergeFixReport({ ...result, title: result.title ?? "" }, report));
 }
 
 function lookUpExistingPr(expectedBranch: string, repoPath: string): ExistingPr | null {
@@ -330,23 +330,27 @@ async function processTicket(
         await waitForSession();
         return recordRun(lensStage(lens, pass), await runFinder(wt.wtPath, lens, brief, report, wt.baseRef, agentOptions, { checks, related: related.map(r => ({ ticketId: r.ticketId, branch: r.branch })) }));
       },
-      dedupe: async candidates => {
+      dedupe: async (candidates, stage = "review-dedupe") => {
         await waitForSession();
-        return recordRun("review-dedupe", await runDedupe(wt.wtPath, candidates, agentOptions));
+        return recordRun(stage, await runDedupe(wt.wtPath, candidates, agentOptions));
       },
-      confirm: async batch => {
+      confirm: async (batch, stage = `review-confirm-${batch.n}`) => {
         await waitForSession();
-        return recordRun(`review-confirm-${batch.n}`, await runConfirm(wt.wtPath, brief, report, wt.baseRef, batch, agentOptions, { checks }));
+        return recordRun(stage, await runConfirm(wt.wtPath, brief, report, wt.baseRef, batch, agentOptions, { checks }));
       },
       source: file => readCited(wt.wtPath, file),
       ticketText: ticketText(brief),
-      fix: async findings => {
+      fix: async (findings, round) => {
         await waitForSession();
-        return recordRun("fix", await runFix(wt.wtPath, brief, findings, agentOptions));
+        return recordRun(roundStage("fix", round), await runFix(wt.wtPath, brief, findings, agentOptions));
       },
-      verify: async (findings, resolutions) => {
-        await waitForSession();
-        return recordRun("verify", await runVerify(wt.wtPath, brief, wt.baseRef, findings, resolutions, agentOptions));
+      fixReview: {
+        capture: () => worktreeTree(wt),
+        diff: (from, to) => ({ files: treeDiff(wt, from, to, ["--name-status"]), patch: treeDiff(wt, from, to) }),
+        run: async (round, scope, findings, resolutions, added) => {
+          await waitForSession();
+          return recordRun(roundStage("fix-review", round), await runFixReview(wt.wtPath, brief, wt.baseRef, scope, findings, resolutions, added, agentOptions, { checks }));
+        },
       },
       saveOutput: (name, raw) => saveLog(`${ticketId}-${name}.txt`, raw),
       log,
@@ -354,7 +358,7 @@ async function processTicket(
       const reason = errorMessage(e);
       log(`  Review stage errored for ${ticketId}: ${reason}`);
       return {
-        review: { outcome: "failed", reason, findings: [], resolutions: [] },
+        review: { outcome: "failed", reason, findings: [], resolutions: [] }, fixReports: [],
         publish: false, needsReview: true, notes: [`Review stage errored: ${reason}; work kept on local branch, not pushed.`],
       };
     });

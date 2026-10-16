@@ -286,3 +286,7 @@ export function worktreeSnapshot(wt: Worktree): string {
   }
   return hash.digest("hex");
 }
+
+export function treeDiff(wt: Worktree, from: string, to: string, args: string[] = []): string {
+  return git(["diff", ...args, from, to, ...PATHSPEC], wt.wtPath);
+}

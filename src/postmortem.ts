@@ -7,8 +7,18 @@ const SKILL_MD = path.resolve(import.meta.dirname, "..", ".claude", "skills", "p
 const POSTMORTEM_START = "---POSTMORTEM---";
 const FIELDS = ["id", "target", "tickets", "problem", "cause", "change"];
 const LOG_HEAD = ["output", "review", "review-bugs", "review-bugs-2", "review-spec", "review-reuse", "review-confirm"];
-const LOG_TAIL = ["fix", "verify", "diff-review", "diff"];
-const CONFIRM_STAGE = /^review-(dedupe|confirm-\d+)$/;
+const LOG_TAIL = ["diff-review", "diff"];
+const FIX_ROUNDS = [["fix", "fix-diff", "fix-review", "fix-review"], ["fix-2", "fix-diff-2", "fix-review-2", "fix-review-2"]];
+const confirmStage = (prefix: string): RegExp => new RegExp(`^${prefix}-(dedupe|confirm-\\d+)$`);
+
+const logStages = (runStages: string[]): string[] => {
+  const confirms = (prefix: string) => [...new Set(runStages.filter(stage => confirmStage(prefix).test(stage)))];
+  return [
+    ...LOG_HEAD, ...confirms("review"),
+    ...FIX_ROUNDS.flatMap(([fix, diff, review, prefix]) => [fix, diff, review, ...confirms(prefix)]),
+    ...LOG_TAIL,
+  ];
+};
 
 export type UsageGate = "open" | "hit" | "unreadable";
 
@@ -56,7 +66,7 @@ export function sessionLogData(session: SessionResult, logExists: (name: string)
     ...session,
     tickets: session.tickets.map(t => ({
       ...t,
-      logFiles: [...LOG_HEAD, ...new Set((t.runs ?? []).map(r => r.stage).filter(stage => CONFIRM_STAGE.test(stage))), ...LOG_TAIL].map(s => `${t.ticket.id}-${s}.txt`).filter(logExists).map(f => `${logsRel}/${f}`),
+      logFiles: logStages((t.runs ?? []).map(r => r.stage)).map(s => `${t.ticket.id}-${s}.txt`).filter(logExists).map(f => `${logsRel}/${f}`),
     })),
   };
 }

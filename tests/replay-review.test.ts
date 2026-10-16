@@ -154,7 +154,7 @@ describe("replaySummary", () => {
   });
 
   it("reports why a stopped review stopped", () => {
-    const stopped = replaySummary({ stopped: { review: { outcome: "failed", reason: "worktree changed", findings: [], resolutions: [] }, publish: false, needsReview: true, notes: [] } }, runs);
+    const stopped = replaySummary({ stopped: { review: { outcome: "failed", reason: "worktree changed", findings: [], resolutions: [] }, fixReports: [], publish: false, needsReview: true, notes: [] } }, runs);
     expect(stopped).toContain("Review stopped: worktree changed");
     expect(stopped).toContain("total:");
   });
@@ -314,7 +314,7 @@ describe("replayRecord", () => {
   });
 
   it("records a stopped review with its reason", () => {
-    const stopped = { review: { outcome: "failed" as const, reason: "worktree changed", findings: [], resolutions: [] }, publish: false, needsReview: true, notes: [] };
+    const stopped = { review: { outcome: "failed" as const, reason: "worktree changed", findings: [], resolutions: [] }, fixReports: [], publish: false, needsReview: true, notes: [] };
     const record = replayRecord(args, { stopped }, runs, meta);
     expect(record.review).toEqual(stopped.review);
   });
@@ -333,6 +333,6 @@ describe("replaySummary with a score", () => {
     const plain = replaySummary(found, runs);
     const scored = replaySummary(found, runs, score);
     expect(scored.startsWith(`${plain}\n\n`)).toBe(true);
-    expect(replaySummary({ stopped: { review: { outcome: "failed", reason: "x", findings: [], resolutions: [] }, publish: false, needsReview: true, notes: [] } }, runs, score)).toContain("\n\n");
+    expect(replaySummary({ stopped: { review: { outcome: "failed", reason: "x", findings: [], resolutions: [] }, fixReports: [], publish: false, needsReview: true, notes: [] } }, runs, score)).toContain("\n\n");
   });
 });

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, DEDUPE_PROFILE, dedupeSystemPrompt, finderSystemPrompt, POSTMORTEM_PROFILE, REVIEW_PROFILE } from "../src/claude.js";
+import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, DEDUPE_PROFILE, dedupeSystemPrompt, finderSystemPrompt, fixReviewSystemPrompt, POSTMORTEM_PROFILE, REVIEW_PROFILE } from "../src/claude.js";
 
 describe("agent instructions", () => {
   const agentsMd = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf-8");
@@ -217,8 +217,12 @@ describe("review prompt layering", () => {
     expect(confirmSystemPrompt()).toBe([read("review.md"), read("confirm.md")].join("\n\n---\n\n"));
   });
 
-  it("keeps verify.md layered on the base", () => {
-    expect(read("verify.md")).toMatch(/on top of the review instructions above/);
+  it("keeps fix-review.md layered on the base", () => {
+    expect(read("fix-review.md")).toMatch(/on top of the review instructions above/);
+  });
+
+  it("builds the fix review system prompt from the base plus fix-review.md", () => {
+    expect(fixReviewSystemPrompt()).toBe([read("review.md"), read("fix-review.md")].join("\n\n---\n\n"));
   });
 
   it("states the bugs checks generically and never names a project", () => {
@@ -228,9 +232,14 @@ describe("review prompt layering", () => {
   });
 
   it("tells every producer of risk text to word it as a plain statement about the code", () => {
-    for (const name of ["review.md", "confirm.md", "review-bugs.md"]) {
+    for (const name of ["confirm.md", "review-bugs.md"]) {
       expect(read(name)).toMatch(/never mention a review, a reviewer or how the change was produced/);
     }
+  });
+
+  it("states in review.md's contract that every issue and risk is a plain statement about the code", () => {
+    expect(read("review.md")).toMatch(/Every `issue` and every `risk` is a plain statement about the code/);
+    expect(read("review.md")).toMatch(/Never mention the fixer, the implementer, a fix, a review, a reviewer or how the change was produced in them/);
   });
 
   it("carries decisions over in the fix report", () => {

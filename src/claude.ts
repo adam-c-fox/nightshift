@@ -7,7 +7,7 @@ import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, Fi
 const ROOT = path.resolve(import.meta.dirname, "..");
 const REVIEW_MD = path.join(ROOT, "prompts", "review.md");
 const FIX_MD = path.join(ROOT, "prompts", "fix.md");
-const VERIFY_MD = path.join(ROOT, "prompts", "verify.md");
+const FIX_REVIEW_MD = path.join(ROOT, "prompts", "fix-review.md");
 const CONFIRM_MD = path.join(ROOT, "prompts", "confirm.md");
 const DEDUPE_MD = path.join(ROOT, "prompts", "dedupe.md");
 const lensMd = (lens: ReviewLens) => path.join(ROOT, "prompts", `review-${lens}.md`);
@@ -207,25 +207,48 @@ export function buildFixPrompt(brief: TicketBrief, findings: ReviewFinding[]): s
   ].join("\n");
 }
 
-export function buildVerifyPrompt(
-  brief: TicketBrief, baseRef: string, findings: ReviewFinding[], resolutions: FixResolution[],
+export interface FixScope { from: string; to: string; files: string }
+
+export function buildFixReviewPrompt(
+  brief: TicketBrief, baseRef: string, scope: FixScope, findings: ReviewFinding[], resolutions: FixResolution[], added: Decision[], extras: ReviewPromptExtras = {},
 ): string {
-  const claimed = findings.flatMap(f => {
+  const listed = findings.map(f => {
     const r = resolutions.find(x => x.id === f.id);
-    return r?.status === "fixed"
-      ? [[`- id: ${f.id}`, `  severity: ${f.severity}`, `  file: ${f.file}`, `  issue: ${f.issue}`, `  fixer says: ${r.how}`].join("\n")]
-      : [];
+    return [
+      `- id: ${f.id}`, `  severity: ${f.severity}`, `  file: ${f.file}`, `  issue: ${f.issue}`,
+      `  fixer's status: ${r?.status ?? "not_fixed"}`, `  fixer says: ${r?.how ?? ""}`,
+    ].join("\n");
   });
+  const claimedIds = findings.filter(f => resolutions.find(x => x.id === f.id)?.status === "fixed").map(f => f.id);
+  const changes = scope.from === scope.to
+    ? [`The fixer changed no files.`]
+    : [
+      `The fixer's changes: \`git diff ${scope.from} ${scope.to}\`. Read a file as it was before the fix with \`git show ${scope.from}:<path>\`.`,
+      ``,
+      `Files the fixer changed:`,
+      "```", scope.files.slice(0, OUTPUT_CHARS), "```",
+    ];
+  const decisions = added.length === 0 ? [] : [
+    ``,
+    `**Decisions the fixer added (claims, not facts):**`,
+    ...added.map(d => `- (${d.file}): ${d.decision}`),
+  ];
   return [
     ...ticketSection(brief),
     `**Base ref:** \`${baseRef}\``,
     `Inspect the current change with \`git diff ${baseRef}\` and \`git status --porcelain\` (untracked files are not in the diff; read them directly).`,
+    ...checksSection(extras.checks),
     ``,
-    `The fixer claims these issues are now fixed:`,
+    ...changes,
     ``,
-    ...claimed,
+    `These issues were given to the fixer:`,
     ``,
-    `Check each one against the current code. Do not modify any file. End your final message with the ---VERIFY--- block.`,
+    ...listed,
+    ``,
+    claimedIds.length === 0 ? `The fixer claims none of them is fixed.` : `The fixer claims these are fixed: ${claimedIds.join(", ")}.`,
+    ...decisions,
+    ``,
+    `Check each claimed fix, then review the fixer's changes. Do not modify any file. End your final message with the ---FIXREVIEW--- block.`,
   ].join("\n");
 }
 
@@ -241,7 +264,7 @@ const VALID_STATUSES = ["done", "partial", "needs_review"];
 const REPORT_START = "---REPORT---";
 const REVIEW_START = "---REVIEW---";
 const FIXES_START = "---FIXES---";
-const VERIFY_START = "---VERIFY---";
+const FIX_REVIEW_START = "---FIXREVIEW---";
 const CONFIRM_START = "---CONFIRM---";
 const DEDUPE_START = "---DEDUPE---";
 const BLOCK_END = "---";
@@ -364,18 +387,17 @@ const RULINGS: Ruling[] = ["accept", "finding", "risk"];
 const VERDICTS: Verdict[] = ["confirmed", "duplicate", "ticket_conflict", "rejected"];
 const isYes = (value: string | undefined): boolean => /^(yes|true)$/i.test(value ?? "");
 
-function parseRisks(lines: string[] | undefined): ReviewRisk[] {
+function parseRisks(lines: string[] | undefined, marker: string): ReviewRisk[] {
   const body = (lines ?? []).map(l => l.trim()).filter(l => l !== "");
   if (body.length === 0 || body.join("") === "[]") return [];
   const records = parseRecords(lines, ["file", "risk", "data"]);
   const risks = records.filter(r => r.risk).map(r => ({ file: r.file ?? "", risk: r.risk, data: isYes(r.data) }));
-  if (risks.length === 0) throw new Error("Malformed risks list in ---REVIEW--- block");
+  if (risks.length === 0) throw new Error(`Malformed risks list in ${marker} block`);
   return risks;
 }
 
-export function parseReviewBlock(output: string): ParsedReview {
-  const groups = groupByTopLevelKey(extractBlock(output, REVIEW_START));
-  const findings = parseRecords(groups.get("findings"), ["id", "severity", "confidence", "decision", "file", "issue", "suggestion"])
+function parseFindings(lines: string[] | undefined): FoundFinding[] {
+  return parseRecords(lines, ["id", "severity", "confidence", "decision", "file", "issue", "suggestion"])
     .filter(r => r.issue)
     .map((r, i): FoundFinding => ({
       id: r.id || `R${i + 1}`,
@@ -386,10 +408,21 @@ export function parseReviewBlock(output: string): ParsedReview {
       issue: r.issue,
       suggestion: r.suggestion ?? "",
     }));
+}
+
+function parseResults(lines: string[] | undefined): VerifyResult[] {
+  return parseRecords(lines, ["id", "status", "note"])
+    .filter(r => r.id)
+    .map(r => ({ id: r.id, status: r.status === "resolved" ? "resolved" : "unresolved", note: r.note ?? "" }));
+}
+
+export function parseReviewBlock(output: string): ParsedReview {
+  const groups = groupByTopLevelKey(extractBlock(output, REVIEW_START));
+  const findings = parseFindings(groups.get("findings"));
   const rulings = parseRecords(groups.get("rulings"), ["id", "ruling", "reason"])
     .filter(r => r.id)
     .map((r): ParsedRuling => ({ id: r.id, ruling: RULINGS.includes(r.ruling as Ruling) ? r.ruling as Ruling : "unruled", reason: r.reason ?? "" }));
-  return { findings, risks: parseRisks(groups.get("risks")), rulings };
+  return { findings, risks: parseRisks(groups.get("risks"), REVIEW_START), rulings };
 }
 
 export function parseConfirmBlock(output: string): CandidateVerdict[] {
@@ -428,10 +461,11 @@ export function parseFixesBlock(output: string): FixResolution[] {
     .map(r => ({ id: r.id, status: r.status === "fixed" ? "fixed" : "not_fixed", how: r.how ?? "" }));
 }
 
-export function parseVerifyBlock(output: string): VerifyResult[] {
-  return parseRecords(extractBlock(output, VERIFY_START), ["id", "status", "note"])
-    .filter(r => r.id)
-    .map(r => ({ id: r.id, status: r.status === "resolved" ? "resolved" : "unresolved", note: r.note ?? "" }));
+export interface ParsedFixReview { results: VerifyResult[]; findings: FoundFinding[]; risks: ReviewRisk[] }
+
+export function parseFixReviewBlock(output: string): ParsedFixReview {
+  const groups = groupByTopLevelKey(extractBlock(output, FIX_REVIEW_START));
+  return { results: parseResults(groups.get("results")), findings: parseFindings(groups.get("findings")), risks: parseRisks(groups.get("risks"), FIX_REVIEW_START) };
 }
 
 export function parseReportBlock(output: string): AgentReport {
@@ -678,6 +712,7 @@ const layered = (...files: string[]): string => files.map(f => readFileSync(f, "
 export const finderSystemPrompt = (lens: ReviewLens): string => layered(REVIEW_MD, lensMd(lens));
 export const confirmSystemPrompt = (): string => layered(REVIEW_MD, CONFIRM_MD);
 export const dedupeSystemPrompt = (): string => readFileSync(DEDUPE_MD, "utf-8");
+export const fixReviewSystemPrompt = (): string => layered(REVIEW_MD, FIX_REVIEW_MD);
 
 async function execFinder(worktreePath: string, prompt: string, systemPrompt: string, options: RunAgentOptions): Promise<ReviewRunResult> {
   const run = await execClaude(worktreePath, prompt, systemPrompt, REVIEW_PROFILE, options);
@@ -714,24 +749,26 @@ export async function runFix(
   };
 }
 
-export interface VerifyRunResult {
+export interface FixReviewRunResult {
   success: boolean;
   rawOutput: string;
   results?: VerifyResult[];
+  findings?: FoundFinding[];
+  risks?: ReviewRisk[];
   parseError?: string;
   failure?: string;
   abortReason?: string;
   usage?: RunUsage;
 }
 
-export async function runVerify(
-  worktreePath: string, brief: TicketBrief, baseRef: string, findings: ReviewFinding[], resolutions: FixResolution[], options: RunAgentOptions,
-): Promise<VerifyRunResult> {
-  const prompt = buildVerifyPrompt(brief, baseRef, findings, resolutions);
-  const systemPrompt = layered(REVIEW_MD, VERIFY_MD);
-  const run = await execClaude(worktreePath, prompt, systemPrompt, REVIEW_PROFILE, options);
-  const { value: results, error: parseError } = parseOrError(run.stdout, run.failure, parseVerifyBlock);
-  return { success: run.failure === undefined, rawOutput: run.rawOutput, results, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
+export async function runFixReview(
+  worktreePath: string, brief: TicketBrief, baseRef: string, scope: FixScope, findings: ReviewFinding[], resolutions: FixResolution[], added: Decision[], options: RunAgentOptions,
+  extras: ReviewPromptExtras = {},
+): Promise<FixReviewRunResult> {
+  const prompt = buildFixReviewPrompt(brief, baseRef, scope, findings, resolutions, added, extras);
+  const run = await execClaude(worktreePath, prompt, fixReviewSystemPrompt(), REVIEW_PROFILE, options);
+  const { value: parsed, error: parseError } = parseOrError(run.stdout, run.failure, parseFixReviewBlock);
+  return { success: run.failure === undefined, rawOutput: run.rawOutput, results: parsed?.results, findings: parsed?.findings, risks: parsed?.risks, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }
 
 export interface ConfirmRunResult {

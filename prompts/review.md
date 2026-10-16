@@ -56,7 +56,8 @@ risks:
 - `confidence` is `proven` when you showed the problem from the code or a command, `suspected` when you have a concrete reason but did not settle it. Omit it for `proven`.
 - `file` is a repo-relative path, no `./`, no absolute paths. If a finding spans files, name the main one.
 - Keep each `issue` and `suggestion` to a single line of plain text. Quote values containing a colon.
-- Risks are not fixed automatically. They are published in the pull request description for a human to weigh, so word each one as a plain statement about the code ("Ineligible mail is left unread, so ...") and never mention a review, a reviewer or how the change was produced.
+- Risks are not fixed automatically. They are for a human to weigh.
+- Every `issue` and every `risk` is a plain statement about the code ("Ineligible mail is left unread, so ..."), because unproven findings, risks and ticket conflicts are published in the pull request. Never mention the fixer, the implementer, a fix, a review, a reviewer or how the change was produced in them.
 - `data: yes` on a risk means that if the concern is real, stored, logged, sent or reported values would be wrong. Omit it for `no`.
 - Omit `risks` or write `risks: []` when there are none.
 - If you found nothing, write `findings: []`:

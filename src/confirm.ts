@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { ConfirmRunResult, DedupeGroup, DedupeRunResult, TicketBrief } from "./claude.js";
 import type {
-  CandidateVerdict, Citation, ConfirmBatch, ConfirmBatchRun, ConfirmStage, Confirmation, RecordedCandidate, ReviewCandidate, ReviewFinding, ReviewRisk,
+  CandidateVerdict, Citation, ConfirmBatch, ConfirmBatchRun, ConfirmPrefix, ConfirmStage, Confirmation, RecordedCandidate, ReviewCandidate, ReviewFinding, ReviewRisk,
   Severity, TicketConflict,
 } from "./types.js";
 
@@ -12,8 +12,8 @@ export const NOT_COVERED_NOTE = "not covered by the confirm step";
 export interface ConfirmDeps {
   snapshot(): string;
   gateOpen(): boolean;
-  confirm(batch: ConfirmBatch): Promise<ConfirmRunResult>;
-  dedupe?(candidates: ReviewCandidate[]): Promise<DedupeRunResult>;
+  confirm(batch: ConfirmBatch, stage?: ConfirmStage): Promise<ConfirmRunResult>;
+  dedupe?(candidates: ReviewCandidate[], stage?: ConfirmStage): Promise<DedupeRunResult>;
   source(file: string): string | undefined;
   ticketText: string;
   saveOutput(stage: ConfirmStage, raw: string): void;
@@ -177,7 +177,7 @@ export function sortVerdicts(candidates: RecordedCandidate[], firstFinding = 1):
 
 const BUDGET = "budget cap reached";
 
-export async function confirmAll(candidates: ReviewCandidate[], deps: ConfirmDeps): Promise<ConfirmOutcome> {
+export async function confirmAll(candidates: ReviewCandidate[], deps: ConfirmDeps, prefix: ConfirmPrefix = "review"): Promise<ConfirmOutcome> {
   if (!deps.gateOpen()) {
     return { candidates, confirmation: { outcome: "skipped", reason: BUDGET }, notes: [`Review candidates unconfirmed: ${BUDGET}.`] };
   }
@@ -187,8 +187,9 @@ export async function confirmAll(candidates: ReviewCandidate[], deps: ConfirmDep
   if (deps.dedupe && candidates.length > CONFIRM_BATCH) {
     const before = deps.snapshot();
     deps.log(`  Grouping ${candidates.length} candidate(s)`);
-    const run = await deps.dedupe(candidates);
-    deps.saveOutput("review-dedupe", run.rawOutput);
+    const stage = `${prefix}-dedupe` as const;
+    const run = await deps.dedupe(candidates, stage);
+    deps.saveOutput(stage, run.rawOutput);
     if (deps.snapshot() !== before) return { stopped: "the dedupe run modified the worktree" };
     const failure = run.failure ?? run.parseError;
     if (failure || !run.groups) {
@@ -216,8 +217,9 @@ export async function confirmAll(candidates: ReviewCandidate[], deps: ConfirmDep
     }
     const before = deps.snapshot();
     deps.log(`  Confirming batch ${batch.n} of ${batches.length} (${batch.candidates.length} candidate(s))`);
-    const run = await deps.confirm(batch);
-    deps.saveOutput(`review-confirm-${batch.n}`, run.rawOutput);
+    const stage = `${prefix}-confirm-${batch.n}` as const;
+    const run = await deps.confirm(batch, stage);
+    deps.saveOutput(stage, run.rawOutput);
     if (deps.snapshot() !== before) return { stopped: `confirm batch ${batch.n} modified the worktree` };
     const failure = run.failure ?? run.parseError;
     if (failure || !run.verdicts) {

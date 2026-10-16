@@ -113,6 +113,19 @@ describe("sessionLogData", () => {
     const data = sessionLogData(withRuns, name => names.includes(name), "logs/acme") as { tickets: { logFiles: string[] }[] };
     expect(data.tickets[0].logFiles).toEqual(names.map(n => `logs/acme/${n}`));
   });
+  it("lists the fix stages and the fix review's confirm logs in order without a verify log", () => {
+    const stages = [
+      "review-bugs", "review-dedupe", "review-confirm-1", "fix", "fix-review", "fix-review-dedupe", "fix-review-confirm-1", "fix-review-confirm-2",
+      "fix-2", "fix-review-2", "fix-review-2-confirm-1",
+    ];
+    const withRuns: SessionResult = { ...session, tickets: [{ ...ticket("ENG-1", "done"), runs: stages.map(stage => ({ stage })) }] };
+    const expected = [
+      "output", "review-bugs", "review-dedupe", "review-confirm-1", "fix", "fix-diff", "fix-review", "fix-review-dedupe", "fix-review-confirm-1", "fix-review-confirm-2",
+      "fix-2", "fix-diff-2", "fix-review-2", "fix-review-2-confirm-1", "diff-review", "diff", "verify",
+    ].map(n => `ENG-1-${n}.txt`);
+    const data = sessionLogData(withRuns, name => expected.includes(name), "logs/acme") as { tickets: { logFiles: string[] }[] };
+    expect(data.tickets[0].logFiles).toEqual(expected.filter(n => !n.includes("verify")).map(n => `logs/acme/${n}`));
+  });
   it("keeps the session data", () => {
     const data = sessionLogData(session, () => false, "logs/acme") as { date: string; tickets: { status: string }[] };
     expect(data.date).toBe("2026-10-01");

@@ -262,6 +262,17 @@ describe("scoreTicket", () => {
     expect(score.counts.items).toBe(0);
   });
 
+  it("does not credit a change item to a candidate from the fix review", () => {
+    const score = scoreTicket(golden(), review([verdicted({ id: "F1", lens: "fixer" }, {})]));
+    expect(score.items[0]).toMatchObject({ outcome: "not found", found: false, met: false });
+    expect(score.unmatchedConfirmed).toEqual([]);
+  });
+
+  it("scores a fix-origin item against fix review candidates", () => {
+    const score = scoreTicket(golden([item({ id: "1-4", origin: "fix" })]), review([verdicted({ id: "F1", lens: "fixer" }, {})]));
+    expect(score.fixItems[0]).toMatchObject({ outcome: "confirmed", found: true });
+  });
+
   it("counts guards separately", () => {
     const score = scoreTicket(golden([item({ id: "1-g1", guard: true }), item({ id: "1-2", match: { files: ["src/a.ts"], all: [["nothing"]] } })]), review([verdicted({ id: "B1" }, {})]));
     expect(score.guards.map(i => i.id)).toEqual(["1-g1"]);

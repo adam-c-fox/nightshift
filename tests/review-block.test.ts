@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfirmBlock, parseDedupeBlock, parseFixesBlock, parseReviewBlock, parseVerifyBlock } from "../src/claude.js";
+import { parseConfirmBlock, parseDedupeBlock, parseFixesBlock, parseFixReviewBlock, parseReviewBlock } from "../src/claude.js";
 
 describe("parseReviewBlock", () => {
   it("parses every field of each finding", () => {
@@ -265,31 +265,62 @@ summary: Streams the export.
   });
 });
 
-describe("parseVerifyBlock", () => {
+describe("parseFixReviewBlock", () => {
   const output = `Checked.
 
----VERIFY---
-- id: R1
-  status: resolved
-  note: Rows now stream.
-- id: R2
-  status: unresolved
-  note: "Header is still missing: see line 4."
-- id: R3
-  status: maybe
-  note: unclear
+---FIXREVIEW---
+results:
+  - id: R1
+    status: resolved
+    note: Rows now stream.
+  - id: R2
+    status: maybe
+    note: "Header is still missing: see line 4."
+findings:
+  - id: R1
+    severity: minor
+    confidence: suspected
+    file: src/a.ts
+    issue: Helper change also reaches the second caller.
+    suggestion: Add a test through the second caller.
+risks:
+  - file: src/b.ts
+    risk: The export is wider than before.
+    data: yes
 ---
 `;
 
-  it("parses each result and treats anything but resolved as unresolved", () => {
-    expect(parseVerifyBlock(output)).toEqual([
-      { id: "R1", status: "resolved", note: "Rows now stream." },
-      { id: "R2", status: "unresolved", note: "Header is still missing: see line 4." },
-      { id: "R3", status: "unresolved", note: "unclear" },
-    ]);
+  it("parses results, findings and risks", () => {
+    expect(parseFixReviewBlock(output)).toEqual({
+      results: [
+        { id: "R1", status: "resolved", note: "Rows now stream." },
+        { id: "R2", status: "unresolved", note: "Header is still missing: see line 4." },
+      ],
+      findings: [{ id: "R1", severity: "minor", confidence: "suspected", file: "src/a.ts", issue: "Helper change also reaches the second caller.", suggestion: "Add a test through the second caller." }],
+      risks: [{ file: "src/b.ts", risk: "The export is wider than before.", data: true }],
+    });
   });
 
-  it("throws when there is no block", () => {
-    expect(() => parseVerifyBlock("---REVIEW---\nfindings: []\n---\n")).toThrow(/---VERIFY---/);
+  it("treats any status other than resolved as unresolved", () => {
+    const { results } = parseFixReviewBlock("---FIXREVIEW---\nresults:\n  - id: R1\n    status: done\n    note: n\nfindings: []\nrisks: []\n---\n");
+    expect(results).toEqual([{ id: "R1", status: "unresolved", note: "n" }]);
+  });
+
+  it("reads findings: [] and risks: [] as empty", () => {
+    const parsed = parseFixReviewBlock("---FIXREVIEW---\nresults:\n  - id: R1\n    status: resolved\n    note: ok\nfindings: []\nrisks: []\n---\n");
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.risks).toEqual([]);
+  });
+
+  it("parses findings exactly as the REVIEW block does", () => {
+    const lines = "findings:\n  - issue: No default.\n    file: src/a.ts\n  - id: R2\n    severity: blocker\n    issue: Broken.\n    suggestion: Fix.\n";
+    const fromReview = parseReviewBlock(`---REVIEW---\n${lines}risks: []\n---\n`).findings;
+    const fromFixReview = parseFixReviewBlock(`---FIXREVIEW---\nresults: []\n${lines}risks: []\n---\n`).findings;
+    expect(fromFixReview).toEqual(fromReview);
+    expect(fromFixReview[0]).toMatchObject({ severity: "major", confidence: "proven" });
+  });
+
+  it("throws naming ---FIXREVIEW--- when the block is missing", () => {
+    expect(() => parseFixReviewBlock("---REVIEW---\nfindings: []\n---\n")).toThrow(/---FIXREVIEW---/);
   });
 });

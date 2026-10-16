@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseConfirmBlock, type TicketBrief } from "../src/claude.js";
-import { batchGroups, citationHolds, groupCandidates, judgeBatch, readCited, sortVerdicts, ticketQuoted, ticketText, type Group } from "../src/confirm.js";
-import type { CandidateVerdict, RecordedCandidate, ReviewCandidate } from "../src/types.js";
+import { batchGroups, citationHolds, confirmAll, groupCandidates, judgeBatch, readCited, sortVerdicts, ticketQuoted, ticketText, type ConfirmDeps, type Group } from "../src/confirm.js";
+import type { CandidateVerdict, ConfirmStage, RecordedCandidate, ReviewCandidate } from "../src/types.js";
 
 const candidate = (id: string, file = "src/a.ts"): ReviewCandidate =>
   ({ id, lens: "bugs", kind: "finding", severity: "major", confidence: "proven", file, issue: `Problem ${id}.`, suggestion: `Fix ${id}.`, data: false });
@@ -191,5 +191,47 @@ describe("sortVerdicts", () => {
       expect(c).not.toHaveProperty("change");
       expect(c.consequence).toBe("Problem B1.");
     }
+  });
+});
+
+describe("confirmAll stage names", () => {
+  const harness = () => {
+    const saved: string[] = [];
+    const dedupeStages: (ConfirmStage | undefined)[] = [];
+    const confirmStages: (ConfirmStage | undefined)[] = [];
+    const deps: ConfirmDeps = {
+      snapshot: () => "same",
+      gateOpen: () => true,
+      confirm: async (batch, stage) => {
+        confirmStages.push(stage);
+        return { success: true, rawOutput: "", verdicts: batch.candidates.map(c => ({ id: c.id, verdict: "unproven" as const, note: "" })) };
+      },
+      dedupe: async (_candidates, stage) => {
+        dedupeStages.push(stage);
+        return { success: true, rawOutput: "", groups: [] };
+      },
+      source: () => undefined,
+      ticketText: "",
+      saveOutput: stage => { saved.push(stage); },
+      log: () => {},
+    };
+    return { deps, saved, dedupeStages, confirmStages };
+  };
+  const five = ["B1", "B2", "B3", "B4", "B5"].map(id => candidate(id));
+
+  it("names the dedupe and batch logs after the prefix and passes the stage to confirm and dedupe", async () => {
+    const { deps, saved, dedupeStages, confirmStages } = harness();
+    await confirmAll(five, deps, "fix-review");
+    expect(saved).toEqual(["fix-review-dedupe", "fix-review-confirm-1", "fix-review-confirm-2"]);
+    expect(dedupeStages).toEqual(["fix-review-dedupe"]);
+    expect(confirmStages).toEqual(["fix-review-confirm-1", "fix-review-confirm-2"]);
+  });
+
+  it("defaults to the review prefix", async () => {
+    const { deps, saved, dedupeStages, confirmStages } = harness();
+    await confirmAll(five, deps);
+    expect(saved).toEqual(["review-dedupe", "review-confirm-1", "review-confirm-2"]);
+    expect(dedupeStages).toEqual(["review-dedupe"]);
+    expect(confirmStages).toEqual(["review-confirm-1", "review-confirm-2"]);
   });
 });

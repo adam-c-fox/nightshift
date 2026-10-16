@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildConfirmPrompt, buildDedupePrompt, buildFinderPrompt, buildFixPrompt, buildVerifyPrompt, type AgentReport, type TicketBrief } from "../src/claude.js";
+import { buildConfirmPrompt, buildDedupePrompt, buildFinderPrompt, buildFixPrompt, buildFixReviewPrompt, type AgentReport, type TicketBrief } from "../src/claude.js";
 import type { ClassifiedCheck } from "../src/checks.js";
 import type { ReviewCandidate, ReviewFinding } from "../src/types.js";
 
@@ -76,7 +76,7 @@ describe("ticket section", () => {
   });
 });
 
-describe("buildVerifyPrompt", () => {
+describe("buildFixReviewPrompt", () => {
   const findings = [
     { id: "R1", severity: "blocker" as const, file: "src/a.ts", issue: "Buffers rows.", suggestion: "Stream." },
     { id: "R2", severity: "major" as const, file: "src/b.ts", issue: "No header.", suggestion: "Add it." },
@@ -85,20 +85,73 @@ describe("buildVerifyPrompt", () => {
     { id: "R1", status: "fixed" as const, how: "Streamed rows." },
     { id: "R2", status: "not_fixed" as const, how: "Disagree." },
   ];
-  const prompt = buildVerifyPrompt(brief, "origin/main", findings, resolutions);
+  const scope = { from: "tree-before", to: "tree-after", files: "M\tsrc/a.ts\nA\ttests/a.test.ts" };
+  const added = [{ file: "src/a.ts", decision: "Rows stream in chunks of 100." }];
+  const prompt = buildFixReviewPrompt(brief, "origin/main", scope, findings, resolutions, added);
 
-  it("names the ticket and base ref and asks for the VERIFY block", () => {
+  it("names the ticket, the base ref and the fixer's diff between the two trees, and asks for the FIXREVIEW block", () => {
     expect(prompt).toContain("ENG-12");
     expect(prompt).toContain("git diff origin/main");
-    expect(prompt).toContain("---VERIFY---");
+    expect(prompt).toContain("git diff tree-before tree-after");
+    expect(prompt).toContain("git show tree-before:<path>");
+    expect(prompt).toContain("---FIXREVIEW---");
     expect(prompt).toMatch(/Do not modify any file/);
   });
 
-  it("lists only claimed-fixed findings with the fixer's account", () => {
+  it("lists the fixer's files", () => {
+    expect(prompt).toContain("M\tsrc/a.ts\nA\ttests/a.test.ts");
+  });
+
+  it("says the fixer changed no files when both trees are the same", () => {
+    const same = buildFixReviewPrompt(brief, "origin/main", { from: "t1", to: "t1", files: "" }, findings, resolutions, []);
+    expect(same).toMatch(/fixer changed no files/);
+    expect(same).not.toContain("git diff t1 t1");
+  });
+
+  it("lists every issue with the fixer's status and account", () => {
     expect(prompt).toContain("id: R1");
     expect(prompt).toContain("issue: Buffers rows.");
+    expect(prompt).toContain("fixer's status: fixed");
     expect(prompt).toContain("fixer says: Streamed rows.");
-    expect(prompt).not.toContain("R2");
+    expect(prompt).toContain("id: R2");
+    expect(prompt).toContain("fixer's status: not_fixed");
+    expect(prompt).toContain("fixer says: Disagree.");
+    expect(prompt).toMatch(/claims.*R1/);
+  });
+
+  it("lists the decisions the fixer added", () => {
+    expect(prompt).toContain("**Decisions the fixer added (claims, not facts):**");
+    expect(prompt).toContain("- (src/a.ts): Rows stream in chunks of 100.");
+    expect(buildFixReviewPrompt(brief, "origin/main", scope, findings, resolutions, [])).not.toContain("Decisions the fixer added");
+  });
+
+  it("lists the check results when given and has no checks section otherwise", () => {
+    const withChecks = buildFixReviewPrompt(brief, "origin/main", scope, findings, resolutions, added, { checks: [
+      check("npm run lint", "regression", false, "src/a.ts:1 unused variable"),
+      check("npm test", "passed", true),
+    ] });
+    expect(withChecks).toContain("Check results");
+    expect(withChecks).toContain("`npm run lint`");
+    expect(withChecks).toContain("`npm test`");
+    expect(withChecks).toContain("src/a.ts:1 unused variable");
+    expect(prompt).not.toContain("Check results");
+  });
+
+  it("points the review at destination-folder.ts and the fixer's code-point decision", () => {
+    const demo = buildFixReviewPrompt(
+      brief, "origin/main",
+      { from: "aaa111", to: "bbb222", files: "M\tservices/import-worker/src/filename.ts\nM\tservices/import-worker/src/destination-folder.ts\nM\tservices/import-worker/tests/filename.test.ts" },
+      [
+        { id: "R1", severity: "major", file: "services/import-worker/src/filename.ts", issue: "Filename stems are not capped.", suggestion: "Cap them." },
+        { id: "R2", severity: "major", file: "services/import-worker/src/destination-folder.ts", issue: "`cleaned.slice(0, MAX_FOLDER_NAME_LENGTH)` cuts on UTF-16 code units and can split a surrogate pair.", suggestion: "Cut on code points." },
+        { id: "R3", severity: "minor", file: "services/import-worker/tests/filename.test.ts", issue: "No test for long names.", suggestion: "Add one." },
+      ],
+      [{ id: "R1", status: "fixed", how: "Capped." }, { id: "R2", status: "fixed", how: "Cut on code points." }, { id: "R3", status: "fixed", how: "Added." }],
+      [{ file: "services/import-worker/src/destination-folder.ts", decision: "The 100-character cap counts code points, so a surrogate pair is never split, for both filename stems and destination folder names." }],
+    );
+    expect(demo).toContain("git diff aaa111 bbb222");
+    expect(demo).toContain("M\tservices/import-worker/src/destination-folder.ts");
+    expect(demo).toContain("The 100-character cap counts code points, so a surrogate pair is never split, for both filename stems and destination folder names.");
   });
 });
 

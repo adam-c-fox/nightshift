@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { pushBranch } from "../src/pr.js";
-import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, ticketBranchName, worktreeSnapshot, worktreePath, type WorktreeSpec } from "../src/worktree.js";
+import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, ticketBranchName, treeDiff, worktreeSnapshot, worktreeTree, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -453,5 +453,45 @@ describe("reviewDiff", () => {
     const diff = reviewDiff(wt);
     expect(diff).toContain("+export const a = 2;");
     expect(diff).toContain("+export const created = true;");
+  });
+});
+
+describe("worktreeTree and treeDiff", () => {
+  let wt: ReturnType<typeof createWorktree>;
+  beforeEach(() => {
+    const env = makeRepo();
+    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+  });
+
+  it("returns the same tree for an unchanged worktree", () => {
+    expect(worktreeTree(wt)).toBe(worktreeTree(wt));
+    expect(worktreeTree(wt)).toBe(run(wt.wtPath, "rev-parse", "HEAD^{tree}"));
+  });
+
+  it("leaves out files deleted from the worktree", () => {
+    writeFileSync(join(wt.wtPath, "gone.ts"), "gone");
+    run(wt.wtPath, "add", "-A");
+    run(wt.wtPath, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "files");
+    rmSync(join(wt.wtPath, "gone.ts"));
+    expect(run(wt.wtPath, "ls-tree", "-r", "--name-only", worktreeTree(wt)).split("\n")).not.toContain("gone.ts");
+  });
+
+  it("captures exactly the tree commitWorktree then commits", () => {
+    writeFileSync(join(wt.wtPath, "new.ts"), "a");
+    writeFileSync(join(wt.wtPath, ".gitignore"), "node_modules/\nx\n");
+    mkdirSync(join(wt.wtPath, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(wt.wtPath, "node_modules", "pkg", "x.js"), "x");
+    const tree = worktreeTree(wt);
+    commitWorktree(wt, "feat: x", noop);
+    expect(run(wt.wtPath, "rev-parse", "HEAD^{tree}")).toBe(tree);
+  });
+
+  it("diffs two captures, showing a file created between them", () => {
+    const from = worktreeTree(wt);
+    writeFileSync(join(wt.wtPath, "created.ts"), "hello");
+    const to = worktreeTree(wt);
+    expect(treeDiff(wt, from, to, ["--name-status"]).trim()).toBe("A\tcreated.ts");
+    expect(treeDiff(wt, from, to)).toContain("+hello");
+    expect(treeDiff(wt, from, from)).toBe("");
   });
 });

@@ -44,9 +44,12 @@ export const REVIEW_LENSES: ReviewLens[] = ["bugs", "bugs", "spec", "reuse"];
 
 export type ReviewStage = `review-${ReviewLens}` | `review-${ReviewLens}-${number}`;
 
-export type ConfirmStage = "review-dedupe" | `review-confirm-${number}`;
+export type ConfirmPrefix = "review" | "fix-review" | `fix-review-${number}`;
+export type ConfirmStage = `${ConfirmPrefix}-dedupe` | `${ConfirmPrefix}-confirm-${number}`;
 
 export const lensStage = (lens: ReviewLens, pass = 1): ReviewStage => pass > 1 ? `review-${lens}-${pass}` : `review-${lens}`;
+
+export const roundStage = <S extends string>(name: S, round = 1): S | `${S}-${number}` => round > 1 ? `${name}-${round}` as const : name;
 
 export const lensLabel = (lens: ReviewLens, pass = 1): string => pass > 1 ? `${lens} (pass ${pass})` : lens;
 
@@ -82,9 +85,20 @@ export interface LensRun {
   candidates: number;
 }
 
+export type CandidateLens = ReviewLens | "fixer";
+
+export interface FixReviewRun {
+  round: number;
+  outcome: "reviewed" | "skipped" | "failed";
+  reason?: string;
+  files: number;
+  candidates: number;
+  confirmation?: Confirmation;
+}
+
 export interface ReviewCandidate {
   id: string;
-  lens: ReviewLens;
+  lens: CandidateLens;
   kind: "finding" | "risk";
   severity: Severity;
   confidence: Confidence;
@@ -180,6 +194,7 @@ export interface TicketReview {
   conflicts?: TicketConflict[];
   verification?: FixVerification;
   lenses?: LensRun[];
+  fixReviews?: FixReviewRun[];
   candidates?: RecordedCandidate[];
   confirmation?: Confirmation;
   decisions?: DecisionRuling[];

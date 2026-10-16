@@ -168,9 +168,10 @@ const countItems = (items: ItemScore[]): Counts => ({
 });
 
 export function scoreTicket(golden: GoldenSet, review: TicketReview, runs: RunRecord[] = []): TicketScore {
-  const candidates = review.candidates ?? [];
-  const byId = new Map(candidates.map(c => [c.id, c]));
-  const scored = golden.items.map(i => scoreEntry(i, review, candidates, byId));
+  const all = review.candidates ?? [];
+  const candidates = all.filter(c => c.lens !== "fixer");
+  const byId = new Map(all.map(c => [c.id, c]));
+  const scored = golden.items.map(i => scoreEntry(i, review, i.origin === "fix" ? all : candidates, byId));
   const noise = golden.noise.map(n => scoreEntry(n, review, candidates, byId));
   const fixItems = scored.filter(i => i.origin === "fix");
   const guards = scored.filter(i => i.origin !== "fix" && i.guard);
