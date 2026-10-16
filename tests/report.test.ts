@@ -219,6 +219,114 @@ describe("report fix verification", () => {
   });
 });
 
+describe("report fix review", () => {
+  type Recorded = NonNullable<TicketReview["candidates"]>[number];
+  const candidate = (id: string, over: Partial<Recorded> = {}): Recorded => ({
+    id, lens: "bugs", kind: "finding", severity: "major", confidence: "proven",
+    file: `src/${id}.ts`, issue: `Issue ${id}.`, suggestion: "", data: false, ...over,
+  });
+  const fixerCandidates = [
+    candidate("F1", { lens: "fixer", verdict: { id: "F1", verdict: "confirmed", note: "real" } }),
+    candidate("F2", { lens: "fixer", verdict: { id: "F2", verdict: "rejected", note: "guarded" } }),
+  ];
+  const base: TicketReview = {
+    outcome: "reviewed", resolutions: [],
+    findings: [{ id: "R1", severity: "major", file: "a.ts", issue: "One.", suggestion: "s" }],
+  };
+
+  it("shows each fix review round on its own line with the fixer candidates' tally", () => {
+    const html = reportFor(ticketResult({ review: {
+      ...base,
+      fixReviews: [
+        { round: 1, outcome: "reviewed", files: 2, candidates: 2 },
+        { round: 2, outcome: "reviewed", files: 1, candidates: 0 },
+      ],
+      candidates: fixerCandidates,
+    } }));
+    expect(html).toContain(`<div class="review review-stages">Fix review: round 1 ✓ · round 2 ✓ · 2 candidates → 1 confirmed, 0 unproven, 1 dropped</div>`);
+  });
+
+  it("keeps fixer candidates out of the lens tally", () => {
+    const html = reportFor(ticketResult({ review: {
+      ...base,
+      lenses: [{ lens: "bugs", outcome: "reviewed", candidates: 1 }],
+      fixReviews: [{ round: 1, outcome: "reviewed", files: 2, candidates: 2 }],
+      candidates: [candidate("B1", { verdict: { id: "B1", verdict: "confirmed", note: "n" } }), ...fixerCandidates],
+    } }));
+    expect(html).toContain("Review: bugs ✓ · 1 candidates → 1 confirmed, 0 unproven, 0 dropped</div>");
+    expect(html).toContain("Fix review: round 1 ✓ · 2 candidates → 1 confirmed, 0 unproven, 1 dropped</div>");
+  });
+
+  it("keeps fixer candidates and their ticket conflicts out of the lens tally", () => {
+    const html = reportFor(ticketResult({ review: {
+      ...base,
+      lenses: [{ lens: "bugs", outcome: "reviewed", candidates: 1 }],
+      fixReviews: [{ round: 1, outcome: "reviewed", files: 2, candidates: 2 }],
+      candidates: [
+        candidate("B1", { verdict: { id: "B1", verdict: "confirmed", note: "n" } }),
+        candidate("F1", { lens: "fixer", verdict: { id: "F1", verdict: "ticket_conflict", note: "n" } }),
+        candidate("F2", { lens: "fixer", verdict: { id: "F2", verdict: "confirmed", note: "n" } }),
+      ],
+      confirmation: { outcome: "partial", batches: [{ n: 1, ids: ["B1"], outcome: "confirmed" }, { n: 2, ids: ["B2"], outcome: "failed", reason: "x" }] },
+    } }));
+    expect(html).toContain("Review: bugs ✓ · 1 candidates → 1 confirmed, 0 unproven, 0 dropped · confirm in 2 batches (1 failed or skipped)</div>");
+    expect(html).toContain("Fix review: round 1 ✓ · 2 candidates → 1 confirmed, 1 ticket conflict, 0 unproven, 0 dropped</div>");
+  });
+
+  it("shows a fix review round whose confirm was only partly done", () => {
+    const html = reportFor(ticketResult({ review: {
+      ...base,
+      fixReviews: [
+        { round: 1, outcome: "reviewed", files: 2, candidates: 2, confirmation: { outcome: "confirmed" } },
+        { round: 2, outcome: "reviewed", files: 2, candidates: 2, confirmation: { outcome: "partial" } },
+        { round: 3, outcome: "reviewed", files: 2, candidates: 2, confirmation: { outcome: "failed", reason: "no block <x>" } },
+      ],
+    } }));
+    expect(html).toContain("Fix review: round 1 ✓ · round 2 ✓ (confirm partial) · round 3 ✓ (confirm failed: no block &lt;x&gt;)");
+  });
+
+  it("groups the fix review's confirm batches into one usage share", () => {
+    const usage = (costUsd: number): RunUsage => ({ inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd, turns: 1, durationMs: 1, models: [] });
+    const html = reportFor(ticketResult({ runs: [
+      { stage: "fix-review-confirm-1", usage: usage(1) },
+      { stage: "fix-review-confirm-2", usage: usage(1) },
+      { stage: "fix-review-2-confirm-1", usage: usage(1) },
+      { stage: "fix-review-2-confirm-2", usage: usage(1) },
+    ] }));
+    expect(html).toContain("fix-review-confirm 50% · fix-review-2-confirm 50%");
+    expect(html).not.toContain("confirm-1");
+  });
+
+  it("labels a finding from the fix review", () => {
+    const html = reportFor(ticketResult({ review: {
+      ...base,
+      findings: [...base.findings, { id: "R2", from: "F1", severity: "major", file: "b.ts", issue: "Two.", suggestion: "s" }],
+      fixReviews: [{ round: 1, outcome: "reviewed", files: 2, candidates: 2 }],
+      candidates: fixerCandidates,
+    } }));
+    expect(html).toContain("(from F1 · fixer's changes)");
+  });
+
+  it("shows a skipped or failed fix review with its reason", () => {
+    const skipped = reportFor(ticketResult({ review: { ...base, fixReviews: [{ round: 1, outcome: "skipped", reason: "budget cap reached", files: 0, candidates: 0 }] } }));
+    expect(skipped).toContain("Fix review: round 1 skipped (budget cap reached)");
+    const failed = reportFor(ticketResult({ review: { ...base, fixReviews: [{ round: 1, outcome: "reviewed", files: 1, candidates: 0 }, { round: 2, outcome: "failed", reason: "no block <x>", files: 1, candidates: 0 }] } }));
+    expect(failed).toContain("round 2 failed (no block &lt;x&gt;)");
+  });
+
+  it("still renders a record with verification and no fixReviews as before", () => {
+    const old = reportFor(ticketResult({ review: { ...base, verification: { outcome: "skipped", reason: "budget cap reached", results: [] } } }));
+    expect(old).toContain("Fix verification skipped: budget cap reached");
+    expect(old).not.toContain("Fix review:");
+    const current = reportFor(ticketResult({ review: {
+      ...base,
+      fixReviews: [{ round: 1, outcome: "reviewed", files: 1, candidates: 0 }],
+      verification: { outcome: "skipped", reason: "budget cap reached", results: [] },
+    } }));
+    expect(current).not.toContain("Fix verification");
+  });
+});
+
 describe("reportBase", () => {
   it("is the report filename without its extension", () => {
     expect(reportBase("2026-10-01", name => name === "nightshift-2026-10-01.html")).toBe("nightshift-2026-10-01-2");

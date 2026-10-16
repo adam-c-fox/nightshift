@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { lensLabel } from "./types.js";
-import type { CheckRecord, FixResolution, FixVerification, LensRun, ReviewFinding, RunRecord, RunUsage, SessionPostmortem, SessionResult, TicketConflict, TicketResult, TicketReview, VerifyResult } from "./types.js";
+import type { CheckRecord, Confirmation, FixResolution, FixReviewRun, FixVerification, LensRun, ReviewFinding, RunRecord, RunUsage, SessionPostmortem, SessionResult, TicketConflict, TicketResult, TicketReview, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
 
@@ -83,7 +83,7 @@ function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefin
   return `<li class="finding">
            <div class="finding-head">
              <span class="sev sev-${finding.severity}">${finding.severity}</span>
-             <span class="finding-id">${esc(finding.id)}</span>${finding.from ? `<span class="finding-from">(from ${esc(finding.from)})</span>` : ""}
+             <span class="finding-id">${esc(finding.id)}</span>${finding.from ? `<span class="finding-from">(from ${esc(finding.from)}${finding.from.startsWith("F") ? " · fixer's changes" : ""})</span>` : ""}
              <code class="finding-file">${esc(finding.file)}</code>
            </div>
            <div>${prose(finding.issue)}</div>
@@ -145,8 +145,13 @@ const LENS_MARK: Record<LensRun["outcome"], (l: LensRun) => string> = {
   failed: l => `${lensLabel(l.lens, l.pass)} failed (${l.reason ?? ""})`,
 };
 
-function candidateTally(review: TicketReview): string {
-  const candidates = review.candidates ?? [];
+const FIX_REVIEW_MARK: Record<FixReviewRun["outcome"], (f: FixReviewRun) => string> = {
+  reviewed: f => `round ${f.round} ✓${f.confirmation && f.confirmation.outcome !== "confirmed" ? ` (confirm ${f.confirmation.outcome}${f.confirmation.reason ? `: ${f.confirmation.reason}` : ""})` : ""}`,
+  skipped: f => `round ${f.round} skipped (${f.reason ?? ""})`,
+  failed: f => `round ${f.round} failed (${f.reason ?? ""})`,
+};
+
+function candidateTally(candidates: NonNullable<TicketReview["candidates"]>, confirmation?: Confirmation): string {
   if (candidates.length === 0) return "";
   const count = (...verdicts: string[]) => candidates.filter(c => c.verdict && verdicts.includes(c.verdict.verdict)).length;
   const judged = candidates.filter(c => c.verdict).length;
@@ -161,18 +166,24 @@ function candidateTally(review: TicketReview): string {
     ...(overturned > 0 ? [`${overturned} rejection${overturned === 1 ? "" : "s"} overturned`] : []),
     ...(judged < candidates.length ? [`${candidates.length - judged} unconfirmed`] : []),
   ];
-  const batches = review.confirmation?.batches ?? [];
+  const batches = confirmation?.batches ?? [];
   const unsettled = batches.filter(b => b.outcome !== "confirmed").length;
   const batchNote = batches.length > 1 || unsettled > 0
     ? ` · confirm in ${batches.length} batches${unsettled > 0 ? ` (${unsettled} failed or skipped)` : ""}`
     : "";
-  const dedupeNote = review.confirmation?.dedupe?.outcome === "failed" ? " · dedupe failed" : "";
+  const dedupeNote = confirmation?.dedupe?.outcome === "failed" ? " · dedupe failed" : "";
   return ` · ${candidates.length} candidates → ${parts.join(", ")}${batchNote}${dedupeNote}`;
 }
 
 function stagesHTML(review: TicketReview): string {
   if (!review.lenses || review.lenses.length === 0) return "";
-  return `<div class="review review-stages">Review: ${review.lenses.map(l => esc(LENS_MARK[l.outcome](l))).join(" · ")}${candidateTally(review)}</div>`;
+  return `<div class="review review-stages">Review: ${review.lenses.map(l => esc(LENS_MARK[l.outcome](l))).join(" · ")}${candidateTally((review.candidates ?? []).filter(c => c.lens !== "fixer"), review.confirmation)}</div>`;
+}
+
+function fixReviewsHTML(review: TicketReview): string {
+  if (!review.fixReviews || review.fixReviews.length === 0) return "";
+  const fixerCandidates = (review.candidates ?? []).filter(c => c.lens === "fixer");
+  return `<div class="review review-stages">Fix review: ${review.fixReviews.map(f => esc(FIX_REVIEW_MARK[f.outcome](f))).join(" · ")}${candidateTally(fixerCandidates)}</div>`;
 }
 
 function droppedHTML(review: TicketReview): string {
@@ -201,12 +212,12 @@ function reviewHTML(t: TicketResult): string {
   }
   const details = `${droppedHTML(review)}${rulingsHTML(review)}`;
   if (review.findings.length === 0) {
-    return `<div class="review"><strong>Review: no issues found</strong></div>${stagesHTML(review)}${conflictsHTML(review)}${details}${risksHTML(t)}`;
+    return `<div class="review"><strong>Review: no issues found</strong></div>${stagesHTML(review)}${fixReviewsHTML(review)}${conflictsHTML(review)}${details}${risksHTML(t)}`;
   }
   const items = review.findings.map(f => findingHTML(f, review.resolutions.find(r => r.id === f.id), review.verification)).join("");
   const v = review.verification;
-  const verifyLine = v && v.outcome !== "verified" ? `<div class="review review-${v.outcome}">Fix verification ${v.outcome}: ${esc(v.reason ?? "")}</div>` : "";
-  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong></div>${stagesHTML(review)}${conflictsHTML(review)}<div class="review"><ul class="findings">${items}</ul></div>${details}${verifyLine}${risksHTML(t)}`;
+  const verifyLine = v && v.outcome !== "verified" && !review.fixReviews?.length ? `<div class="review review-${v.outcome}">Fix verification ${v.outcome}: ${esc(v.reason ?? "")}</div>` : "";
+  return `<div class="review"><strong>Review: ${review.findings.length} issue(s) found</strong></div>${stagesHTML(review)}${fixReviewsHTML(review)}${conflictsHTML(review)}<div class="review"><ul class="findings">${items}</ul></div>${details}${verifyLine}${risksHTML(t)}`;
 }
 
 const postmortemProblem = (pm: SessionPostmortem): string | undefined =>
@@ -260,7 +271,7 @@ const costLabel = (totals: UsageTotals): string => `$${totals.cost.toFixed(2)}`;
 const unmeasuredNote = (totals: UsageTotals): string =>
   totals.unmeasured > 0 ? ` · ${totals.unmeasured} run${totals.unmeasured === 1 ? "" : "s"} unmeasured` : "";
 
-const shareOf = (stage: string): string => stage.replace(/^review-confirm-\d+$/, "review-confirm");
+const shareOf = (stage: string): string => stage.replace(/^((?:fix-)?review(?:-2)?-confirm)-\d+$/, "$1");
 
 function stageShares(runs: RunRecord[], cost: number): string {
   if (cost <= 0) return "";
