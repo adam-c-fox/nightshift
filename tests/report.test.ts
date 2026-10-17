@@ -253,7 +253,7 @@ describe("report fix review", () => {
       fixReviews: [{ round: 1, outcome: "reviewed", files: 2, candidates: 2 }],
       candidates: [candidate("B1", { verdict: { id: "B1", verdict: "confirmed", note: "n" } }), ...fixerCandidates],
     } }));
-    expect(html).toContain("Review: bugs ✓ · 1 candidates → 1 confirmed, 0 unproven, 0 dropped</div>");
+    expect(html).toContain("Review: bugs ✓ · 1 candidate → 1 confirmed, 0 unproven, 0 dropped</div>");
     expect(html).toContain("Fix review: round 1 ✓ · 2 candidates → 1 confirmed, 0 unproven, 1 dropped</div>");
   });
 
@@ -269,7 +269,7 @@ describe("report fix review", () => {
       ],
       confirmation: { outcome: "partial", batches: [{ n: 1, ids: ["B1"], outcome: "confirmed" }, { n: 2, ids: ["B2"], outcome: "failed", reason: "x" }] },
     } }));
-    expect(html).toContain("Review: bugs ✓ · 1 candidates → 1 confirmed, 0 unproven, 0 dropped · confirm in 2 batches (1 failed or skipped)</div>");
+    expect(html).toContain("Review: bugs ✓ · 1 candidate → 1 confirmed, 0 unproven, 0 dropped · confirm in 2 batches (1 failed or skipped)</div>");
     expect(html).toContain("Fix review: round 1 ✓ · 2 candidates → 1 confirmed, 1 ticket conflict, 0 unproven, 0 dropped</div>");
   });
 
@@ -574,6 +574,16 @@ describe("report review stages", () => {
     expect(bare).not.toContain("The ticket asks for:");
   });
 
+  it("drops the double quotes from a ticket line only when they wrap the whole line", () => {
+    const quoteOf = (ticket: string) => reportFor(ticketResult({ review: staged({ conflicts: [conflict({ ticket })] }) })).match(/<q>([\s\S]*?)<\/q>/)![1];
+    expect(quoteOf('"Drop rows with no id"')).toBe("Drop rows with no id");
+    expect(quoteOf("“Drop rows with no id”")).toBe("Drop rows with no id");
+    expect(quoteOf('""Drop""')).toBe("&quot;Drop&quot;");
+    expect(quoteOf('Map anything else as "other"')).toBe("Map anything else as &quot;other&quot;");
+    expect(quoteOf('"other" rows are dropped')).toBe("&quot;other&quot; rows are dropped");
+    expect(quoteOf("Drop rows with no id")).toBe("Drop rows with no id");
+  });
+
   it("shows a ticket's conflicts ahead of its findings", () => {
     const review = staged({
       conflicts: [conflict()],
@@ -623,6 +633,14 @@ describe("report review stages", () => {
       confirmation: { outcome: "partial", batches: [{ n: 1, ids: ["B1"], outcome: "confirmed" }, { n: 2, ids: ["B2"], outcome: "skipped", reason: "budget" }] },
     }) }));
     expect(html).toContain("2 candidates → 1 confirmed, 0 unproven, 0 dropped, 1 unconfirmed · confirm in 2 batches (1 failed or skipped)");
+  });
+
+  it("says candidate in the singular for a single candidate, judged or not", () => {
+    const judged = reportFor(ticketResult({ review: staged({ candidates: [candidate("B1", { verdict: verdict("B1", "confirmed") })] }) }));
+    expect(judged).toContain("1 candidate → 1 confirmed, 0 unproven, 0 dropped");
+    const unjudged = reportFor(ticketResult({ review: staged({ candidates: [candidate("B1")] }) }));
+    expect(unjudged).toContain("1 candidate → unconfirmed");
+    expect(unjudged).not.toContain("1 candidates");
   });
 
   it("counts overturned rejections that became ticket conflicts", () => {

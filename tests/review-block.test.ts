@@ -25,6 +25,34 @@ findings:
     ]);
   });
 
+  it("unescapes quotes and backslashes in a double-quoted value", () => {
+    const output = `---REVIEW---
+findings:
+  - id: R1
+    severity: minor
+    file: src/log.ts
+    issue: "logs extension \\"jones\\" verbatim in C:\\\\tmp"
+    suggestion: Fix.
+---
+`;
+    expect(parseReviewBlock(output).findings[0].issue).toBe('logs extension "jones" verbatim in C:\\tmp');
+  });
+
+  it("leaves a single-quoted or unquoted value exactly as written", () => {
+    const output = `---REVIEW---
+findings:
+  - id: R1
+    severity: minor
+    file: src/log.ts
+    issue: 'logs extension \\"jones\\" in C:\\\\tmp'
+    suggestion: Log \\"jones\\" in C:\\\\tmp
+---
+`;
+    const [finding] = parseReviewBlock(output).findings;
+    expect(finding.issue).toBe('logs extension \\"jones\\" in C:\\\\tmp');
+    expect(finding.suggestion).toBe('Log \\"jones\\" in C:\\\\tmp');
+  });
+
   it("accepts an explicitly empty list", () => {
     expect(parseReviewBlock("---REVIEW---\nfindings: []\n---\n").findings).toEqual([]);
   });

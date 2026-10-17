@@ -273,7 +273,8 @@ const SEVERITIES: Severity[] = ["blocker", "major", "minor"];
 function unquote(value: string): string {
   const v = value.trim();
   const quoted = v.match(/^(["'])([\s\S]*)\1$/);
-  return quoted ? quoted[2] : v;
+  if (!quoted) return v;
+  return quoted[1] === '"' ? quoted[2].replace(/\\(["\\])/g, "$1") : quoted[2];
 }
 
 function groupByTopLevelKey(lines: string[]): Map<string, string[]> {

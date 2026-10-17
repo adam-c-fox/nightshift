@@ -94,7 +94,7 @@ function findingHTML(finding: ReviewFinding, resolution: FixResolution | undefin
 
 function conflictHTML(c: TicketConflict, ticketId?: string): string {
   const asks = c.ticket
-    ? `The ticket asks for: <q>${esc(c.ticket)}</q>${c.quoted ? "" : ` <span class="unverified">not found verbatim in the ticket</span>`}`
+    ? `The ticket asks for: <q>${esc(c.ticket.replace(/^["“”]([\s\S]*)["“”]$/, "$1"))}</q>${c.quoted ? "" : ` <span class="unverified">not found verbatim in the ticket</span>`}`
     : `<span class="unverified">no ticket line quoted</span>`;
   return `<div class="finding conflict">
            <div class="finding-head">${ticketId ? `<a class="ticket-id" href="#ticket-${esc(ticketId)}">${esc(ticketId)}</a>` : ""}<code class="finding-file">${esc(c.file)}</code>${c.data ? `<span class="data-risk">recorded data</span>` : ""}</div>
@@ -153,9 +153,10 @@ const FIX_REVIEW_MARK: Record<FixReviewRun["outcome"], (f: FixReviewRun) => stri
 
 function candidateTally(candidates: NonNullable<TicketReview["candidates"]>, confirmation?: Confirmation): string {
   if (candidates.length === 0) return "";
+  const total = `${candidates.length} candidate${candidates.length === 1 ? "" : "s"}`;
   const count = (...verdicts: string[]) => candidates.filter(c => c.verdict && verdicts.includes(c.verdict.verdict)).length;
   const judged = candidates.filter(c => c.verdict).length;
-  if (judged === 0) return ` · ${candidates.length} candidates → unconfirmed`;
+  if (judged === 0) return ` · ${total} → unconfirmed`;
   const conflicts = count("ticket_conflict");
   const overturned = candidates.filter(c => c.verdict?.adjusted?.from === "rejected").length;
   const parts = [
@@ -172,7 +173,7 @@ function candidateTally(candidates: NonNullable<TicketReview["candidates"]>, con
     ? ` · confirm in ${batches.length} batches${unsettled > 0 ? ` (${unsettled} failed or skipped)` : ""}`
     : "";
   const dedupeNote = confirmation?.dedupe?.outcome === "failed" ? " · dedupe failed" : "";
-  return ` · ${candidates.length} candidates → ${parts.join(", ")}${batchNote}${dedupeNote}`;
+  return ` · ${total} → ${parts.join(", ")}${batchNote}${dedupeNote}`;
 }
 
 function stagesHTML(review: TicketReview): string {
