@@ -549,14 +549,14 @@ describe("reviewAndFix confirmation", () => {
 
   it("runs dedupe before the first batch and saves it as review-dedupe", async () => {
     const { calls, run } = harness({
-      find: async () => manyFindings(3),
+      find: async () => manyFindings(5),
       dedupe: dedupeGroups([{ keep: "B1", same: ["B3"] }]),
       fix: async () => fixed([]),
     });
     const outcome = await run();
-    expect(calls.dedupe[0].map(c => c.id)).toEqual(["B1", "B2", "B3"]);
+    expect(calls.dedupe[0].map(c => c.id)).toEqual(["B1", "B2", "B3", "B4", "B5"]);
     expect(calls.saved.indexOf("review-dedupe:dedupe out")).toBeLessThan(calls.saved.indexOf("review-confirm-1:confirm out"));
-    expect(calls.logged).toContain("  Grouping 3 candidate(s)");
+    expect(calls.logged).toContain("  Grouping 5 candidate(s)");
     expect(outcome.review.confirmation).toMatchObject({ dedupe: { outcome: "grouped", merged: 1 } });
   });
 
@@ -574,31 +574,38 @@ describe("reviewAndFix confirmation", () => {
 
   it("confirms without groups and without needs_review when dedupe fails", async () => {
     const { calls, run } = harness({
-      find: async () => manyFindings(2),
+      find: async () => manyFindings(5),
       dedupe: async () => ({ success: false, rawOutput: "", failure: "claude exited with status 1" }),
       fix: async () => fixed([]),
     });
     const outcome = await run();
-    expect(calls.batches[0].candidates.map(c => c.id)).toEqual(["B1", "B2"]);
+    expect(calls.batches[0].candidates.map(c => c.id)).toEqual(["B1", "B2", "B3", "B4"]);
     expect(calls.batches[0].groupedWith).toEqual({});
     expect(calls.logged).toContain("  Dedupe failed: claude exited with status 1");
     expect(outcome.review.confirmation).toMatchObject({ outcome: "confirmed", dedupe: { outcome: "failed", reason: "claude exited with status 1", merged: 0 } });
-    expect(outcome.notes).toEqual([`Review found 2 issue(s); 0 fixed.`]);
+    expect(outcome.notes).toEqual([`Review found 5 issue(s); 0 fixed.`]);
     expect(outcome.needsReview).toBe(true);
   });
 
-  it("does not run dedupe for a single candidate", async () => {
-    const { calls, run } = harness({ find: async () => manyFindings(1), dedupe: dedupeGroups([]) });
+  it("does not run dedupe when every candidate fits in one batch", async () => {
+    const { calls, run } = harness({ find: async () => manyFindings(4), dedupe: dedupeGroups([]) });
     const outcome = await run();
     expect(calls.dedupe).toHaveLength(0);
     expect(outcome.review.confirmation?.dedupe).toBeUndefined();
+  });
+
+  it("runs dedupe once the candidates no longer fit in one batch", async () => {
+    const { calls, run } = harness({ find: async () => manyFindings(5), dedupe: dedupeGroups([]) });
+    const outcome = await run();
+    expect(calls.dedupe).toHaveLength(1);
+    expect(outcome.review.confirmation?.dedupe).toMatchObject({ outcome: "grouped", merged: 0 });
   });
 
   it("stops without publishing when dedupe changes the worktree", async () => {
     let snap = "same";
     const { calls, run } = harness({
       snapshot: () => snap,
-      find: async () => manyFindings(2),
+      find: async () => manyFindings(5),
       dedupe: async () => { snap = "changed"; return { success: true, rawOutput: "dedupe out", groups: [] }; },
     });
     const outcome = await run();
@@ -765,7 +772,7 @@ describe("reviewAndFix ticket conflicts", () => {
     expect(outcome.review.findings).toEqual([]);
     expect(outcome.review.conflicts).toEqual([{
       from: "B1", file: "src/a.ts", ticket: "Rows must never be dropped silently.", quoted: true,
-      consequence: "the guard drops rows", change: "return an error instead", data: false, evidence: "src/a.ts:2",
+      consequence: "Problem R1.", change: "return an error instead", data: false, evidence: "src/a.ts:2",
     }]);
   });
 
@@ -781,9 +788,9 @@ describe("reviewAndFix ticket conflicts", () => {
     expect((await run()).review.conflicts?.[0].quoted).toBe(false);
   });
 
-  it("names no change when the conflict suggests none", async () => {
+  it("records no change when the conflict suggests none", async () => {
     const { run } = withConflict({ change: undefined });
-    expect((await run()).review.conflicts?.[0].change).toBe("no change suggested");
+    expect((await run()).review.conflicts?.[0]).not.toHaveProperty("change");
   });
 });
 

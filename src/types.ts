@@ -144,7 +144,7 @@ export interface TicketConflict {
   ticket: string;
   quoted: boolean;
   consequence: string;
-  change: string;
+  change?: string;
   data: boolean;
   evidence?: string;
 }

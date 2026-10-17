@@ -401,7 +401,7 @@ export function parseConfirmBlock(output: string): CandidateVerdict[] {
       ...(r.duplicate_of ? { duplicateOf: r.duplicate_of } : {}),
       ...(SEVERITIES.includes(r.severity as Severity) ? { severity: r.severity as Severity } : {}),
       ...(r.data ? { data: isYes(r.data) } : {}),
-      ...(r.happens ? { happens: isYes(r.happens) } : {}),
+      ...(r.happens ? { happens: !/^(no|false)$/i.test(r.happens) } : {}),
       ...(r.evidence ? { evidence: r.evidence } : {}),
       ...(r.code ? { code: r.code } : {}),
       ...(r.ticket ? { ticket: r.ticket } : {}),
@@ -418,7 +418,7 @@ export interface DedupeGroup {
 export function parseDedupeBlock(output: string): DedupeGroup[] {
   return parseRecords(extractBlock(output, DEDUPE_START), ["keep", "same"])
     .filter(r => r.keep)
-    .map((r): DedupeGroup => ({ keep: r.keep, same: (r.same ?? "").split(/[\s,]+/).filter(id => id !== "") }))
+    .map((r): DedupeGroup => ({ keep: r.keep, same: (r.same ?? "").split(/[\s,[\]]+/).filter(id => id !== "") }))
     .filter(g => g.same.length > 0);
 }
 

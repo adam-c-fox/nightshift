@@ -100,7 +100,7 @@ function conflictHTML(c: TicketConflict, ticketId?: string): string {
            <div class="finding-head">${ticketId ? `<a class="ticket-id" href="#ticket-${esc(ticketId)}">${esc(ticketId)}</a>` : ""}<code class="finding-file">${esc(c.file)}</code>${c.data ? `<span class="data-risk">recorded data</span>` : ""}</div>
            <div>${asks}</div>
            <div>${prose(c.consequence)}</div>
-           <div class="finding-suggestion">Suggested change: ${prose(c.change)}</div>
+           ${c.change ? `<div class="finding-suggestion">Suggested change: ${prose(c.change)}</div>` : ""}
          </div>`;
 }
 

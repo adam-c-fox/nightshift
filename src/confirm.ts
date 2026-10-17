@@ -61,7 +61,6 @@ export function batchGroups(groups: Group[], size = CONFIRM_BATCH): ConfirmBatch
 }
 
 export function readCited(root: string, file: string): string | undefined {
-  if (path.isAbsolute(file)) return undefined;
   const resolvedRoot = path.resolve(root);
   const resolved = path.resolve(resolvedRoot, file);
   if (!resolved.startsWith(resolvedRoot + path.sep)) return undefined;
@@ -80,7 +79,7 @@ export function citationHolds(evidence: string | undefined, code: string | undef
   if (!evidence?.trim() || !code?.trim()) return "missing";
   const cleaned = squash(code).replace(/^`+|`+$/g, "").trim();
   if (cleaned.replace(/\s/g, "").length < 8) return "missing";
-  const match = /^([^\s:]+):(\d+)(?:-(\d+))?$/.exec(evidence.trim().replace(/^[`'"]+|[`'"]+$/g, ""));
+  const match = /^([^\s:]+):L?(\d+)(?:-L?(\d+))?$/.exec(evidence.trim().replace(/^[`'"]+|[`'"]+$/g, ""));
   if (!match) return "unreadable";
   const text = source(match[1]);
   if (text === undefined) return "unreadable";
@@ -93,7 +92,7 @@ export function citationHolds(evidence: string | undefined, code: string | undef
 }
 
 export const ticketText = (brief: TicketBrief): string =>
-  [brief.linearDesc, ...brief.linearComments.map(c => c.body), ...brief.context].join("\n");
+  [brief.ticketName, brief.linearDesc, ...brief.linearComments.map(c => c.body), ...brief.context].join("\n");
 
 const normaliseTicket = (s: string): string =>
   unescapeQuotes(s).replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
@@ -167,8 +166,8 @@ export function sortVerdicts(candidates: RecordedCandidate[], firstFinding = 1):
     else if (v.verdict === "unproven") risks.push(toRisk(c, v.data ?? c.data));
     else if (v.verdict === "ticket_conflict") {
       conflicts.push({
-        from: c.id, file: c.file, ticket: v.ticket ?? "", quoted: v.quoted ?? false, consequence: v.adjusted ? c.issue : v.note || c.issue,
-        change: v.change || "no change suggested", data: v.data ?? c.data,
+        from: c.id, file: c.file, ticket: v.ticket ?? "", quoted: v.quoted ?? false, consequence: c.issue, data: v.data ?? c.data,
+        ...(v.change ? { change: v.change } : {}),
         ...(v.citation === "holds" && v.evidence ? { evidence: v.evidence } : {}),
       });
     }
@@ -185,7 +184,7 @@ export async function confirmAll(candidates: ReviewCandidate[], deps: ConfirmDep
 
   let groups: Group[] = candidates.map(c => ({ keep: c, same: [] }));
   let dedupe: Confirmation["dedupe"];
-  if (deps.dedupe && candidates.length >= 2) {
+  if (deps.dedupe && candidates.length > CONFIRM_BATCH) {
     const before = deps.snapshot();
     deps.log(`  Grouping ${candidates.length} candidate(s)`);
     const run = await deps.dedupe(candidates);

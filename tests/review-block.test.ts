@@ -170,6 +170,11 @@ describe("parseConfirmBlock", () => {
     expect("happens" in u3).toBe(false);
   });
 
+  it("treats a happens value that is not a bare no or false as true", () => {
+    const block = "---CONFIRM---\n- id: U1\n  verdict: rejected\n  happens: yes, but only on empty input\n  note: a\n- id: U2\n  verdict: rejected\n  happens: False\n  note: b\n---\n";
+    expect(parseConfirmBlock(block).map(v => v.happens)).toEqual([true, false]);
+  });
+
   it("treats an unknown verdict as unproven", () => {
     expect(parseConfirmBlock(output).find(v => v.id === "B3")?.verdict).toBe("unproven");
   });
@@ -213,6 +218,11 @@ describe("parseDedupeBlock", () => {
   it("parses each group's keeper and the ids it absorbs", () => {
     const output = "Grouped.\n\n---DEDUPE---\n- keep: S2\n  same: B1, B5\n- keep: B3\n  same: B12\n---\n";
     expect(parseDedupeBlock(output)).toEqual([{ keep: "S2", same: ["B1", "B5"] }, { keep: "B3", same: ["B12"] }]);
+  });
+
+  it("accepts a bracketed list of ids", () => {
+    expect(parseDedupeBlock("---DEDUPE---\n- keep: S2\n  same: [B1, B5]\n---\n")).toEqual([{ keep: "S2", same: ["B1", "B5"] }]);
+    expect(parseDedupeBlock("---DEDUPE---\n- keep: S2\n  same: [B1]\n---\n")).toEqual([{ keep: "S2", same: ["B1"] }]);
   });
 
   it("is empty when the block lists no group", () => {

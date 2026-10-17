@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { batchGroups, citationHolds, groupCandidates, readCited, sortVerdicts, ticketQuoted, type Group } from "../src/confirm.js";
-import type { RecordedCandidate, ReviewCandidate } from "../src/types.js";
+import { parseConfirmBlock, type TicketBrief } from "../src/claude.js";
+import { batchGroups, citationHolds, groupCandidates, judgeBatch, readCited, sortVerdicts, ticketQuoted, ticketText, type Group } from "../src/confirm.js";
+import type { CandidateVerdict, RecordedCandidate, ReviewCandidate } from "../src/types.js";
 
 const candidate = (id: string, file = "src/a.ts"): ReviewCandidate =>
   ({ id, lens: "bugs", kind: "finding", severity: "major", confidence: "proven", file, issue: `Problem ${id}.`, suggestion: `Fix ${id}.`, data: false });
@@ -85,6 +86,12 @@ describe("citationHolds", () => {
     expect(citationHolds("src/a.ts:4-3", code, source)).toBe("unreadable");
   });
 
+  it("reads a line reference with L-prefixed numbers", () => {
+    expect(citationHolds("src/a.ts:L2", code, source)).toBe("holds");
+    expect(citationHolds("src/a.ts:L3-L4", "const value = compute(input); return value;", source)).toBe("holds");
+    expect(citationHolds("src/a.ts:L2-4", code, source)).toBe("holds");
+  });
+
   it("is a mismatch when the code is not near the cited line", () => {
     expect(citationHolds("src/a.ts:7", code, source)).toBe("mismatch");
     expect(citationHolds("src/a.ts:2", "return somethingElse(input);", source)).toBe("mismatch");
@@ -105,10 +112,15 @@ describe("readCited", () => {
     expect(readCited(root, "src/a.ts")).toBe("const a = 1;\n");
   });
 
-  it("refuses an absolute path or one that leaves the worktree", () => {
-    expect(readCited(root, path.join(root, "src", "a.ts"))).toBeUndefined();
+  it("reads an absolute path inside the worktree", () => {
+    expect(readCited(root, path.join(root, "src", "a.ts"))).toBe("const a = 1;\n");
+  });
+
+  it("refuses a path that leaves the worktree, absolute or not", () => {
     expect(readCited(root, "../outside.ts")).toBeUndefined();
     expect(readCited(root, "src/../../outside.ts")).toBeUndefined();
+    expect(readCited(root, path.join(path.dirname(root), "outside.ts"))).toBeUndefined();
+    expect(readCited(root, "/etc/hosts")).toBeUndefined();
   });
 
   it("is undefined for a missing file", () => {
@@ -134,10 +146,50 @@ describe("ticketQuoted", () => {
   });
 });
 
+describe("ticketText", () => {
+  const brief: TicketBrief = {
+    ticketId: "ENG-1", ticketName: "Never drop rows silently", context: ["Keep the CSV header"], linearDesc: "Export as CSV.",
+    linearComments: [{ author: "a", createdAt: "2026-01-01", body: "Stream it row by row." }], linearUrl: "", state: "In Progress",
+  };
+
+  it("includes the title, the description, the comments and the operator context", () => {
+    for (const line of ["Never drop rows silently", "Export as CSV.", "Stream it row by row.", "Keep the CSV header"]) expect(ticketQuoted(line, ticketText(brief))).toBe(true);
+  });
+});
+
+describe("judgeBatch", () => {
+  const source = () => "const a = 1;\nif (!input.length) return [];\nconst b = 2;\n";
+  const batch = { n: 1, candidates: [candidate("B1")], groupedWith: {} };
+
+  it("overturns a rejection whose happens admits the behaviour with a qualifier", () => {
+    const verdicts = parseConfirmBlock(
+      '---CONFIRM---\n- id: B1\n  verdict: rejected\n  happens: yes, but only on empty input\n  evidence: src/a.ts:2\n  code: "if (!input.length) return [];"\n  note: Guarded.\n---\n');
+    const [judged] = judgeBatch(batch, verdicts, source, "");
+    expect(judged.verdict).toMatchObject({ verdict: "unproven", citation: "holds", adjusted: { from: "rejected" } });
+  });
+});
+
 describe("sortVerdicts", () => {
   it("numbers findings from the given start", () => {
     const confirmed = (id: string): RecordedCandidate => ({ ...candidate(id), verdict: { id, verdict: "confirmed", note: "" } });
     const { findings } = sortVerdicts([confirmed("B1"), confirmed("B2")], 3);
     expect(findings.map(f => `${f.id}:${f.from}`)).toEqual(["R3:B1", "R4:B2"]);
+  });
+
+  const conflict = (over: Partial<CandidateVerdict> = {}): RecordedCandidate =>
+    ({ ...candidate("B1"), verdict: { id: "B1", verdict: "ticket_conflict", ticket: "Rows must never be dropped", quoted: true, note: "the reviewer reasoned about the verdict", ...over } });
+
+  it("reports a conflict's consequence from the candidate's issue, never from the verdict note", () => {
+    const { conflicts } = sortVerdicts([conflict({ change: "Return an error instead" })]);
+    expect(conflicts).toMatchObject([{ from: "B1", consequence: "Problem B1.", change: "Return an error instead" }]);
+  });
+
+  it("leaves the change out of a conflict that has none", () => {
+    const [direct] = sortVerdicts([conflict()]).conflicts;
+    const [overturned] = sortVerdicts([conflict({ adjusted: { from: "rejected" } })]).conflicts;
+    for (const c of [direct, overturned]) {
+      expect(c).not.toHaveProperty("change");
+      expect(c.consequence).toBe("Problem B1.");
+    }
   });
 });

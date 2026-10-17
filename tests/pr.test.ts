@@ -132,6 +132,18 @@ describe("buildPrDescription", () => {
     expect(text).not.toContain("The ticket asks for");
   });
 
+  it("leaves out the ticket sentence when the quoted line was not found in the ticket", () => {
+    const text = buildPrDescription("ENG-1", "Done.", [], undefined, [], undefined, [{ ...conflicts[0], quoted: false }]);
+    expect(text).toContain("- `src/export.ts`: Silently loses records. Suggested change: Keep them and flag them.");
+    expect(text).not.toContain("The ticket asks for");
+  });
+
+  it("leaves out the suggested change when there is none", () => {
+    const text = buildPrDescription("ENG-1", "Done.", [], undefined, [], undefined, [{ ...conflicts[0], change: undefined }]);
+    expect(text).toContain('- `src/export.ts`: The ticket asks for "Drop rows with no id". Silently loses records.');
+    expect(text).not.toMatch(/Suggested change|undefined|no change/);
+  });
+
   it("omits the decision section without conflicts", () => {
     expect(buildPrDescription("ENG-1", "Done.", [], undefined, [], undefined, [])).not.toContain("decision");
     expect(text).not.toContain("decision");

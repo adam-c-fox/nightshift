@@ -119,7 +119,7 @@ export function buildPrDescription(
   const ticket = ticketUrl ? `[${ticketId}](${ticketUrl})` : ticketId;
   const needsDecision = conflicts.length > 0
     ? ["", "Needs a decision before merge:", ...conflicts.map(c =>
-        `- \`${c.file}\`: ${c.ticket ? `The ticket asks for "${c.ticket}". ` : ""}${sentence(c.consequence)} Suggested change: ${sentence(c.change)}`)]
+        `- \`${c.file}\`: ${c.ticket && c.quoted ? `The ticket asks for "${c.ticket}". ` : ""}${sentence(c.consequence)}${c.change ? ` Suggested change: ${sentence(c.change)}` : ""}`)]
     : [];
   const worthALook = risks.length > 0
     ? ["", "Worth a closer look:", ...risks.map(r => `- \`${r.file}\`: ${r.risk}`)]

@@ -99,7 +99,7 @@ function summaryText(found: FindAndConfirmResult, runs: RunRecord[]): string {
     risks.length > 0 ? "Risks:" : "Risks: none",
     ...risks.map(r => `  ${r.file}${r.data ? " [data]" : ""}: ${r.risk}`),
     ...(record.conflicts?.length
-      ? ["Ticket conflicts:", ...record.conflicts.map(c => `  ${c.file}${c.data ? " [data]" : ""}: "${c.ticket}" -> ${c.change}${c.quoted ? "" : " (not found verbatim in the ticket)"}`)]
+      ? ["Ticket conflicts:", ...record.conflicts.map(c => `  ${c.file}${c.data ? " [data]" : ""}: "${c.ticket}"${c.change ? ` -> ${c.change}` : ""}${c.quoted ? "" : " (not found verbatim in the ticket)"}`)]
       : []),
     ...(overturned.length > 0 ? [`Rejections overturned: ${overturned.join(", ")}`] : []),
     ...(record.decisions?.length ? ["Rulings:", ...record.decisions.map(d => `  ${d.id} ${d.ruling}: ${d.reason}`)] : []),

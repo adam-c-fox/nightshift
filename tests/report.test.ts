@@ -445,6 +445,12 @@ describe("report review stages", () => {
     expect(top).not.toContain("not found verbatim");
   });
 
+  it("leaves out the suggested change when the conflict has none", () => {
+    const html = reportFor(ticketResult({ review: staged({ conflicts: [conflict({ change: undefined })] }) }));
+    expect(html).toContain("Silently loses records");
+    expect(html).not.toMatch(/Suggested change|undefined/);
+  });
+
   it("leaves out the decisions section when no ticket has a conflict", () => {
     const html = reportFor(ticketResult({ review: staged({ conflicts: [] }) }));
     expect(html).not.toContain('<section class="decisions"');

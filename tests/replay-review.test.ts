@@ -112,6 +112,12 @@ describe("replaySummary", () => {
     expect(withConflict).not.toContain("not found verbatim");
   });
 
+  it("prints a conflict without a change as just the ticket line", () => {
+    const withConflict = replaySummary({ ...found, record: { ...found.record, conflicts: [{ ...conflict, change: undefined }] } }, []);
+    expect(withConflict).toContain('  src/d.ts: "never retry"\n');
+    expect(withConflict).not.toMatch(/undefined|->/);
+  });
+
   it("flags a conflict whose ticket line was not found", () => {
     const withConflict = replaySummary({ ...found, record: { ...found.record, conflicts: [{ ...conflict, quoted: false }] } }, []);
     expect(withConflict).toContain('  src/d.ts: "never retry" -> retry once (not found verbatim in the ticket)');
