@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import type { ConfirmRunResult, DedupeGroup, DedupeRunResult, TicketBrief } from "./claude.js";
 import type {
@@ -61,10 +61,10 @@ export function batchGroups(groups: Group[], size = CONFIRM_BATCH): ConfirmBatch
 }
 
 export function readCited(root: string, file: string): string | undefined {
-  const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(resolvedRoot, file);
-  if (!resolved.startsWith(resolvedRoot + path.sep)) return undefined;
   try {
+    const realRoot = realpathSync(root);
+    const resolved = realpathSync(path.resolve(realRoot, file));
+    if (!resolved.startsWith(realRoot + path.sep)) return undefined;
     return readFileSync(resolved, "utf-8");
   } catch {
     return undefined;

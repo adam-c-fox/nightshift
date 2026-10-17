@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -114,6 +114,17 @@ describe("readCited", () => {
 
   it("reads an absolute path inside the worktree", () => {
     expect(readCited(root, path.join(root, "src", "a.ts"))).toBe("const a = 1;\n");
+  });
+
+  it("reads a real-path citation when the worktree is given through a symlinked directory", () => {
+    expect(readCited(root, path.join(realpathSync(root), "src", "a.ts"))).toBe("const a = 1;\n");
+  });
+
+  it("refuses a symlink inside the worktree that points outside it", () => {
+    const outside = mkdtempSync(path.join(tmpdir(), "confirm-outside-"));
+    writeFileSync(path.join(outside, "secret.ts"), "const secret = 1;\n");
+    symlinkSync(path.join(outside, "secret.ts"), path.join(root, "src", "link.ts"));
+    expect(readCited(root, "src/link.ts")).toBeUndefined();
   });
 
   it("refuses a path that leaves the worktree, absolute or not", () => {
