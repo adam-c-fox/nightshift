@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
+import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
 import { useProjectEnv } from "./env.js";
 import { fetchTicket } from "./linear.js";
 import { descriptionHash, upsertPrepRecord, type PrepRecord } from "./prep.js";
@@ -55,6 +56,22 @@ export function buildPrepRecord(
   };
 }
 
+export async function refreshDashboard(
+  fetchFn: typeof fetch = fetch,
+  origin: string = DASHBOARD_ORIGIN,
+): Promise<void> {
+  try {
+    await fetchFn(`${origin}/api/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Nightshift": "1" },
+      body: JSON.stringify({ what: "linear" }),
+      signal: AbortSignal.timeout(2_000),
+    });
+  } catch {
+    return;
+  }
+}
+
 async function main(): Promise<void> {
   try {
     const args = parsePrepMarkArgs(process.argv.slice(2));
@@ -69,6 +86,7 @@ async function main(): Promise<void> {
     if (!linear) throw new Error(`ticket ${args.id} not found in Linear`);
     const record = buildPrepRecord(args, linear.description, new Date());
     upsertPrepRecord(statePaths().prep, args.id, record);
+    await refreshDashboard();
     console.log(
       JSON.stringify({
         id: args.id,

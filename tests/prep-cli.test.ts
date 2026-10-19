@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { buildPrepRecord, parsePrepMarkArgs } from "../src/prep-mark.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  buildPrepRecord,
+  parsePrepMarkArgs,
+  refreshDashboard,
+} from "../src/prep-mark.js";
 import { prepStatusLines } from "../src/prep-status.js";
 import { descriptionHash, type PrepRecord } from "../src/prep.js";
 import type { TodoIssue } from "../src/linear.js";
@@ -110,6 +114,28 @@ describe("buildPrepRecord", () => {
       outcome: "not_ready",
       blockers: "x",
     });
+  });
+});
+
+describe("refreshDashboard", () => {
+  it("asks the dashboard to reload its Linear data", async () => {
+    const fetchFn = vi.fn(async () => new Response('{"ok":true}'));
+    await refreshDashboard(fetchFn, "http://127.0.0.1:4100");
+    expect(fetchFn).toHaveBeenCalledWith(
+      "http://127.0.0.1:4100/api/refresh",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Nightshift": "1" },
+        body: JSON.stringify({ what: "linear" }),
+      }),
+    );
+  });
+
+  it("resolves when the dashboard is not running", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(refreshDashboard(fetchFn)).resolves.toBeUndefined();
   });
 });
 
