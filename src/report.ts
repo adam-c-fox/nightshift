@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { lensLabel } from "./types.js";
-import type { CheckRecord, Confirmation, FixResolution, FixReviewRun, FixVerification, LensRun, ReviewFinding, RunRecord, RunUsage, SessionPostmortem, SessionResult, TicketConflict, TicketResult, TicketReview, VerifyResult } from "./types.js";
+import type { CheckRecord, Confirmation, FixResolution, FixReviewRun, FixVerification, LensRun, ReviewFinding, RunRecord, NightBudget, RunUsage, SessionPostmortem, SessionResult, TicketConflict, TicketResult, TicketReview, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
 
@@ -281,17 +281,25 @@ function stageShares(runs: RunRecord[], cost: number): string {
   return [...byStage].map(([stage, c]) => ` · ${esc(stage)} ${Math.round((c / cost) * 100)}%`).join("");
 }
 
+const isCodexRun = ({ stage }: RunRecord): boolean => /^review-codex(-\d+)?$/.test(stage);
+
 function usageHTML(t: TicketResult): string {
   if (!t.runs || t.runs.length === 0) return "";
-  const totals = usageTotals(t.runs);
-  return `<div class="usage">Usage: ${tokenSummary(totals)} · ${costLabel(totals)} API-equivalent${unmeasuredNote(totals)}${stageShares(t.runs, totals.cost)}</div>`;
+  const claudeRuns = t.runs.filter(r => !isCodexRun(r));
+  const codexRuns = t.runs.filter(isCodexRun);
+  const claude = claudeRuns.length === 0 ? "" : (totals => `<div class="usage">Usage: ${tokenSummary(totals)} · ${costLabel(totals)} API-equivalent${unmeasuredNote(totals)}${stageShares(claudeRuns, totals.cost)}</div>`)(usageTotals(claudeRuns));
+  const codex = codexRuns.length === 0 ? "" : `<div class="usage">Codex: ${tokenSummary(usageTotals(codexRuns))}</div>`;
+  return claude + codex;
 }
 
 function nightUsageStat(tickets: TicketResult[], postmortem?: SessionPostmortem): string {
   const runs = [...tickets.flatMap(t => t.runs ?? []), ...(postmortem?.usage ? [{ stage: "postmortem", usage: postmortem.usage }] : [])];
   if (runs.length === 0) return "";
-  const totals = usageTotals(runs);
-  return `<div class="stat night-usage"><strong>${costLabel(totals)}</strong>API-equivalent · ${tokenSummary(totals)}${unmeasuredNote(totals)}</div>`;
+  const claudeRuns = runs.filter(r => !isCodexRun(r));
+  const codexRuns = runs.filter(isCodexRun);
+  const totals = usageTotals(claudeRuns);
+  const codex = codexRuns.length === 0 ? "" : ` · Codex: ${tokenSummary(usageTotals(codexRuns))}`;
+  return `<div class="stat night-usage"><strong>${costLabel(totals)}</strong>API-equivalent · ${tokenSummary(totals)}${unmeasuredNote(totals)}${codex}</div>`;
 }
 
 function ticketCardHTML(t: TicketResult): string {
@@ -401,15 +409,42 @@ export const ACTIONED_SCRIPT = `(() => {
   openTarget(location.hash);
 })();`;
 
-export function generateHTML(session: SessionResult): string {
-  const counts = countTickets(session.tickets);
-  const b = session.budget;
+function budgetBarHTML(label: string, b: NightBudget, gateBanner = ""): string {
   const used = budgetUsedPct(b);
   const pctColor = b.currentPct >= b.capPct ? "#ef4444" : b.currentPct >= b.capPct - 3 ? "#eab308" : "#22c55e";
   const fillWidth = Math.min(b.currentPct, 100);
   const startWidth = Math.min(Math.max(0, b.startPct), 100);
   const capLeft = Math.min(b.capPct, 100);
+  const effectiveAllocation = b.capPct - b.startPct;
+  const allocationLabel = effectiveAllocation < b.allocationPct
+    ? `${b.allocationPct}% requested, ${effectiveAllocation}% available`
+    : `${b.allocationPct}%`;
+  return b.unavailable
+    ? `
+    <div class="budget">
+      ${gateBanner || `<div class="budget-label">${esc(label)}: <strong>unavailable</strong></div>`}
+    </div>`
+    : `
+    <div class="budget">
+      <div class="budget-label">${esc(label)}: <strong>${allocationLabel}</strong> of weekly
+        ${b.resetInfo ? `<span class="budget-reset">resets ${esc(b.resetInfo)}</span>` : ""}
+      </div>
+      <div class="budget-track">
+        <div class="budget-fill" style="width:${fillWidth}%;background:${pctColor}"></div>
+        <div class="budget-start" style="left:${startWidth}%"></div>
+        <div class="budget-marker" style="left:${capLeft}%"></div>
+      </div>
+      <div class="budget-figures">
+        <span>Started at <strong>${Math.max(0, b.startPct)}%</strong></span>
+        <span>Ended at <strong>${b.currentPct}%</strong> (used ${used}% of ${effectiveAllocation < b.allocationPct ? effectiveAllocation : b.allocationPct}%)</span>
+        <span>Cap <strong>${b.capPct}%</strong></span>
+      </div>
+      ${gateBanner}
+    </div>`;
+}
 
+export function generateHTML(session: SessionResult): string {
+  const counts = countTickets(session.tickets);
   const pmProblem = session.postmortem && postmortemProblem(session.postmortem);
   const pmStat = !session.postmortem ? "" : pmProblem
     ? `<div class="stat postmortem-flag"><a href="#postmortem" style="color:inherit"><strong>⚠️</strong>${esc(pmProblem)}</a></div>`
@@ -425,32 +460,8 @@ export function generateHTML(session: SessionResult): string {
   const ticketErrorBanner = session.ticketError
     ? `<div class="gate-hit">⛔ Tickets could not be loaded: ${esc(session.ticketError)}</div>`
     : "";
-  const effectiveAllocation = b.capPct - b.startPct;
-  const allocationLabel = effectiveAllocation < b.allocationPct
-    ? `${b.allocationPct}% requested, ${effectiveAllocation}% available`
-    : `${b.allocationPct}%`;
-  const budgetBar = b.unavailable
-    ? `
-    <div class="budget">
-      ${gateBanner}
-    </div>`
-    : `
-    <div class="budget">
-      <div class="budget-label">Tonight's allocation: <strong>${allocationLabel}</strong> of weekly
-        ${b.resetInfo ? `<span class="budget-reset">resets ${esc(b.resetInfo)}</span>` : ""}
-      </div>
-      <div class="budget-track">
-        <div class="budget-fill" style="width:${fillWidth}%;background:${pctColor}"></div>
-        <div class="budget-start" style="left:${startWidth}%"></div>
-        <div class="budget-marker" style="left:${capLeft}%"></div>
-      </div>
-      <div class="budget-figures">
-        <span>Started at <strong>${Math.max(0, b.startPct)}%</strong></span>
-        <span>Ended at <strong>${b.currentPct}%</strong> (used ${used}% of ${effectiveAllocation < b.allocationPct ? effectiveAllocation : b.allocationPct}%)</span>
-        <span>Cap <strong>${b.capPct}%</strong></span>
-      </div>
-      ${gateBanner}
-    </div>`;
+  const budgetBar = budgetBarHTML("Tonight's allocation", session.budget, gateBanner)
+    + (session.codexBudget ? budgetBarHTML("Codex review allocation", session.codexBudget) : "");
 
   const ticketsHTML = session.noTasks
     ? `<div class="no-tasks">

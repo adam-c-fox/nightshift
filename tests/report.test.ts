@@ -33,6 +33,37 @@ describe("report ticket loading failure", () => {
   });
 });
 
+describe("report codex", () => {
+  const codexBudget = { ...openNightBudget({ weeklyPercent: 10, resetInfo: "Oct 9" }, 20), currentPct: 14, capPct: 30 };
+  const codexUsage = (inputTokens: number, outputTokens: number): RunUsage => ({ inputTokens, outputTokens, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, turns: 1, durationMs: 1, models: [] });
+
+  it("shows a codex allocation bar when the night recorded one", () => {
+    const html = generateHTML(session({ codexBudget }));
+    expect(html).toContain("Codex review allocation");
+    expect(html).toContain("used 4% of 20%");
+  });
+
+  it("shows no codex bar for a night recorded without one", () => {
+    expect(generateHTML(session({}))).not.toContain("Codex review allocation");
+  });
+
+  it("says codex usage was unavailable", () => {
+    const html = generateHTML(session({ codexBudget: closedBudget("usage unavailable") }));
+    expect(html).toContain("Codex review allocation");
+    expect(html).toContain("unavailable");
+  });
+
+  it("keeps codex runs out of the claude totals and shows them on their own", () => {
+    const html = reportFor(ticketResult({ runs: [
+      { stage: "implement", usage: codexUsage(2000, 100) },
+      { stage: "review-codex", usage: codexUsage(1000, 50) },
+    ] }));
+    expect(html).toContain("Usage: 2.0k in / 100 out");
+    expect(html).toContain("Codex: 1.0k in / 50 out");
+    expect(html).not.toContain("review-codex ");
+  });
+});
+
 describe("report budget section", () => {
   it("shows the effective allocation when the cap clamped it", () => {
     const budget = openNightBudget({ weeklyPercent: 40, resetInfo: "" }, 100);
