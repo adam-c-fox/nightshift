@@ -70,7 +70,7 @@ A project is the set of repos nightshift works in, plus the instructions and tic
 
 `linearTeams` is a list of Linear team keys such as `["ENG"]`. When it's set, `prep-status` and the [dashboard](#dashboard) only list your Todo tickets from those teams. `/tonight` still lists every Todo ticket assigned to you, and tickets outside `linearTeams` show "—" in its prep column. Leave it out to see all of them. `/prep` and `/tonight` also use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](#prep-memory).
 
-Start a new project by copying [`projects/example`](projects/example) to `projects/<name>` and replacing the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
+Start a new project by running `/nightshift-setup` from the root of its repo. The skill lives in [`skills/nightshift-setup`](skills/nightshift-setup/SKILL.md); link it into your user skills once with `ln -s "$PWD/skills/nightshift-setup" ~/.claude/skills/`. It writes `projects/<name>/`, runs the night's checks against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`projects/example`](projects/example) to `projects/<name>` and replace the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
 
 ## Each evening
 
