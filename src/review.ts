@@ -134,6 +134,7 @@ async function runLens(lens: ReviewLens, pass: number, deps: ReviewDeps, regress
   const before = deps.snapshot();
   deps.log(`  Reviewing change (${pass > 1 ? `${lens}, pass ${pass}` : lens})`);
   const run = await deps.find(lens, pass);
+  if (run.skipReason) return lensStep(lens, pass, "skipped", run.skipReason);
   deps.saveOutput(lensStage(lens, pass), run.rawOutput);
 
   if (deps.snapshot() !== before) {
@@ -201,7 +202,7 @@ const dataRiskNotes = (risks: ReviewRisk[]): string[] => {
 };
 
 const lensNotes = (runs: LensRun[]): string[] =>
-  runs.filter(r => r.outcome !== "reviewed").map(r => `Review lens ${lensLabel(r.lens, r.pass)} ${r.outcome}: ${r.reason}.`);
+  runs.filter(r => r.outcome !== "reviewed" && r.lens !== "codex").map(r => `Review lens ${lensLabel(r.lens, r.pass)} ${r.outcome}: ${r.reason}.`);
 
 const allLensesFailedReason = (runs: LensRun[]): string =>
   runs.length === 1 ? runs[0].reason! : runs.map(r => `${lensLabel(r.lens, r.pass)}: ${r.reason}`).join("; ");

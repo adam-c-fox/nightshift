@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
-import type { UsageSnapshot } from "./budget.js";
+import { closedBudget, openNightBudget, waitForSessionCapacity, withCurrentUsage, type UsageSnapshot } from "./budget.js";
 import {
   LAYER_SEPARATOR, buildFinderPrompt, finderSystemPrompt, parseOrError, parseReviewBlock,
   type AgentReport, type ReviewPromptExtras, type ReviewRunResult, type TicketBrief,
 } from "./claude.js";
 import { runWithWatchdog } from "./process.js";
-import type { RunUsage } from "./types.js";
+import type { NightBudget, RunUsage } from "./types.js";
 import { TIME_ZONE } from "./time.js";
 
 export const CODEX_MODEL = "gpt-6.1-sol";
@@ -149,4 +149,64 @@ export async function runCodexFinder(
     usageLimited,
     usage: usage && { ...usage, durationMs: Date.now() - started },
   };
+}
+
+export interface CodexLensDeps {
+  budget: { current: NightBudget };
+  readUsage: () => Promise<UsageSnapshot>;
+  claudeGateReason: () => string | undefined;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  log: (msg: string) => void;
+  run: () => Promise<ReviewRunResult>;
+}
+
+export async function openCodexBudget(read = readCodexUsage): Promise<NightBudget> {
+  try {
+    return openNightBudget(await read(), CODEX_ALLOWANCE_PCT);
+  } catch (e) {
+    return closedBudget(`Codex usage unavailable: ${(e as Error).message}`);
+  }
+}
+
+const skipped = (skipReason: string): ReviewRunResult => ({ success: false, rawOutput: "", skipReason });
+
+const allowanceReason = (b: NightBudget): string => `Codex night allowance reached (${b.currentPct}% ≥ cap ${b.capPct}%)`;
+
+async function readyToRun(deps: CodexLensDeps): Promise<string | undefined> {
+  const refresh = async () => {
+    const snapshot = await deps.readUsage();
+    deps.budget.current = withCurrentUsage(deps.budget.current, snapshot);
+    return snapshot;
+  };
+  try {
+    await refresh();
+  } catch (e) {
+    return (e as Error).message;
+  }
+  if (deps.budget.current.gateHit) return allowanceReason(deps.budget.current);
+  let waited = false;
+  await waitForSessionCapacity({
+    snapshot: refresh,
+    sleep: async (ms) => { waited = true; await deps.sleep(ms); },
+    log: (msg) => deps.log(`  Codex ${msg.trim()}`),
+    now: deps.now,
+  });
+  if (!waited) return undefined;
+  return deps.claudeGateReason() ?? (deps.budget.current.gateHit ? allowanceReason(deps.budget.current) : undefined);
+}
+
+export async function runCodexLens(deps: CodexLensDeps): Promise<ReviewRunResult> {
+  if (deps.budget.current.unavailable) return skipped("Codex usage unavailable");
+  let result: ReviewRunResult | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const reason = await readyToRun(deps);
+    if (reason) return skipped(reason);
+    result = await deps.run();
+    if (!result.usageLimited) break;
+  }
+  try {
+    deps.budget.current = withCurrentUsage(deps.budget.current, await deps.readUsage());
+  } catch { /* the next lens refreshes it */ }
+  return result!.usageLimited ? { ...result!, failure: "Codex usage limit reached" } : result!;
 }

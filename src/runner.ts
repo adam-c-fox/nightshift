@@ -4,6 +4,7 @@ import { REVIEW_LENSES, lensStage, roundStage, type Ticket, type TicketResult, t
 import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
+import { openCodexBudget, readCodexUsage, runCodexFinder, runCodexLens } from "./codex.js";
 import { runAgent, runConfirm, runDedupe, runFinder, runFix, runFixReview, type TicketBrief } from "./claude.js";
 import { readCited, ticketText } from "./confirm.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
@@ -197,7 +198,7 @@ const checkRecords = (checks: ClassifiedCheck[]): TicketResult["checks"] =>
 
 async function processTicket(
   ticket: Ticket, project: Project, branchPrefix: string | undefined, instructions: string, dryRun: boolean,
-  budgetRef: { current: NightBudget }, processed: Map<string, ProcessedTicket>,
+  budgetRef: { current: NightBudget }, codexBudgetRef: { current: NightBudget }, processed: Map<string, ProcessedTicket>,
 ): Promise<TicketResult> {
   const { id: ticketId, name: ticketName, context, repo } = ticket;
   const { path: repoPath, toolchain } = project.repos[repo];
@@ -327,8 +328,20 @@ async function processTicket(
       lenses: REVIEW_LENSES,
       decisions: report?.decisions ?? [],
       find: async (lens, pass) => {
+        const extras = { checks, related: related.map(r => ({ ticketId: r.ticketId, branch: r.branch })) };
+        if (lens === "codex") {
+          return recordRun(lensStage(lens, pass), await runCodexLens({
+            budget: codexBudgetRef,
+            readUsage: readCodexUsage,
+            claudeGateReason: weeklyGateReason,
+            sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+            now: Date.now,
+            log,
+            run: () => runCodexFinder(wt.wtPath, brief, report, wt.baseRef, extras),
+          }));
+        }
         await waitForSession();
-        return recordRun(lensStage(lens, pass), await runFinder(wt.wtPath, lens, brief, report, wt.baseRef, agentOptions, { checks, related: related.map(r => ({ ticketId: r.ticketId, branch: r.branch })) }));
+        return recordRun(lensStage(lens, pass), await runFinder(wt.wtPath, lens, brief, report, wt.baseRef, agentOptions, extras));
       },
       dedupe: async (candidates, stage = "review-dedupe") => {
         await waitForSession();
@@ -564,6 +577,7 @@ async function main() {
       logUsageFailure(e, "  ");
     }
     const budgetRef = { current: budget };
+    const codexBudgetRef = { current: dryRun ? closedBudget("dry run") : await openCodexBudget() };
     const closedAtStart = gateHit;
 
     let tickets: Ticket[] = [];
@@ -606,7 +620,7 @@ async function main() {
         }
 
         try {
-          const r = await processTicket(ticket, project, branchPrefix, instructions, dryRun, budgetRef, processed);
+          const r = await processTicket(ticket, project, branchPrefix, instructions, dryRun, budgetRef, codexBudgetRef, processed);
           results.push(r);
         } catch (e) {
           log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
@@ -623,6 +637,7 @@ async function main() {
       endedAt: new Date().toLocaleString("en-US", { timeZone: TIME_ZONE }),
       tickets: results,
       budget: budgetRef.current,
+      codexBudget: codexBudgetRef.current,
       gateHit,
       skipReason,
       noTasks: tickets.length === 0 && !ticketError,

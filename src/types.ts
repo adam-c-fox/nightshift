@@ -40,7 +40,7 @@ export interface TestResult {
 export type Severity = "blocker" | "major" | "minor";
 
 export type ReviewLens = "bugs" | "spec" | "reuse" | "codex";
-export const REVIEW_LENSES: ReviewLens[] = ["bugs", "bugs", "spec", "reuse"];
+export const REVIEW_LENSES: ReviewLens[] = ["bugs", "bugs", "spec", "reuse", "codex"];
 
 export type ReviewStage = `review-${ReviewLens}` | `review-${ReviewLens}-${number}`;
 
@@ -299,6 +299,7 @@ export interface SessionResult {
   noTasks: boolean;
   ticketError?: string;
   postmortem?: SessionPostmortem;
+  codexBudget?: NightBudget;
 }
 
 export interface NightRecord extends SessionResult {

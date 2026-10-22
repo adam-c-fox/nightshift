@@ -271,6 +271,36 @@ describe("reviewAndFix lenses", () => {
     ]);
   });
 
+  it("records a skipped codex lens with its reason without marking the ticket for review", async () => {
+    const { run } = harness({
+      lenses: ["bugs", "codex"],
+      find: async lens => lens === "codex" ? { success: false, rawOutput: "", skipReason: "Codex usage unavailable" } : reviewed(),
+    });
+    const outcome = await run();
+    expect(outcome.review.lenses?.[1]).toEqual({ lens: "codex", outcome: "skipped", reason: "Codex usage unavailable", candidates: 0 });
+    expect(outcome.needsReview).toBe(false);
+  });
+
+  it("records a failed codex lens without marking the ticket for review", async () => {
+    const { run } = harness({
+      lenses: ["bugs", "codex"],
+      find: async lens => lens === "codex" ? { success: false, rawOutput: "", failure: "Codex usage limit reached" } : reviewed(),
+    });
+    const outcome = await run();
+    expect(outcome.review.lenses?.[1]).toMatchObject({ lens: "codex", outcome: "failed", reason: "Codex usage limit reached" });
+    expect(outcome.needsReview).toBe(false);
+    expect(outcome.notes).toEqual([]);
+  });
+
+  it("prefixes codex candidates with X", async () => {
+    const { calls, run } = harness({
+      lenses: ["bugs", "codex"],
+      find: async lens => lens === "codex" ? reviewed(finding("R1", "minor")) : reviewed(),
+    });
+    await run();
+    expect(calls.confirm[0].map(c => c.id)).toEqual(["X1"]);
+  });
+
   it("numbers bugs candidates continuously across both passes", async () => {
     let pass = 0;
     const { calls, run } = harness({

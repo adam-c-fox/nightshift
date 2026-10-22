@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import type { ClassifiedCheck } from "./checks.js";
+import { CODEX_MODEL, runCodexFinder } from "./codex.js";
 import { parseReportBlock, runConfirm, runDedupe, runFinder, type AgentReport, type ReviewPromptExtras, type TicketBrief } from "./claude.js";
 import { readCited, ticketText } from "./confirm.js";
 import { getEnv, useProjectEnv } from "./env.js";
@@ -29,11 +30,12 @@ export interface ReplayArgs {
   report: string;
   related: { ticketId: string; branch: string }[];
   session?: string;
+  codexModel?: string;
   install: boolean;
 }
 
 export const REPLAY_USAGE =
-  "usage: replay-review --project <name> --ticket <ID> --base <sha> --diff <file> --report <agent output file> [--related ID=branch ...] [--session <session.json>] [--no-install]";
+  "usage: replay-review --project <name> --ticket <ID> --base <sha> --diff <file> --report <agent output file> [--related ID=branch ...] [--session <session.json>] [--codex-model <slug>] [--no-install]";
 
 function extractAll(argv: string[], flag: string): { values: string[]; rest: string[] } {
   const values: string[] = [];
@@ -62,12 +64,13 @@ export function parseReplayArgs(argv: string[]): ReplayArgs {
   );
   const { values: related, rest: afterRelated } = extractAll(required.rest, "--related");
   const { value: session, rest: afterSession } = extractFlag(afterRelated, "--session");
-  const rest = afterSession.filter(a => a !== "--no-install");
-  const install = rest.length === afterSession.length;
+  const { value: codexModel, rest: afterCodex } = extractFlag(afterSession, "--codex-model");
+  const rest = afterCodex.filter(a => a !== "--no-install");
+  const install = rest.length === afterCodex.length;
   if (rest.length > 0) throw new Error(`unknown argument "${rest[0]}"\n${REPLAY_USAGE}`);
   const { "--project": project, "--ticket": ticket, "--base": base, "--diff": diff, "--report": report } = required.values;
   if (!TICKET_ID.test(ticket!)) throw new Error(`expected a ticket ID like ENG-123\n${REPLAY_USAGE}`);
-  return { project: project!, ticket: ticket!, base: base!, diff: diff!, report: report!, related: related.map(parseRelated), install, ...(session !== undefined ? { session } : {}) };
+  return { project: project!, ticket: ticket!, base: base!, diff: diff!, report: report!, related: related.map(parseRelated), install, ...(session !== undefined ? { session } : {}), ...(codexModel !== undefined ? { codexModel } : {}) };
 }
 
 const tokensIn = (u: RunUsage): number => u.inputTokens + u.cacheReadTokens + u.cacheCreationTokens;
@@ -218,7 +221,9 @@ async function runReview(args: ReplayArgs, scratch: string, inputs: ReviewInputs
     gateOpen: () => true,
     lenses: REVIEW_LENSES,
     decisions: report.decisions,
-    find: async (lens, pass) => record(lensStage(lens, pass), await runFinder(scratch, lens, brief, report, args.base, options, extras)),
+    find: async (lens, pass) => record(lensStage(lens, pass), lens === "codex"
+      ? await runCodexFinder(scratch, brief, report, args.base, extras, args.codexModel ?? CODEX_MODEL)
+      : await runFinder(scratch, lens, brief, report, args.base, options, extras)),
     dedupe: async candidates => record("review-dedupe", await runDedupe(scratch, candidates, options)),
     confirm: async batch => record(`review-confirm-${batch.n}`, await runConfirm(scratch, brief, report, args.base, batch, options, extras)),
     source: file => readCited(scratch, file),

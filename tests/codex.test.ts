@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildCodexArgs, codexUsageLimited, parseCodexEvents, parseCodexRateLimits } from "../src/codex.js";
-import { buildFinderPrompt, type AgentReport, type TicketBrief } from "../src/claude.js";
+import { buildCodexArgs, codexUsageLimited, openCodexBudget, parseCodexEvents, parseCodexRateLimits, runCodexLens, type CodexLensDeps } from "../src/codex.js";
+import { buildFinderPrompt, type AgentReport, type ReviewRunResult, type TicketBrief } from "../src/claude.js";
+import { closedBudget, openNightBudget, type UsageSnapshot } from "../src/budget.js";
 import { TIME_ZONE } from "../src/time.js";
 import fixture from "./fixtures/codex-rate-limits.json" with { type: "json" };
 
@@ -72,5 +73,87 @@ describe("codex finder prompt", () => {
     const prompt = buildFinderPrompt("codex", brief, report, "origin/main");
     expect(prompt).toContain("rule on each one");
     expect(prompt).toContain("D1 (src/a.ts): Empty rows are skipped.");
+  });
+});
+
+const usage = (weeklyPercent: number, sessionPercent = 0): UsageSnapshot => ({ weeklyPercent, sessionPercent, resetInfo: "Oct 29" });
+const ok: ReviewRunResult = { success: true, rawOutput: "out", findings: [] };
+
+const lensHarness = (reads: UsageSnapshot[], runs: ReviewRunResult[] = [ok], over: Partial<CodexLensDeps> = {}) => {
+  const calls = { sleeps: [] as number[], runs: 0 };
+  const deps: CodexLensDeps = {
+    budget: { current: openNightBudget(usage(15), 20) },
+    readUsage: async () => reads.length > 1 ? reads.shift()! : reads[0],
+    claudeGateReason: () => undefined,
+    sleep: async ms => { calls.sleeps.push(ms); },
+    now: () => 0,
+    log: () => {},
+    run: async () => runs[Math.min(calls.runs++, runs.length - 1)],
+    ...over,
+  };
+  return { calls, deps, run: () => runCodexLens(deps) };
+};
+
+describe("runCodexLens", () => {
+  it("skips when the Codex budget is unavailable", async () => {
+    const { calls, run } = lensHarness([usage(15)], [ok], { budget: { current: closedBudget("no login") } });
+    expect(await run()).toMatchObject({ success: false, skipReason: "Codex usage unavailable" });
+    expect(calls.runs).toBe(0);
+  });
+
+  it("skips when the night allowance is spent", async () => {
+    const { calls, run } = lensHarness([usage(36)], [ok], { budget: { current: openNightBudget(usage(15), 20) } });
+    expect(await run()).toMatchObject({ success: false, skipReason: "Codex night allowance reached (36% ≥ cap 35%)" });
+    expect(calls.runs).toBe(0);
+  });
+
+  it("skips with the read error when usage cannot be refreshed", async () => {
+    const { calls, run } = lensHarness([usage(15)], [ok], { readUsage: async () => { throw new Error("app-server down"); } });
+    expect(await run()).toMatchObject({ skipReason: "app-server down" });
+    expect(calls.runs).toBe(0);
+  });
+
+  it("waits for the 5-hour session to reset, then runs once", async () => {
+    const { calls, run } = lensHarness([usage(16, 85), usage(16, 85), usage(16, 10)]);
+    expect(await run()).toBe(ok);
+    expect(calls.sleeps).toHaveLength(1);
+    expect(calls.runs).toBe(1);
+  });
+
+  it("skips with the Claude gate reason when Claude's cap closed during the wait", async () => {
+    const { calls, run } = lensHarness([usage(16, 85), usage(16, 85), usage(16, 10)], [ok], { claudeGateReason: () => "budget cap reached" });
+    expect(await run()).toMatchObject({ success: false, skipReason: "budget cap reached" });
+    expect(calls.runs).toBe(0);
+  });
+
+  it("retries once after a usage limit", async () => {
+    const limited: ReviewRunResult = { success: false, rawOutput: "", failure: "Codex usage limit reached", usageLimited: true };
+    const { calls, run } = lensHarness([usage(16)], [limited, ok]);
+    expect(await run()).toBe(ok);
+    expect(calls.runs).toBe(2);
+  });
+
+  it("fails after a second usage limit instead of looping", async () => {
+    const limited: ReviewRunResult = { success: false, rawOutput: "", usageLimited: true };
+    const { calls, run } = lensHarness([usage(16)], [limited, limited]);
+    expect(await run()).toMatchObject({ success: false, failure: "Codex usage limit reached" });
+    expect(calls.runs).toBe(2);
+  });
+
+  it("refreshes the shared budget after the run", async () => {
+    const { deps, run } = lensHarness([usage(16), usage(16), usage(19)]);
+    await run();
+    expect(deps.budget.current.currentPct).toBe(19);
+  });
+});
+
+describe("openCodexBudget", () => {
+  it("opens a 20% budget from the weekly reading", async () => {
+    expect(await openCodexBudget(async () => usage(10))).toMatchObject({ startPct: 10, capPct: 30, allocationPct: 20, unavailable: false });
+  });
+
+  it("closes the budget with the reason when the read fails", async () => {
+    const budget = await openCodexBudget(async () => { throw new Error("no login"); });
+    expect(budget).toMatchObject({ unavailable: true, gateHit: true, resetInfo: "Codex usage unavailable: no login" });
   });
 });

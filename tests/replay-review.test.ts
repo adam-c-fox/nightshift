@@ -21,6 +21,11 @@ describe("parseReplayArgs", () => {
       .toEqual([{ ticketId: "ENG-2", branch: "feat/two" }, { ticketId: "ENG-3", branch: "feat/three" }]);
   });
 
+  it("reads --codex-model", () => {
+    expect(parseReplayArgs([...required, "--codex-model", "gpt-6-luna"]).codexModel).toBe("gpt-6-luna");
+    expect(parseReplayArgs(required).codexModel).toBeUndefined();
+  });
+
   it.each(["--project", "--ticket", "--base", "--diff", "--report"])("throws naming %s when it is missing", flag => {
     const i = required.indexOf(flag);
     const argv = [...required.slice(0, i), ...required.slice(i + 2)];
