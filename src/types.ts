@@ -39,7 +39,7 @@ export interface TestResult {
 
 export type Severity = "blocker" | "major" | "minor";
 
-export type ReviewLens = "bugs" | "spec" | "reuse";
+export type ReviewLens = "bugs" | "spec" | "reuse" | "codex";
 export const REVIEW_LENSES: ReviewLens[] = ["bugs", "bugs", "spec", "reuse"];
 
 export type ReviewStage = `review-${ReviewLens}` | `review-${ReviewLens}-${number}`;

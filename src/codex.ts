@@ -1,5 +1,11 @@
 import { spawn } from "node:child_process";
 import type { UsageSnapshot } from "./budget.js";
+import {
+  LAYER_SEPARATOR, buildFinderPrompt, finderSystemPrompt, parseOrError, parseReviewBlock,
+  type AgentReport, type ReviewPromptExtras, type ReviewRunResult, type TicketBrief,
+} from "./claude.js";
+import { runWithWatchdog } from "./process.js";
+import type { RunUsage } from "./types.js";
 import { TIME_ZONE } from "./time.js";
 
 export const CODEX_MODEL = "gpt-6.1-sol";
@@ -9,6 +15,7 @@ export const CODEX_ALLOWANCE_PCT = 20;
 const SESSION_WINDOW_MINS = 300;
 const WEEKLY_WINDOW_MINS = 10080;
 const USAGE_TIMEOUT_MS = 20_000;
+const FINDER_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 interface RateLimitWindow {
   usedPercent: number;
@@ -73,4 +80,73 @@ export function readCodexUsage(): Promise<UsageSnapshot> {
     child.stdin.write(rpc({ method: "initialized" }));
     child.stdin.write(rpc({ id: 2, method: "account/rateLimits/read" }));
   });
+}
+
+export const buildCodexArgs = (worktreePath: string, model = CODEX_MODEL): string[] => [
+  "exec", "-m", model, "-c", `model_reasoning_effort="${CODEX_EFFORT}"`, "-s", "read-only", "--ephemeral", "--ignore-user-config", "--json", "-C", worktreePath, "-",
+];
+
+export function parseCodexEvents(stdout: string, model: string): { text: string; usage?: RunUsage } {
+  let text = "";
+  let usage: RunUsage | undefined;
+  for (const line of stdout.split("\n")) {
+    let event: { type?: string; item?: { type?: string; text?: string }; usage?: Record<string, number> };
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event.type === "item.completed" && event.item?.type === "agent_message") text = event.item.text ?? "";
+    if (event.type === "turn.completed") {
+      const cached = event.usage?.cached_input_tokens ?? 0;
+      usage = {
+        inputTokens: (usage?.inputTokens ?? 0) + (event.usage?.input_tokens ?? 0) - cached,
+        cacheReadTokens: (usage?.cacheReadTokens ?? 0) + cached,
+        cacheCreationTokens: 0,
+        outputTokens: (usage?.outputTokens ?? 0) + (event.usage?.output_tokens ?? 0),
+        costUsd: 0,
+        turns: (usage?.turns ?? 0) + 1,
+        durationMs: 0,
+        models: [model],
+      };
+    }
+  }
+  return { text, ...(usage ? { usage } : {}) };
+}
+
+export const codexUsageLimited = (output: string): boolean => /hit your usage limit/i.test(output);
+
+export async function runCodexFinder(
+  worktreePath: string, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, extras: ReviewPromptExtras, model = CODEX_MODEL,
+): Promise<ReviewRunResult> {
+  const started = Date.now();
+  const proc = await runWithWatchdog("codex", buildCodexArgs(worktreePath, model), {
+    cwd: worktreePath,
+    input: finderSystemPrompt("bugs") + LAYER_SEPARATOR + buildFinderPrompt("codex", brief, report, baseRef, extras),
+    timeoutMs: FINDER_TIMEOUT_MS,
+    checkIntervalMs: FINDER_TIMEOUT_MS,
+  });
+  const { text, usage } = parseCodexEvents(proc.stdout, model);
+  const usageLimited = codexUsageLimited(`${proc.stdout}\n${proc.stderr}`);
+  const failure = proc.error
+    ? `codex failed to run: ${proc.error.message}`
+    : usageLimited
+      ? "Codex usage limit reached"
+      : proc.abortReason
+        ? `codex stopped: ${proc.abortReason}`
+        : proc.status !== 0
+          ? `codex exited with status ${proc.status}${proc.signal ? ` (${proc.signal})` : ""}`
+          : undefined;
+  const { value: parsed, error: parseError } = parseOrError(text, failure, parseReviewBlock);
+  return {
+    success: failure === undefined,
+    rawOutput: [text, proc.stderr, failure ?? ""].filter(Boolean).join("\n"),
+    findings: parsed?.findings,
+    risks: parsed?.risks,
+    rulings: parsed?.rulings,
+    parseError,
+    failure,
+    usageLimited,
+    usage: usage && { ...usage, durationMs: Date.now() - started },
+  };
 }

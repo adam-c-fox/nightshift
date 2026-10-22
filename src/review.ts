@@ -104,7 +104,7 @@ export interface FoundReview {
 
 export type FindAndConfirmResult = FoundReview | { stopped: ReviewStageOutcome };
 
-const LENS_PREFIX: Record<CandidateLens, string> = { bugs: "B", spec: "S", reuse: "U", fixer: "F" };
+const LENS_PREFIX: Record<CandidateLens, string> = { bugs: "B", spec: "S", reuse: "U", codex: "X", fixer: "F" };
 
 const pendingFinding = (lens: CandidateLens, f: FoundFinding): Pending => ({
   lens, kind: "finding", severity: f.severity, confidence: f.confidence ?? "proven",

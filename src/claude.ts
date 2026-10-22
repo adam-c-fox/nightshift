@@ -11,7 +11,7 @@ const FIX_REVIEW_MD = path.join(ROOT, "prompts", "fix-review.md");
 const CONFIRM_MD = path.join(ROOT, "prompts", "confirm.md");
 const DEDUPE_MD = path.join(ROOT, "prompts", "dedupe.md");
 const lensMd = (lens: ReviewLens) => path.join(ROOT, "prompts", `review-${lens}.md`);
-const LAYER_SEPARATOR = "\n\n---\n\n";
+export const LAYER_SEPARATOR = "\n\n---\n\n";
 
 export interface TicketBrief {
   ticketId: string;
@@ -150,7 +150,7 @@ export function buildFinderPrompt(
   return finderPrompt(
     brief, report, baseRef,
     { checks: extras.checks, related: lens === "reuse" ? extras.related : undefined },
-    lens === "bugs" ? decisionsSection(report) : [],
+    lens === "bugs" || lens === "codex" ? decisionsSection(report) : [],
   );
 }
 
@@ -706,6 +706,8 @@ export interface ReviewRunResult {
   failure?: string;
   abortReason?: string;
   usage?: RunUsage;
+  usageLimited?: boolean;
+  skipReason?: string;
 }
 
 const layered = (...files: string[]): string => files.map(f => readFileSync(f, "utf-8")).join(LAYER_SEPARATOR);
