@@ -251,7 +251,7 @@ export function sessionAbortReason(snapshot: Pick<UsageSnapshot, "sessionPercent
 }
 
 export interface SessionWaitDeps {
-  snapshot: () => UsageSnapshot;
+  snapshot: () => UsageSnapshot | Promise<UsageSnapshot>;
   sleep: (ms: number) => Promise<void>;
   log: (msg: string) => void;
   now: () => number;
@@ -261,7 +261,7 @@ export async function waitForSessionCapacity(deps: SessionWaitDeps): Promise<voi
   for (;;) {
     let snapshot: UsageSnapshot;
     try {
-      snapshot = deps.snapshot();
+      snapshot = await deps.snapshot();
     } catch (e) {
       deps.log(`  Could not read 5-hour session usage, continuing: ${(e as Error).message}`);
       return;

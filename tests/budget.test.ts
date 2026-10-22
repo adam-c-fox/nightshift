@@ -261,6 +261,15 @@ describe("5-hour session guard", () => {
     expect(logs.join()).toMatch(/5-hour session at 90%/);
   });
 
+  it("waits on an async snapshot", async () => {
+    const reads = [{ weeklyPercent: 1, resetInfo: "", sessionPercent: 85 }, { weeklyPercent: 1, resetInfo: "", sessionPercent: 10 }];
+    const sleeps: number[] = [];
+    await waitForSessionCapacity({
+      snapshot: async () => reads.shift()!, sleep: async ms => { sleeps.push(ms); }, log: () => {}, now: () => now,
+    });
+    expect(sleeps).toHaveLength(1);
+  });
+
   it("carries on when usage cannot be read", async () => {
     const logs: string[] = [];
     await waitForSessionCapacity({
