@@ -143,6 +143,11 @@ function budgetCell(row: NightRow): string {
   return row.budgetUnavailable ? `<span class="dim">unavailable</span>` : EMPTY;
 }
 
+function codexCell(row: NightRow): string {
+  if (row.codexUsedPct !== undefined) return `${row.codexUsedPct}%`;
+  return row.codexUnavailable ? `<span class="dim">unavailable</span>` : EMPTY;
+}
+
 function nightRowHTML(row: NightRow): string {
   const cell = (label: string, content: string) =>
     `<td data-label="${label}">${content}</td>`;
@@ -150,22 +155,24 @@ function nightRowHTML(row: NightRow): string {
   const titleAttr = row.error ? ` title="${esc(row.error)}"` : "";
   const link = `<a href="${esc(row.href)}">Report</a>`;
   const stats = row.linkOnly
-    ? [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]
+    ? [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]
     : [
         row.counts ? countsCell(row.counts) : EMPTY,
         budgetCell(row),
+        codexCell(row),
         row.durationSec === undefined
           ? EMPTY
           : formatDuration(row.durationSec * 1000),
         String(row.suggestions ?? EMPTY),
         String(row.outstanding ?? EMPTY),
       ];
-  const [tickets, budget, duration, suggestions, outstanding] = stats;
+  const [tickets, budget, codex, duration, suggestions, outstanding] = stats;
   return `<tr${titleAttr}>
 ${cell("Date", `${esc(row.date)}${dryRun}`)}
 ${cell("Project", esc(row.project))}
 ${cell("Tickets", tickets)}
 ${cell("Budget used", budget)}
+${cell("Codex used", codex)}
 ${cell("Duration", duration)}
 ${cell("Suggestions", suggestions)}
 ${cell("Outstanding", outstanding)}
@@ -180,6 +187,7 @@ export function nightsHTML(rows: NightRow[]): string {
     "Project",
     "Tickets",
     "Budget used",
+    "Codex used",
     "Duration",
     "Suggestions",
     "Outstanding",

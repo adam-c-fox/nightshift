@@ -3,6 +3,7 @@ import { snapshotUsage, usageSummary } from "./budget.js";
 import { CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, useProjectEnv } from "./env.js";
 import { loadProject } from "./project.js";
+import { readCodexUsage } from "./codex.js";
 
 try {
   const { value: flagProject } = extractFlag(process.argv.slice(2), "--project");
@@ -10,7 +11,12 @@ try {
   if (name) useProjectEnv(loadProject(name).envFile);
   const claudeToken = getEnv(CLAUDE_TOKEN);
   if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
-  console.log(JSON.stringify(usageSummary(snapshotUsage())));
+  const claude = usageSummary(snapshotUsage());
+  const codex = await readCodexUsage().then(
+    (snapshot) => ({ codex: usageSummary(snapshot) }),
+    (e: Error) => ({ codexError: e.message.split("\n")[0] }),
+  );
+  console.log(JSON.stringify({ ...claude, ...codex }));
 } catch (e) {
   console.log(JSON.stringify({ error: (e as Error).message.split("\n")[0] }));
   process.exit(1);

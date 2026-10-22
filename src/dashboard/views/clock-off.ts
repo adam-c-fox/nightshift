@@ -1,4 +1,6 @@
 import { esc, STATUS_COLORS } from "../../report.js";
+import { CODEX_ALLOWANCE_PCT } from "../../codex.js";
+import type { UsageSummary } from "../../budget.js";
 import {
   PREP_STATE_LABELS,
   type PrepRecord,
@@ -112,9 +114,14 @@ ${view.rows.map((row) => rowHTML(row, view.project)).join("\n")}
 </table>`;
 }
 
+function codexUsageHTML({ codex, codexError }: { codex?: UsageSummary; codexError?: string }): string {
+  if (codex) return `\n<span>Codex weekly: <strong>${Math.round(codex.weeklyPercent)}%</strong> used · resets ${esc(codex.resetInfo)} · ${CODEX_ALLOWANCE_PCT}% a night</span>`;
+  return codexError === undefined ? "" : `\n<span class="dim">Codex usage unavailable: ${esc(codexError)}</span>`;
+}
+
 function usageHTML(usage: ClockOffView["usage"]): string {
   return usage.ok
-    ? `<span>Weekly: <strong>${Math.round(usage.value.weeklyPercent)}%</strong> used · resets ${esc(usage.value.resetInfo)}</span>`
+    ? `<span>Weekly: <strong>${Math.round(usage.value.weeklyPercent)}%</strong> used · resets ${esc(usage.value.resetInfo)}</span>${codexUsageHTML(usage.value)}`
     : `<span class="dim">Usage unavailable: ${esc(usage.error)}</span>`;
 }
 

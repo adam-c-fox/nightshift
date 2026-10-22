@@ -401,6 +401,18 @@ describe("buildClockOff usage reset", () => {
     expect(withReset("2026-10-07T19:00:00.000Z").warnings).toEqual([]);
   });
 
+  it("passes the codex usage and its error through", () => {
+    const codex = { weeklyPercent: 7, resetInfo: "Oct 10" };
+    expect(buildClockOff(input({ usage: ok({ ...usage, codex }) })).usage).toMatchObject({ ok: true, value: { codex } });
+    expect(buildClockOff(input({ usage: ok({ ...usage, codexError: "no login" }) })).usage).toMatchObject({ ok: true, value: { codexError: "no login" } });
+  });
+
+  it("leaves codex out when the usage has none", () => {
+    const view = buildClockOff(input());
+    expect(view.usage.ok && view.usage.value).not.toHaveProperty("codex");
+    expect(view.usage.ok && view.usage.value).not.toHaveProperty("codexError");
+  });
+
   it("passes a usage failure through without a warning", () => {
     const view = buildClockOff(input({ usage: fail("x") }));
     expect(view.usage).toEqual({ ok: false, error: "x" });

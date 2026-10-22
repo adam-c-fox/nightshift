@@ -167,6 +167,8 @@ export interface NightRow {
   counts?: TicketCounts;
   budgetUsedPct?: number;
   budgetUnavailable?: boolean;
+  codexUsedPct?: number;
+  codexUnavailable?: boolean;
   durationSec?: number;
   suggestions?: number;
   outstanding?: number;
@@ -192,10 +194,16 @@ export function nightRows(nights: NightData[], inbox: InboxItem[]): NightRow[] {
     const budget = record.budget.unavailable
       ? { budgetUnavailable: true }
       : { budgetUsedPct: budgetUsedPct(record.budget) };
+    const codex = !record.codexBudget
+      ? {}
+      : record.codexBudget.unavailable
+        ? { codexUnavailable: true }
+        : { codexUsedPct: budgetUsedPct(record.codexBudget) };
     return {
       ...row,
       counts: countTickets(record.tickets),
       ...budget,
+      ...codex,
       durationSec: durationSec(record),
       suggestions: suggestionsOf(record).length,
       outstanding: inbox.filter((item) => item.reportId === file.reportId)

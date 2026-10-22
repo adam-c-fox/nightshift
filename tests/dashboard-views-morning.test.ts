@@ -289,6 +289,17 @@ describe("nightsHTML", () => {
     expect(html).not.toContain("%");
   });
 
+  it("shows the codex column", () => {
+    const html = nightsHTML([night({ codexUsedPct: 17 })]);
+    expect(html).toContain("<th>Codex used</th>");
+    expect(html).toContain('<td data-label="Codex used">17%</td>');
+  });
+
+  it("shows unavailable codex usage and a dash for old nights", () => {
+    expect(nightsHTML([night({ codexUnavailable: true })])).toContain('<td data-label="Codex used"><span class="dim">unavailable</span></td>');
+    expect(nightsHTML([night()])).toContain('<td data-label="Codex used">—</td>');
+  });
+
   it("shows unavailable budget", () => {
     const html = nightsHTML([
       night({ budgetUsedPct: undefined, budgetUnavailable: true }),

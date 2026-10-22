@@ -201,6 +201,11 @@ describe("parseUsageSummary", () => {
     expect(parseUsageSummary('noise\n{"weeklyPercent":42,"resetInfo":"Oct 9"}\n')).toEqual({ weeklyPercent: 42, resetInfo: "Oct 9" });
   });
 
+  it("keeps the codex summary and its error", () => {
+    expect(parseUsageSummary('{"weeklyPercent":42,"resetInfo":"Oct 9","codex":{"weeklyPercent":7,"resetInfo":"Oct 10"}}').codex).toEqual({ weeklyPercent: 7, resetInfo: "Oct 10" });
+    expect(parseUsageSummary('{"weeklyPercent":42,"resetInfo":"Oct 9","codexError":"codex is not logged in"}').codexError).toBe("codex is not logged in");
+  });
+
   it("throws the reported error", () => {
     expect(() => parseUsageSummary('{"error":"claude is not logged in"}')).toThrow(/not logged in/);
   });

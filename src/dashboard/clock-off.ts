@@ -71,6 +71,8 @@ export interface ClockOffView {
     resetInfo: string;
     resetAt?: string;
     resetSoon: boolean;
+    codex?: UsageSummary;
+    codexError?: string;
   }>;
   rows: ClockOffRow[];
   linearError?: string;
@@ -152,7 +154,7 @@ function usageView(
   now: Date,
 ): { view: ClockOffView["usage"]; warning?: ClockOffWarning } {
   if (!usage.ok) return { view: usage };
-  const { weeklyPercent, resetInfo, resetAtIso } = usage.value;
+  const { weeklyPercent, resetInfo, resetAtIso, codex, codexError } = usage.value;
   const untilReset =
     resetAtIso === undefined ? NaN : Date.parse(resetAtIso) - now.getTime();
   const resetSoon = untilReset > 0 && untilReset <= RESET_SOON_MS;
@@ -163,6 +165,8 @@ function usageView(
       resetInfo,
       ...(resetAtIso !== undefined ? { resetAt: resetAtIso } : {}),
       resetSoon,
+      ...(codex ? { codex } : {}),
+      ...(codexError !== undefined ? { codexError } : {}),
     },
   };
   if (!resetSoon) return { view };

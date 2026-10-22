@@ -21,6 +21,8 @@ export interface UsageSummary {
   weeklyPercent: number;
   resetInfo: string;
   resetAtIso?: string;
+  codex?: UsageSummary;
+  codexError?: string;
 }
 
 export function usageSummary(s: UsageSnapshot): UsageSummary {

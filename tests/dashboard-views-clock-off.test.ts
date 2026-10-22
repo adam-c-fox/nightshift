@@ -180,6 +180,20 @@ describe("clockOffHTML", () => {
     expect(out).toContain("PR status unavailable: az not logged in");
   });
 
+  it("shows codex weekly usage with its nightly allowance", () => {
+    const out = clockOffHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codex: { weeklyPercent: 7.4, resetInfo: "Oct 10" } } } }));
+    expect(out).toContain("Codex weekly: <strong>7%</strong> used · resets Oct 10 · 20% a night");
+  });
+
+  it("shows codex usage unavailable", () => {
+    const out = clockOffHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codexError: "not logged in" } } }));
+    expect(out).toContain('<span class="dim">Codex usage unavailable: not logged in</span>');
+  });
+
+  it("shows nothing about codex without codex usage", () => {
+    expect(clockOffHTML(view())).not.toContain("Codex");
+  });
+
   it("shows usage unavailable", () => {
     const out = clockOffHTML(
       view({ usage: { ok: false, error: "no credentials" } }),

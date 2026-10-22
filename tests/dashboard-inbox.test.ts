@@ -312,6 +312,28 @@ describe("nightRows", () => {
     expect(rows[1].counts).toBeUndefined();
   });
 
+  it("reports the codex usage of a night", () => {
+    const base = record([]);
+    const codexBudget = { ...openNightBudget({ weeklyPercent: 10, resetInfo: "" }, 20), currentPct: 14 };
+    const [row] = nightRows([night(N2_ID, { ...base, codexBudget })], []);
+    expect(row.codexUsedPct).toBe(budgetUsedPct(codexBudget));
+    expect(row).not.toHaveProperty("codexUnavailable");
+  });
+
+  it("reports an unavailable codex budget instead of a percentage", () => {
+    const base = record([]);
+    const codexBudget = { ...base.budget, unavailable: true };
+    const [row] = nightRows([night(N2_ID, { ...base, codexBudget })], []);
+    expect(row.codexUnavailable).toBe(true);
+    expect(row).not.toHaveProperty("codexUsedPct");
+  });
+
+  it("leaves codex out for a night recorded without it", () => {
+    const [row] = nightRows([night(N2_ID, record([]))], []);
+    expect(row).not.toHaveProperty("codexUsedPct");
+    expect(row).not.toHaveProperty("codexUnavailable");
+  });
+
   it("reports an unavailable budget instead of a percentage", () => {
     const base = record([]);
     const unavailable = night(N2_ID, {
