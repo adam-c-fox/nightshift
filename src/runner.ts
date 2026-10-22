@@ -249,8 +249,12 @@ async function processTicket(
   const agentContext = [...(continuing ? [continuingPrContext(existing.prId)] : []), ...(parent ? [stackedContext(parent)] : []), ...context];
 
   const weeklyGateReason = () => weeklyGate(budgetRef, "mid-ticket");
-  const shouldAbort = () => weeklyGateReason() ?? sessionAbortReason(budgetRef.current);
-  const agentOptions = { shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT, { secretFiles: projectEnvFiles() }), instructions };
+  const agentOptions = {
+    shouldAbort: weeklyGateReason,
+    shouldPause: () => sessionAbortReason(budgetRef.current),
+    waitForSession: async () => { await waitForSession(); weeklyGateReason(); },
+    env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT, { secretFiles: projectEnvFiles() }), instructions,
+  };
   const commands = dryRun ? [] : checkCommands(toolchain, toolchain === "node" ? discoverWorkspaces(wt.wtPath) : discoverTerraformRoots(wt.wtPath));
   const baseline = dryRun ? [] : await runLoggedChecks("before the change", wt.wtPath, commands);
   if (!dryRun) await waitForSession();
@@ -471,9 +475,12 @@ async function nightPostmortem(session: SessionResult, project: Project, dryRun:
     }
     log("Running postmortem");
     await waitForSession();
-    const shouldAbort = () => weeklyGate(budgetRef, "during the postmortem") ?? sessionAbortReason(budgetRef.current);
+    const weeklyGateReason = () => weeklyGate(budgetRef, "during the postmortem");
     const { rawOutput, outcome } = await runPostmortem(ROOT, date, path.relative(ROOT, logsDir), ticketWorktrees(session), {
-      shouldAbort, env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true, secretFiles: projectEnvFiles() }),
+      shouldAbort: weeklyGateReason,
+      shouldPause: () => sessionAbortReason(budgetRef.current),
+      waitForSession: async () => { await waitForSession(); weeklyGateReason(); },
+      env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true, secretFiles: projectEnvFiles() }),
     });
     saveLog(`postmortem-${date}.txt`, rawOutput);
     if (outcome.outcome !== "done") {

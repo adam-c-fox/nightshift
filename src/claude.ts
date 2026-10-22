@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { runWithWatchdog } from "./process.js";
+import { runWithWatchdog, type WatchdogResult } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
 import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, Verdict, VerifyResult } from "./types.js";
 
@@ -598,6 +599,8 @@ export function agentRunArgs(base: string[], settings: string, profile: ToolProf
 
 export interface RunAgentOptions {
   shouldAbort?: () => string | undefined;
+  shouldPause?: () => string | undefined;
+  waitForSession?: () => Promise<void>;
   checkIntervalMs?: number;
   env: NodeJS.ProcessEnv;
   settings: string;
@@ -634,29 +637,71 @@ export function parseRunOutput(stdout: string): { text: string; usage?: RunUsage
   };
 }
 
+export const MAX_RESUMES = 2;
+export const RESUME_PROMPT = "You were paused because of a usage limit. Continue the task from where you stopped and end with the required output block.";
+
+export interface Attempt { proc: WatchdogResult; paused?: string }
+
+export const sessionArgs = (id: string, resume: boolean): string[] => (resume ? ["--resume", id] : ["--session-id", id]);
+
+export async function runResumable(
+  attempt: (resume: boolean) => Promise<Attempt>,
+  opts: Pick<RunAgentOptions, "shouldAbort" | "waitForSession">,
+): Promise<{ attempts: Attempt[]; stopReason?: string }> {
+  const attempts = [await attempt(false)];
+  for (let resumes = 0; attempts[attempts.length - 1].paused && opts.waitForSession && resumes < MAX_RESUMES; resumes++) {
+    await opts.waitForSession();
+    const stopReason = opts.shouldAbort?.();
+    if (stopReason) return { attempts, stopReason };
+    attempts.push(await attempt(true));
+  }
+  return { attempts, stopReason: attempts[attempts.length - 1].paused };
+}
+
+export function sumUsage(usages: (RunUsage | undefined)[]): RunUsage | undefined {
+  const present = usages.filter((u): u is RunUsage => u !== undefined);
+  if (present.length === 0) return undefined;
+  const sum = (key: Exclude<keyof RunUsage, "models">) => present.reduce((total, u) => total + u[key], 0);
+  return {
+    inputTokens: sum("inputTokens"), outputTokens: sum("outputTokens"),
+    cacheReadTokens: sum("cacheReadTokens"), cacheCreationTokens: sum("cacheCreationTokens"),
+    costUsd: sum("costUsd"), turns: sum("turns"), durationMs: sum("durationMs"),
+    models: [...new Set(present.flatMap(u => u.models))],
+  };
+}
+
 export async function execClaude(
   worktreePath: string, prompt: string, systemPrompt: string, profile: ToolProfile, options: RunAgentOptions, addDirs: string[] = [],
 ): Promise<ClaudeRun> {
-  const args = agentRunArgs(buildClaudeArgs(systemPrompt, profile, addDirs), options.settings, profile);
-  const proc = await runWithWatchdog("claude", args, {
-    cwd: worktreePath,
-    input: prompt,
-    env: options.env,
-    timeoutMs: SAFETY_TIMEOUT_MS,
-    checkIntervalMs: options.checkIntervalMs ?? USAGE_CHECK_INTERVAL_MS,
-    shouldAbort: options.shouldAbort,
-  });
+  const baseArgs = agentRunArgs(buildClaudeArgs(systemPrompt, profile, addDirs), options.settings, profile);
+  const sessionId = randomUUID();
+  const attempt = async (resume: boolean): Promise<Attempt> => {
+    let pauseReason: string | undefined;
+    const proc = await runWithWatchdog("claude", [...baseArgs, ...sessionArgs(sessionId, resume)], {
+      cwd: worktreePath,
+      input: resume ? RESUME_PROMPT : prompt,
+      env: options.env,
+      timeoutMs: SAFETY_TIMEOUT_MS,
+      checkIntervalMs: options.checkIntervalMs ?? USAGE_CHECK_INTERVAL_MS,
+      shouldAbort: () => options.shouldAbort?.() ?? (pauseReason = options.shouldPause?.()),
+    });
+    return { proc, paused: pauseReason && proc.abortReason === pauseReason ? pauseReason : undefined };
+  };
+  const { attempts, stopReason } = await runResumable(attempt, options);
 
-  const failure = proc.error
-    ? `claude failed to run: ${proc.error.message}`
-    : proc.abortReason
-      ? `claude stopped: ${proc.abortReason}`
-      : proc.status !== 0
-      ? `claude exited with status ${proc.status}${proc.signal ? ` (${proc.signal})` : ""}`
+  const last = attempts[attempts.length - 1].proc;
+  const abortReason = stopReason ?? last.abortReason;
+  const failure = last.error
+    ? `claude failed to run: ${last.error.message}`
+    : abortReason
+      ? `claude stopped: ${abortReason}`
+      : last.status !== 0
+      ? `claude exited with status ${last.status}${last.signal ? ` (${last.signal})` : ""}`
       : undefined;
-  const { text, usage } = parseRunOutput(proc.stdout);
-  const rawOutput = [text, proc.stderr, failure ?? ""].filter(Boolean).join("\n");
-  return { stdout: text, rawOutput, failure, abortReason: proc.abortReason, usage };
+  const parsed = attempts.map(a => parseRunOutput(a.proc.stdout));
+  const text = parsed[parsed.length - 1].text;
+  const rawOutput = [...parsed.flatMap((p, i) => [p.text, attempts[i].proc.stderr]), failure ?? ""].filter(Boolean).join("\n");
+  return { stdout: text, rawOutput, failure, abortReason, usage: sumUsage(parsed.map(p => p.usage)) };
 }
 
 export function parseOrError<T>(stdout: string, failure: string | undefined, parse: (output: string) => T): { value?: T; error?: string } {
