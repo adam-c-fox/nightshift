@@ -85,7 +85,7 @@ rulings:
     reason: <one line: why it holds, or what breaks, stated about the code>
 ```
 
-Word `reason` as a plain statement about the code and never mention a review, a reviewer or how the change was produced: a `risk` ruling is published in the pull request description. If the prompt lists no decisions, write the ones you pull from the notes with ids `N1`, `N2`, … in the order they appear in the notes, one per choice. Omit `rulings` when there is nothing to rule on.
+Word `reason` as a plain statement about the code and never mention a review, a reviewer or how the change was produced: a `risk` ruling is published in the pull request description. Make each `reason` stand on its own: never cite a finding id such as R1 or R2, because findings are renumbered before anyone reads the ruling, so restate the problem instead. If the prompt lists no decisions, write the ones you pull from the notes with ids `N1`, `N2`, … in the order they appear in the notes, one per choice. Omit `rulings` when there is nothing to rule on.
 
 ## 5 · Reporting
 
