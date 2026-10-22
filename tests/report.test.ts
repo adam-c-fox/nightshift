@@ -50,7 +50,7 @@ describe("report codex", () => {
   it("says codex usage was unavailable", () => {
     const html = generateHTML(session({ codexBudget: closedBudget("usage unavailable") }));
     expect(html).toContain("Codex review allocation");
-    expect(html).toContain("unavailable");
+    expect(html).toContain("<strong>unavailable</strong> (usage unavailable)");
   });
 
   it("keeps codex runs out of the claude totals and shows them on their own", () => {

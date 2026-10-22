@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runResumable, sessionArgs, sumUsage, MAX_RESUMES, type Attempt } from "../src/claude.js";
+import { pauseAfterExit, runResumable, sessionArgs, sumUsage, MAX_RESUMES, type Attempt } from "../src/claude.js";
 
 const proc = { stdout: "", stderr: "", status: 0, signal: null };
 const done: Attempt = { proc };
@@ -66,5 +66,21 @@ describe("sumUsage", () => {
   });
   it("is undefined when no attempt reported usage", () => {
     expect(sumUsage([undefined, undefined])).toBeUndefined();
+  });
+});
+
+describe("pauseAfterExit", () => {
+  const exited = { ...proc, status: 1 };
+  it("keeps the pause that killed the run", () => {
+    expect(pauseAfterExit({ ...proc, abortReason: "limit" }, "limit", {})).toBe("limit");
+  });
+  it("pauses a non-zero exit while the limit is hit", () => {
+    expect(pauseAfterExit(exited, undefined, { shouldAbort: () => undefined, shouldPause: () => "limit" })).toBe("limit");
+  });
+  it("does not pause when the run should abort", () => {
+    expect(pauseAfterExit(exited, undefined, { shouldAbort: () => "budget", shouldPause: () => "limit" })).toBeUndefined();
+  });
+  it("does not pause a clean exit", () => {
+    expect(pauseAfterExit(proc, undefined, { shouldPause: () => "limit" })).toBeUndefined();
   });
 });

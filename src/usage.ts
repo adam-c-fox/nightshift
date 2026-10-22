@@ -11,11 +11,12 @@ try {
   if (name) useProjectEnv(loadProject(name).envFile);
   const claudeToken = getEnv(CLAUDE_TOKEN);
   if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
-  const claude = usageSummary(snapshotUsage());
-  const codex = await readCodexUsage().then(
+  const codexRead = readCodexUsage().then(
     (snapshot) => ({ codex: usageSummary(snapshot) }),
     (e: Error) => ({ codexError: e.message.split("\n")[0] }),
   );
+  const claude = usageSummary(snapshotUsage());
+  const codex = await codexRead;
   console.log(JSON.stringify({ ...claude, ...codex }));
 } catch (e) {
   console.log(JSON.stringify({ error: (e as Error).message.split("\n")[0] }));

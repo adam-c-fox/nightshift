@@ -4,6 +4,7 @@ import {
   LAYER_SEPARATOR, buildFinderPrompt, finderSystemPrompt, parseOrError, parseReviewBlock,
   type AgentReport, type ReviewPromptExtras, type ReviewRunResult, type TicketBrief,
 } from "./claude.js";
+import { CLAUDE_TOKEN, agentEnv } from "./agent-env.js";
 import { runWithWatchdog } from "./process.js";
 import type { NightBudget, RunUsage } from "./types.js";
 import { TIME_ZONE } from "./time.js";
@@ -116,12 +117,18 @@ export function parseCodexEvents(stdout: string, model: string): { text: string;
 
 export const codexUsageLimited = (output: string): boolean => /hit your usage limit/i.test(output);
 
+export function codexEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { [CLAUDE_TOKEN]: _token, ...rest } = agentEnv(env);
+  return rest;
+}
+
 export async function runCodexFinder(
   worktreePath: string, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, extras: ReviewPromptExtras, model = CODEX_MODEL,
 ): Promise<ReviewRunResult> {
   const started = Date.now();
   const proc = await runWithWatchdog("codex", buildCodexArgs(worktreePath, model), {
     cwd: worktreePath,
+    env: codexEnv(process.env),
     input: finderSystemPrompt("bugs") + LAYER_SEPARATOR + buildFinderPrompt("codex", brief, report, baseRef, extras),
     timeoutMs: FINDER_TIMEOUT_MS,
     checkIntervalMs: FINDER_TIMEOUT_MS,

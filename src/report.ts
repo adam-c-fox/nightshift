@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { lensLabel } from "./types.js";
+import { lensLabel, lensStage } from "./types.js";
 import type { CheckRecord, Confirmation, FixResolution, FixReviewRun, FixVerification, LensRun, ReviewFinding, RunRecord, NightBudget, RunUsage, SessionPostmortem, SessionResult, TicketConflict, TicketResult, TicketReview, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
@@ -281,7 +281,7 @@ function stageShares(runs: RunRecord[], cost: number): string {
   return [...byStage].map(([stage, c]) => ` · ${esc(stage)} ${Math.round((c / cost) * 100)}%`).join("");
 }
 
-const isCodexRun = ({ stage }: RunRecord): boolean => /^review-codex(-\d+)?$/.test(stage);
+const isCodexRun = ({ stage }: RunRecord): boolean => stage.startsWith(lensStage("codex"));
 
 function usageHTML(t: TicketResult): string {
   if (!t.runs || t.runs.length === 0) return "";
@@ -422,7 +422,7 @@ function budgetBarHTML(label: string, b: NightBudget, gateBanner = ""): string {
   return b.unavailable
     ? `
     <div class="budget">
-      ${gateBanner || `<div class="budget-label">${esc(label)}: <strong>unavailable</strong></div>`}
+      ${gateBanner || `<div class="budget-label">${esc(label)}: <strong>unavailable</strong>${b.resetInfo ? ` (${esc(b.resetInfo)})` : ""}</div>`}
     </div>`
     : `
     <div class="budget">

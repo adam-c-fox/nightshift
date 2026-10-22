@@ -670,6 +670,14 @@ export function sumUsage(usages: (RunUsage | undefined)[]): RunUsage | undefined
   };
 }
 
+export function pauseAfterExit(
+  proc: WatchdogResult, killedBy: string | undefined, opts: Pick<RunAgentOptions, "shouldAbort" | "shouldPause">,
+): string | undefined {
+  if (killedBy && proc.abortReason === killedBy) return killedBy;
+  if (proc.abortReason || proc.error || proc.status === 0) return undefined;
+  return opts.shouldAbort?.() ? undefined : opts.shouldPause?.();
+}
+
 export async function execClaude(
   worktreePath: string, prompt: string, systemPrompt: string, profile: ToolProfile, options: RunAgentOptions, addDirs: string[] = [],
 ): Promise<ClaudeRun> {
@@ -685,7 +693,7 @@ export async function execClaude(
       checkIntervalMs: options.checkIntervalMs ?? USAGE_CHECK_INTERVAL_MS,
       shouldAbort: () => options.shouldAbort?.() ?? (pauseReason = options.shouldPause?.()),
     });
-    return { proc, paused: pauseReason && proc.abortReason === pauseReason ? pauseReason : undefined };
+    return { proc, paused: pauseAfterExit(proc, pauseReason, options) };
   };
   const { attempts, stopReason } = await runResumable(attempt, options);
 

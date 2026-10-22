@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCodexArgs, codexUsageLimited, openCodexBudget, parseCodexEvents, parseCodexRateLimits, runCodexLens, type CodexLensDeps } from "../src/codex.js";
+import { buildCodexArgs, codexEnv, codexUsageLimited, openCodexBudget, parseCodexEvents, parseCodexRateLimits, runCodexLens, type CodexLensDeps } from "../src/codex.js";
 import { buildFinderPrompt, type AgentReport, type ReviewRunResult, type TicketBrief } from "../src/claude.js";
 import { closedBudget, openNightBudget, type UsageSnapshot } from "../src/budget.js";
 import { TIME_ZONE } from "../src/time.js";
@@ -155,5 +155,15 @@ describe("openCodexBudget", () => {
   it("closes the budget with the reason when the read fails", async () => {
     const budget = await openCodexBudget(async () => { throw new Error("no login"); });
     expect(budget).toMatchObject({ unavailable: true, gateHit: true, resetInfo: "Codex usage unavailable: no login" });
+  });
+});
+
+describe("codexEnv", () => {
+  it("drops runner secrets and the claude token", () => {
+    const env = codexEnv({ PATH: "/bin", LINEAR_API_KEY: "a", CLAUDE_CODE_OAUTH_TOKEN: "b", AZURE_DEVOPS_PAT: "c" });
+    expect(env.PATH).toBe("/bin");
+    expect(env).not.toHaveProperty("LINEAR_API_KEY");
+    expect(env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(env).not.toHaveProperty("AZURE_DEVOPS_PAT");
   });
 });
