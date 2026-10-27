@@ -227,7 +227,8 @@ describe("review prompt layering", () => {
 
   it("states the bugs checks generically and never names a project", () => {
     const bugs = read("review-bugs.md");
-    for (const name of ["example-client", "DEMO-560", "privateHelperName"]) expect(bugs).not.toMatch(new RegExp(name, "i"));
+    expect(bugs).not.toMatch(/\b[A-Z][A-Z0-9]*-\d+\b/);
+    expect(bugs).not.toMatch(/projects\/[a-z0-9_-]+\//i);
     expect(bugs).toMatch(/Behaviour over time/);
   });
 
