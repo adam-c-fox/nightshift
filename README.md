@@ -6,6 +6,12 @@ Nightshift works through Linear tickets overnight with Claude Code. You pick the
 
 <sub>The screenshot shows sample data.</sub>
 
+## Supported scope
+
+Nightshift currently targets Linear, Azure DevOps, Claude Code and an additional Codex review pass. Target repos use npm/Vitest or Terraform. The dashboard's startup installer is macOS-only; CI runs on Linux with Node 22 and 24.
+
+Adding projects on that stack is configuration work. Other ticket trackers, PR hosts and toolchains need code changes; there is no connector interface yet. See [supported scope and extension points](docs/supported-scope.md) for the assumptions and the modules a new integration would need to change.
+
 ## How a night runs
 
 Cron starts the runner at 23:00. It reads the project's `tonight.md` and works the tickets in file order. For each ticket it:
