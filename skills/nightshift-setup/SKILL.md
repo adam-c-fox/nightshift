@@ -6,19 +6,18 @@ disable-model-invocation: true
 
 # Nightshift setup
 
-Run from the root of a repo that should become a nightshift project. You're done when `projects/<name>/` loads with every check passing, and Adam has a report of each **gap** (a way this repo doesn't fit what nightshift can run).
+Run from the root of a repo that should become a nightshift project. You're done when `projects/<name>/` loads, validation meets step 6, and the user has a report of each **gap** (a way this repo doesn't fit what nightshift can run).
 
-`$NS` is `~/Developer/nightshift`. The nightshift checkout is the source of truth for the project format, so read it before you write anything:
+Resolve this skill's directory through any symlink, then set `$NS` to its grandparent, the nightshift checkout. Verify that `$NS/package.json` names `nightshift` and `$NS/projects/example/` exists. If the installed skill is a standalone copy, ask the user for the checkout path. Keep the target repo path separately; all project files go under `$NS`, and all nightshift commands run from `$NS`. The checkout is the source of truth for the project format:
 
-- `$NS/README.md`, section "Projects", says what each file in a project folder does.
+- `$NS/docs/setup.md`, section "Projects", says what each file in a project folder does.
 - `$NS/projects/example/` holds the templates.
 - `$NS/AGENTS.md` holds the generic agent instructions. A project's `AGENTS.md` is appended after it, so it should only add to it or override it.
-- `$NS/projects/nightshift_example/AGENTS.md` is a filled-in example. Match its depth.
 
 ## 1. Gather
 
 1. Find each repo. Run `git rev-parse --show-toplevel` here, then read the repo's own `CLAUDE.md`/`AGENTS.md`, `package.json`, lockfile and CI config to learn its layout and how its tests run.
-2. Ask Adam everything in one `AskUserQuestion`, with your inferred default as the first option:
+2. Ask the user everything in one `AskUserQuestion`, with your inferred default as the first option:
    - Other repos in the project, as absolute paths. A Terraform repo beside an app repo is common.
    - The project name. It must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`, can't be `new`, and can't already exist in `$NS/projects/`.
    - Each repo's key, matching `^[a-z0-9][a-z0-9_-]*$` (e.g. `app`, `infra`), and its toolchain.
@@ -33,7 +32,7 @@ Nightshift's stack is hardwired. Check every repo against this list:
 - **`node` toolchain** means npm (`package-lock.json` at the root, because worktrees run `npm ci`) and Vitest.
 - **`terraform` toolchain** means `.tf` root modules. Nightshift runs `validate` and `fmt -check` on them.
 
-A repo on another PR host, package manager or language is a **blocker**. Stop before writing files and tell Adam which part of nightshift would need to change. Anything smaller is a gap: note it and carry on.
+A repo on another PR host, package manager or language is a **blocker**. Stop before writing files and tell the user which part of nightshift would need to change. Anything smaller is a gap: note it and carry on.
 
 ## 3. Test database
 
@@ -47,10 +46,10 @@ The night exports exactly one service URL, `TEST_DATABASE_URL`, which the projec
 Run the exact checks a night runs before each ticket. Get the list from nightshift itself:
 
 ```sh
-cd $NS && npx tsx -e "import {checkCommands, discoverWorkspaces, discoverTerraformRoots} from './src/checks.ts'; const p='<worktree>', t='<toolchain>'; console.log(JSON.stringify(checkCommands(t, t==='node' ? discoverWorkspaces(p) : discoverTerraformRoots(p)), null, 1))"
+cd "$NS" && npx tsx -e "import {checkCommands, discoverWorkspaces, discoverTerraformRoots} from './src/checks.ts'; const p='<worktree>', t='<toolchain>'; console.log(JSON.stringify(checkCommands(t, t==='node' ? discoverWorkspaces(p) : discoverTerraformRoots(p)), null, 1))"
 ```
 
-Run them in a throwaway worktree so Adam's working tree stays untouched:
+Run them in a throwaway worktree so the user's working tree stays untouched:
 
 1. `git fetch`, then `git worktree add --detach <scratchpad>/<repo-key> origin/<default branch>`.
 2. For node, run `npm ci`, then start the test DB if there is one (`test-db.sh up`) and export its URL as `TEST_DATABASE_URL`.
@@ -72,7 +71,7 @@ The baseline runs unsandboxed, but night agents run sandboxed. Their network all
     - `git@ssh.dev.azure.com:v3/<org>/<project>/<repo>`
     - `https://dev.azure.com/<org>/<project>/_git/<repo>`
     - `https://<org>.visualstudio.com/<project>/_git/<repo>`
-  - `BRANCH_PREFIX` comes from `grep -h ^BRANCH_PREFIX= $NS/projects/*/.env`.
+  - Ask the user for an optional `BRANCH_PREFIX`, or leave it empty.
   - The PAT, `LINEAR_API_KEY` and the Claude token belong in the root `$NS/.env`.
 - **`AGENTS.md`**: the example's three sections, each holding only facts you verified in steps 1–4:
   - **Repos**: the layout, how to run one test file, how to validate each Terraform root, and every place the generic `AGENTS.md` is wrong for this repo.
@@ -84,10 +83,10 @@ The baseline runs unsandboxed, but night agents run sandboxed. Their network all
 ## 6. Validate
 
 ```sh
-cd $NS && npx tsx -e "import {fileChecks} from './src/dashboard/project-checks.ts'; console.log(JSON.stringify(fileChecks('<name>', {projectsDir: 'projects', exampleDir: 'projects/example'}), null, 1))"
+cd "$NS" && npx tsx -e "import {fileChecks} from './src/dashboard/project-checks.ts'; console.log(JSON.stringify(fileChecks('<name>', {projectsDir: 'projects', exampleDir: 'projects/example'}), null, 1))"
 ```
 
-Fix and re-run until every check is `pass`.
+Fix and re-run until every check is `pass`. If the user chose an empty `BRANCH_PREFIX`, accept a `.env` warning only when its `keys.missing` contains that key alone, and record it in the report. The checker treats the example's branch-prefix key as required even though the runner permits an empty prefix. Resolve every other missing key or failed check before finishing.
 
 ## 7. Report
 

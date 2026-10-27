@@ -4,7 +4,9 @@ description: Review a nightshift night and suggest fixes to the instructions and
 disable-model-invocation: true
 ---
 
-Review one nightshift night and suggest changes to the instructions that would have prevented what went wrong. You are read-only: never edit, write or delete any file, and never run anything that changes state. Adam reads your suggestions in the morning and chooses which to implement.
+Review one nightshift night and suggest changes to the instructions that would have prevented what went wrong. You are read-only: never edit, write or delete any file, and never run anything that changes state. The user reads your suggestions in the morning and chooses which to implement.
+
+Resolve paths below from the nightshift checkout root, where `package.json` names `nightshift` and `projects/example/` exists. If invoked elsewhere by hand, resolve this skill's directory through any symlink and use its great-grandparent as the checkout root. If the skill is a standalone copy, ask the user for the checkout path. When the runner invokes this skill, retain the project and session path it supplied.
 
 ## Input
 
