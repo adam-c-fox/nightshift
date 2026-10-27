@@ -30,11 +30,14 @@ Codex has its own allowance: 20% of its weekly limit a night, not configurable p
 
 ## Setup
 
-You need Node 22 or later, the [Claude Code](https://claude.com/claude-code) CLI, the Azure CLI (`az`) with the DevOps extension, the [Codex CLI](https://developers.openai.com/codex/cli), and Docker (for the throwaway Postgres that database-backed tests run against).
+You need Node 22.12+ or Node 24+, Git, the [Claude Code](https://claude.com/claude-code) CLI, the Azure CLI (`az`) with the DevOps extension, and the [Codex CLI](https://developers.openai.com/codex/cli). Docker is needed only when the target project's tests use the example Postgres service.
 
 ```sh
-npm install
+git clone https://github.com/adam-c-fox/nightshift.git
+cd nightshift
+npm ci
 cp .env.example .env
+mkdir -p logs
 ```
 
 Fill in the root `.env`:
@@ -54,7 +57,19 @@ Fill in the project's `.env` (see [Projects](#projects)). An empty value there f
 
 Run `codex login` once with your ChatGPT plan. The runner reads the login from `~/.codex/auth.json`, so cron needs no token.
 
-Schedule it:
+Install the bundled skills for Claude Code. Run this from the nightshift checkout; the links let `/nightshift-setup` find it when invoked from another repo:
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s "$PWD/skills/nightshift-setup" ~/.claude/skills/nightshift-setup
+ln -s "$PWD/.claude/skills/prep" ~/.claude/skills/prep
+ln -s "$PWD/.claude/skills/tonight" ~/.claude/skills/tonight
+ln -s "$PWD/.claude/skills/postmortem" ~/.claude/skills/postmortem
+```
+
+If one of those names is already installed, inspect the existing directory or link before replacing it. `/prep` and `/tonight` also need a connected Linear tool that can read and update issues; the unattended runner uses `LINEAR_API_KEY` directly.
+
+Configure a project and preview a night using the sections below before scheduling it. Cron has a minimal `PATH`: set it in your crontab to include the directories containing `node`, `npm`, `claude`, `az` and `codex`, as well as system tools. Find those paths with `command -v node npm claude az codex`. Replace `/path/to/nightshift` and `<name>` with your checkout and project:
 
 ```cron
 0 23 * * * cd /path/to/nightshift && npm run run -- --project <name> >> logs/cron.log 2>&1
@@ -74,7 +89,7 @@ A project is the set of repos nightshift works in, plus the instructions and tic
 
 `linearTeams` is a list of Linear team keys such as `["ENG"]`. When it's set, `prep-status` and the [dashboard](#dashboard) only list your Todo tickets from those teams. `/tonight` still lists every Todo ticket assigned to you, and tickets outside `linearTeams` show "—" in its prep column. Leave it out to see all of them. `/prep` and `/tonight` also use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](#prep-memory).
 
-Start a new project by running `/nightshift-setup` from the root of its repo. The skill lives in [`skills/nightshift-setup`](skills/nightshift-setup/SKILL.md); link it into your user skills once with `ln -s "$PWD/skills/nightshift-setup" ~/.claude/skills/`. It writes `projects/<name>/`, runs the night's checks against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`projects/example`](projects/example) to `projects/<name>` and replace the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
+Start a new project by running `/nightshift-setup` from the root of its repo, after installing the skill above. It writes `projects/<name>/`, runs the night's checks against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`projects/example`](projects/example) to `projects/<name>`, create its `.env` from `.env.example`, and replace the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
 
 ## Each evening
 
@@ -90,7 +105,7 @@ repo: app
 - Reuse the existing row formatter in packages/export; don't add a CSV dependency.
 ```
 
-Preview the night without changing anything:
+Preview the night without editing target repos or publishing PRs. This still reads external services and writes local logs and reports:
 
 ```sh
 npm run run:dry -- --project <name>
