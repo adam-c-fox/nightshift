@@ -253,3 +253,7 @@ It adds a detached worktree under the system temp directory at `<sha>`, applies 
 To get the pre-fix diff for a night recorded since the fix review landed, apply the final `<ID>-diff.txt` to a checkout of the base, reverse `<ID>-fix-diff-2.txt` if there is one, then reverse `<ID>-fix-diff.txt`, and take the diff against the base. For earlier nights, rebuild it by undoing the fix run's edits from its transcript.
 
 For a synthetic fix-review example, change a shared export-name helper and omit coverage for one of its callers. A useful review should identify the missing caller coverage and verify the fixes it was given. Use commit IDs from your own saved run; this repo does not include another project's source or replay logs.
+
+## License
+
+[MIT](LICENSE), copyright 2026 Adam Fox.
