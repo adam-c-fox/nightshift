@@ -90,6 +90,11 @@ export function buildPrTitle(ticketId: string, title: string, summary: string): 
   return `${withoutId} (${ticketId})`;
 }
 
+export function commitSubject(ticketId: string, title: string, summary: string): string {
+  const full = buildPrTitle(ticketId, title, summary);
+  return ticketId.startsWith("PR-") ? full.slice(0, -` (${ticketId})`.length) : full;
+}
+
 export interface PrContent {
   ticketId: string;
   title: string;
@@ -174,6 +179,8 @@ export interface AzPullRequest {
   status?: string;
   isDraft?: boolean;
   reviewers?: AzReviewer[];
+  createdBy?: { uniqueName?: string };
+  description?: string;
 }
 export interface VoteSummary { approved: number; waiting: number; rejected: number }
 
@@ -198,13 +205,16 @@ export function repoNameFromRemote(remoteUrl: string): string {
 
 const stripHeads = (ref: string) => ref.replace(/^refs\/heads\//, "");
 
+export const toExistingPr = (p: AzPullRequest): ExistingPr => ({
+  prId: p.pullRequestId, sourceBranch: stripHeads(p.sourceRefName), targetBranch: stripHeads(p.targetRefName), autoComplete: Boolean(p.autoCompleteSetBy),
+});
+
 export function pickTicketPr(prs: AzPullRequest[], expectedBranch: string): ExistingPr | null {
   const exact = `refs/heads/${expectedBranch}`;
   const isTicketBranch = (ref: string) => ref === exact || (ref.startsWith(`${exact}-`) && /^\d+$/.test(ref.slice(exact.length + 1)));
   const matches = prs.filter(p => isTicketBranch(p.sourceRefName));
   if (matches.length === 0) return null;
-  const best = matches.reduce((a, b) => (b.pullRequestId > a.pullRequestId ? b : a));
-  return { prId: best.pullRequestId, sourceBranch: stripHeads(best.sourceRefName), targetBranch: stripHeads(best.targetRefName), autoComplete: Boolean(best.autoCompleteSetBy) };
+  return toExistingPr(matches.reduce((a, b) => (b.pullRequestId > a.pullRequestId ? b : a)));
 }
 
 export type PrAction = "update" | "open" | "hold";
@@ -225,7 +235,7 @@ export const prListArgs = (org: string, project: string, repoName: string): stri
   "--top", "200",
 ];
 
-function originUrl(cwd: string): string {
+export function originUrl(cwd: string): string {
   return execFileSync("git", ORIGIN_URL_ARGS, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 

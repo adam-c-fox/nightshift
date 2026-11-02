@@ -15,6 +15,7 @@ import type {
   NightRecord,
   PostmortemSuggestion,
   SessionPostmortem,
+  ThreadOutcome,
   TicketResult,
 } from "../src/types.js";
 
@@ -353,5 +354,60 @@ describe("nightRows", () => {
   it("omits the suggestion count when the postmortem did not run", () => {
     const [row] = nightRows([n2({ postmortem: undefined })], []);
     expect(row.suggestions).toBe(0);
+  });
+});
+
+describe("buildInbox PR comment sweep", () => {
+  const thread = (endState: ThreadOutcome["endState"], over: Partial<ThreadOutcome> = {}): ThreadOutcome => ({
+    threadId: 1, excerpt: "e", reason: "r", endState, replied: false, resolved: false, ...over,
+  });
+  const sweepNight = (over: Partial<NightRecord> = {}) => night(N2_ID, record([], over));
+
+  it("emits a sweep item for a sweep error", () => {
+    const items = buildInbox([sweepNight({ prSweep: { prsScanned: 0, items: 0, held: [], error: "az failed" } })], {}, prLive);
+    expect(items).toEqual([
+      {
+        kind: "sweep",
+        reportId: N2_ID,
+        project: "acme",
+        date: "2026-10-02",
+        key: "sweep:error",
+        reportHref: `/reports/${N2_ID}.html`,
+        error: "az failed",
+      },
+    ]);
+  });
+
+  it("drops a ticked sweep item and ignores dry runs and clean sweeps", () => {
+    const prSweep = { prsScanned: 0, items: 0, held: [], error: "az failed" };
+    const entry = { at: "x", updatedAt: "x" };
+    expect(buildInbox([sweepNight({ prSweep })], { [N2_ID]: { "sweep:error": entry } }, prLive)).toEqual([]);
+    expect(buildInbox([sweepNight({ prSweep, dryRun: true })], {}, prLive)).toEqual([]);
+    expect(buildInbox([sweepNight({ prSweep: { prsScanned: 2, items: 1, held: [] } })], {}, prLive)).toEqual([]);
+  });
+
+  it("counts threads needing you on ticket items", () => {
+    const prComments = [
+      thread("needs_person"),
+      thread("gave_up"),
+      thread("replied"),
+      thread("resolved", { replyError: "boom" }),
+      thread("resolved"),
+      thread("answered"),
+    ];
+    const [item] = buildInbox([night(N2_ID, record([ticket("ENG-2", "needs_review", { prComments })]))], {}, prLive);
+    expect(item).toMatchObject({ kind: "ticket", threadsNeedingYou: 4 });
+  });
+
+  it("omits threadsNeedingYou when no thread needs you", () => {
+    const [item] = buildInbox([night(N2_ID, record([ticket("ENG-2", "needs_review", { prComments: [thread("resolved")] })]))], {}, prLive);
+    expect(item).not.toHaveProperty("threadsNeedingYou");
+  });
+
+  it("surfaces a done sweep ticket that has threads needing you", () => {
+    const prComments = [thread("needs_person")];
+    const items = buildInbox([night(N2_ID, record([ticket("PR-9", "done", { prComments })]))], {}, prLive);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ ticketId: "PR-9", threadsNeedingYou: 1 });
   });
 });

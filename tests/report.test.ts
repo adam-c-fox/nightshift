@@ -7,7 +7,7 @@ import {
   REPORT_BASE, countTickets, esc, generateHTML, postmortemActionKey, reportBase, reportFilename, ticketActionKey, writeReport,
 } from "../src/report.js";
 import { DASHBOARD_ORIGIN } from "../src/dashboard/address.js";
-import type { RunUsage, SessionResult, TicketResult, TicketReview } from "../src/types.js";
+import type { RunUsage, SessionResult, ThreadOutcome, TicketResult, TicketReview } from "../src/types.js";
 
 const session = (over: Partial<SessionResult>): SessionResult => ({
   date: "2026-10-01", startedAt: "", endedAt: "", tickets: [],
@@ -764,5 +764,71 @@ describe("report usage", () => {
     expect(html).not.toContain("Usage:");
     expect(html).not.toContain("night-usage");
     expect(html).not.toContain("unmeasured");
+  });
+});
+
+describe("report PR comment sweep", () => {
+  const outcome = (over: Partial<ThreadOutcome> = {}): ThreadOutcome => ({
+    threadId: 7, file: "src/a.ts", line: 12, excerpt: "Why not a map?", verdict: "needs_person", severity: "medium",
+    reason: "Design choice", endState: "needs_person", replied: false, resolved: false, ...over,
+  });
+  const withThreads = (...prComments: ThreadOutcome[]) => ticketResult({ prComments });
+  const decisions = (html: string) => html.slice(html.indexOf('<section class="decisions"'), html.indexOf("</section>"));
+
+  it("lists needs_person threads under Decisions needed with ticket link, file:line, excerpt and reason", () => {
+    const top = decisions(reportFor(withThreads(outcome())));
+    expect(top).toContain("<h2>Decisions needed</h2>");
+    expect(top).toContain('<a class="ticket-id" href="#ticket-ENG-1">ENG-1</a>');
+    expect(top).toContain("src/a.ts:12");
+    expect(top).toContain("Why not a map?");
+    expect(top).toContain("Design choice");
+    expect(top).toContain("Review comments:");
+  });
+
+  it("leaves other end states out of Decisions needed", () => {
+    const html = reportFor(withThreads(outcome({ endState: "resolved", verdict: "fixed" })));
+    expect(html).not.toContain('<section class="decisions"');
+  });
+
+  it("escapes thread text", () => {
+    const html = reportFor(withThreads(outcome({ excerpt: "<b>x</b>", reason: "a <i>", file: "<f>" })));
+    expect(html).not.toContain("<b>x</b>");
+    expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
+  });
+
+  it("shows a PR comments block on the card with verdict, end state in words and reply error", () => {
+    const html = reportFor(withThreads(
+      outcome({ threadId: 1, verdict: "fixed", endState: "resolved", replied: true, resolved: true }),
+      outcome({ threadId: 2, verdict: "fixed", endState: "replied", replied: true }),
+      outcome({ threadId: 3, verdict: "no_change", endState: "answered", replied: true, replyError: "resolve failed <x>" }),
+      outcome({ threadId: 4, endState: "gave_up", verdict: undefined }),
+      outcome({ threadId: 5, endState: "retry", verdict: undefined }),
+    ));
+    const card = html.slice(html.indexOf('id="ticket-ENG-1"'));
+    expect(card).toContain("PR comments (5)");
+    for (const words of ["resolved", "replied, left open", "already handled", "gave up after 2 attempts", "will retry", "resolve failed &lt;x&gt;"]) {
+      expect(card).toContain(words);
+    }
+  });
+
+  it("omits the PR comments block when there are no outcomes", () => {
+    expect(reportFor(ticketResult())).not.toContain("PR comments (");
+  });
+
+  it("shows a banner at the top when the sweep failed", () => {
+    const html = generateHTML(session({ prSweep: { prsScanned: 0, items: 0, held: [], error: "az: not logged in <x>" } }));
+    expect(html).toContain("PR comment sweep needs you: az: not logged in &lt;x&gt;");
+    expect(html).toContain('data-key="sweep:error"');
+  });
+
+  it("lists held PRs and the scanned count", () => {
+    const html = generateHTML(session({ prSweep: { prsScanned: 4, items: 1, held: [{ repo: "web", prId: 55, reason: "auto-complete is set" }] } }));
+    expect(html).toContain("4 PRs scanned");
+    expect(html).toContain("web PR #55: auto-complete is set");
+    expect(html).not.toContain("PR comment sweep needs you");
+  });
+
+  it("renders nothing about the sweep when it did not run", () => {
+    expect(generateHTML(session({}))).not.toContain("PRs scanned");
   });
 });

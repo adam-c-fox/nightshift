@@ -1,4 +1,5 @@
 import type { CheckStatus } from "./checks.js";
+import type { ExistingPr } from "./pr.js";
 
 export type Toolchain = "node" | "terraform";
 
@@ -8,7 +9,43 @@ export interface Ticket {
   context: string[];     // bullet lines from tonight.md
   repo: string;
   base?: string;         // ID of an earlier ticket this one is stacked on
+  prComments?: PrCommentWork;
 }
+
+export interface PendingComment { id: number; author: string; text: string }
+
+export interface PendingThread { id: number; file?: string; line?: number; comments: PendingComment[]; lastHumanId: number }
+
+export interface PrCommentWork { pr: ExistingPr; repoName: string; title: string; threads: PendingThread[] }
+
+export type ThreadEndState = "resolved" | "replied" | "answered" | "needs_person" | "gave_up" | "retry";
+
+export interface ThreadRecord { handledCommentId: number; replyIds: number[]; endState: ThreadEndState; attempts: number; updatedAt: string }
+
+export type ThreadVerdict = "fixed" | "no_change" | "needs_person";
+
+export type ThreadSeverity = "low" | "medium" | "high";
+
+export interface ThreadReport { id: number; verdict: ThreadVerdict; severity: ThreadSeverity; reason: string; reply: string }
+
+export interface ThreadOutcome {
+  threadId: number;
+  file?: string;
+  line?: number;
+  excerpt: string;
+  verdict?: ThreadVerdict;
+  severity?: ThreadSeverity;
+  reason: string;
+  reply?: string;
+  endState: ThreadEndState;
+  replied: boolean;
+  resolved: boolean;
+  replyError?: string;
+}
+
+export interface HeldPr { repo: string; prId: number; reason: string }
+
+export interface PrSweepSummary { prsScanned: number; items: number; held: HeldPr[]; error?: string }
 
 export interface LinearComment {
   author: string;
@@ -258,6 +295,7 @@ export interface TicketResult {
   review?: TicketReview;
   checks?: CheckRecord[];
   runs?: RunRecord[];
+  prComments?: ThreadOutcome[];
 }
 
 export interface NightBudget {
@@ -300,6 +338,7 @@ export interface SessionResult {
   ticketError?: string;
   postmortem?: SessionPostmortem;
   codexBudget?: NightBudget;
+  prSweep?: PrSweepSummary;
 }
 
 export interface NightRecord extends SessionResult {

@@ -57,6 +57,7 @@ describe("parseReportBlock", () => {
         { file: "src/export.ts", decision: "A row with no header is skipped: not an error" },
         { file: "src/other.ts", decision: "Empty files are marked read." },
       ],
+      threads: [],
     });
   });
 
@@ -116,5 +117,68 @@ describe("parseReportBlock", () => {
 
   it("throws when there is no block", () => {
     expect(() => parseReportBlock("nothing here")).toThrow(/No ---REPORT---/);
+  });
+  describe("threads", () => {
+    const withThreads = (body: string) => `---REPORT---
+status: done
+title: t
+summary: s
+threads:
+${body}
+---
+`;
+
+    it("parses thread records with numeric ids", () => {
+      const out = parseReportBlock(withThreads(`  - id: 12
+    verdict: fixed
+    severity: low
+    reason: renamed the variable
+    reply: "Renamed it to retryCount."
+  - id: 13
+    verdict: needs_person
+    severity: high
+    reason: design question
+    reply: ""`));
+      expect(out.threads).toEqual([
+        { id: 12, verdict: "fixed", severity: "low", reason: "renamed the variable", reply: "Renamed it to retryCount." },
+        { id: 13, verdict: "needs_person", severity: "high", reason: "design question", reply: "" },
+      ]);
+    });
+
+    it("drops records with an invalid verdict or a non-positive id", () => {
+      const out = parseReportBlock(withThreads(`  - id: 1
+    verdict: maybe
+    severity: low
+    reason: r
+    reply: x
+  - id: 0
+    verdict: fixed
+    severity: low
+    reason: r
+    reply: x
+  - id: abc
+    verdict: fixed
+    severity: low
+    reason: r
+    reply: x
+  - id: 4
+    verdict: no_change
+    severity: low
+    reason: r
+    reply: ok`));
+      expect(out.threads.map(t => t.id)).toEqual([4]);
+    });
+
+    it("defaults an unknown severity to medium and a missing reply to empty", () => {
+      const out = parseReportBlock(withThreads(`  - id: 5
+    verdict: fixed
+    severity: urgent
+    reason: r`));
+      expect(out.threads).toEqual([{ id: 5, verdict: "fixed", severity: "medium", reason: "r", reply: "" }]);
+    });
+
+    it("gives an empty list when there is no threads field", () => {
+      expect(parseReportBlock(block).threads).toEqual([]);
+    });
   });
 });

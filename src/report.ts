@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { lensLabel, lensStage } from "./types.js";
-import type { CheckRecord, Confirmation, FixResolution, FixReviewRun, FixVerification, LensRun, ReviewFinding, RunRecord, NightBudget, RunUsage, SessionPostmortem, SessionResult, TicketConflict, TicketResult, TicketReview, VerifyResult } from "./types.js";
+import type { CheckRecord, Confirmation, FixResolution, FixReviewRun, FixVerification, LensRun, ReviewFinding, RunRecord, NightBudget, RunUsage, SessionPostmortem, SessionResult, ThreadEndState, ThreadOutcome, PrSweepSummary, TicketConflict, TicketResult, TicketReview, VerifyResult } from "./types.js";
 import { budgetUsedPct } from "./budget.js";
 import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
 
@@ -42,6 +42,7 @@ export const REPORT_BASE = /^nightshift-(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/;
 
 export const ticketActionKey = (id: string): string => `ticket:${id}`;
 export const POSTMORTEM_ID_PATTERN = "[A-Za-z0-9_-]{1,32}";
+export const sweepActionKey = (): string => "sweep:error";
 export const postmortemActionKey = (id: string): string => `postmortem:${id}`;
 
 export const THEME_CSS = `
@@ -105,9 +106,55 @@ function conflictHTML(c: TicketConflict, ticketId?: string): string {
 }
 
 function decisionsHTML(tickets: TicketResult[]): string {
-  const items = tickets.flatMap(t => (t.review?.conflicts ?? []).map(c => conflictHTML(c, t.ticket.id))).join("");
+  const items = tickets.flatMap(t => [
+    ...(t.review?.conflicts ?? []).map(c => conflictHTML(c, t.ticket.id)),
+    ...(t.prComments ?? []).filter(o => o.endState === "needs_person").map(o => threadDecisionHTML(o, t.ticket.id)),
+  ]).join("");
   if (!items) return "";
-  return `<section class="decisions" id="decisions"><h2>Decisions needed</h2><p class="hint">The ticket asks for each of these, and it works against the ticket's own goal. Nothing was changed: decide, then update the ticket or the code.</p>${items}</section>`;
+  return `<section class="decisions" id="decisions"><h2>Decisions needed</h2><p class="hint">Ticket conflicts: the ticket asks for something that works against its own goal. Review comments: the comment needs a person's call. Nothing was changed for these: decide, then update the ticket, the code or reply on the thread.</p>${items}</section>`;
+}
+
+const END_STATE_WORDS: Record<ThreadEndState, string> = {
+  resolved: "resolved",
+  replied: "replied, left open",
+  answered: "already handled",
+  needs_person: "needs you",
+  gave_up: "gave up after 2 attempts",
+  retry: "will retry",
+};
+
+function threadLocation(o: ThreadOutcome): string {
+  return o.file ? `${o.file}${o.line ? `:${o.line}` : ""}` : "";
+}
+
+function threadDecisionHTML(o: ThreadOutcome, ticketId: string): string {
+  const location = threadLocation(o);
+  return `<div class="finding conflict">
+           <div class="finding-head"><a class="ticket-id" href="#ticket-${esc(ticketId)}">${esc(ticketId)}</a>${location ? `<code class="finding-file">${esc(location)}</code>` : ""}</div>
+           <div><q>${esc(o.excerpt)}</q></div>
+           <div>${prose(o.reason)}</div>
+         </div>`;
+}
+
+function prCommentsHTML(t: TicketResult): string {
+  const outcomes = t.prComments ?? [];
+  if (outcomes.length === 0) return "";
+  const rows = outcomes.map(o => `<li>${[
+    o.verdict ? `<strong>${esc(o.verdict)}</strong>` : "",
+    threadLocation(o) ? `<code>${esc(threadLocation(o))}</code>` : "",
+    esc(END_STATE_WORDS[o.endState]),
+    o.replyError ? `<span class="unverified">${esc(o.replyError)}</span>` : "",
+  ].filter(Boolean).join(" · ")}</li>`).join("");
+  return `<div class="review pr-comments"><strong>PR comments (${outcomes.length})</strong><ul>${rows}</ul></div>`;
+}
+
+function sweepHTML(sweep: PrSweepSummary | undefined): string {
+  if (!sweep) return "";
+  const banner = sweep.error
+    ? `<div class="gate-hit">${actionedBoxHTML(sweepActionKey(), "PR comment sweep")} ⛔ PR comment sweep needs you: ${esc(sweep.error)}</div>`
+    : "";
+  const held = sweep.held.length === 0 ? "" : ` Held: ${sweep.held.map(h => `${esc(h.repo)} PR #${h.prId}: ${esc(h.reason)}`).join("; ")}.`;
+  return `${banner}<p class="hint sweep-line">${sweep.prsScanned} PRs scanned.${held}</p>`;
 }
 
 function conflictsHTML(review: TicketReview): string {
@@ -354,6 +401,7 @@ function ticketCardHTML(t: TicketResult): string {
       ${usageHTML(t)}
       ${checksHTML(t)}
       ${reviewHTML(t)}
+      ${prCommentsHTML(t)}
       ${followups}
       ${notes}
       <div class="meta">
@@ -450,7 +498,7 @@ export function generateHTML(session: SessionResult): string {
     ? `<div class="stat postmortem-flag"><a href="#postmortem" style="color:inherit"><strong>⚠️</strong>${esc(pmProblem)}</a></div>`
     : `<div class="stat"><a href="#postmortem" style="color:inherit"><strong>${session.postmortem.suggestions.length}</strong>postmortem suggestions</a></div>`;
   const suggestionCount = session.postmortem?.outcome === "done" ? session.postmortem.suggestions.length : 0;
-  const actionableCount = session.tickets.length + suggestionCount;
+  const actionableCount = session.tickets.length + suggestionCount + (session.prSweep?.error ? 1 : 0);
   const actionedStat = actionableCount === 0 ? "" : `<div class="stat"><strong id="actioned-count">0 / ${actionableCount}</strong>actioned</div>`;
   const toolbar = actionableCount === 0 ? "" : `<div class="toolbar">
     <button type="button" data-expand="open">Expand all</button>
@@ -614,6 +662,7 @@ export function generateHTML(session: SessionResult): string {
   </div>
 
   ${ticketErrorBanner}
+  ${sweepHTML(session.prSweep)}
   ${budgetBar}
 
   ${decisionsHTML(session.tickets)}

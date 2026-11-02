@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { REVIEW_LENSES, lensStage, roundStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type LinearComment, type LinearTicket, type NightBudget, type RunUsage } from "./types.js";
+import { REVIEW_LENSES, lensStage, roundStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type LinearComment, type LinearTicket, type NightBudget, type RunUsage, type PrCommentWork, type ThreadReport } from "./types.js";
 import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
 import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
@@ -13,13 +14,15 @@ import { getEnv, requireEnv, useProjectEnv } from "./env.js";
 import { parseRunArgs, RUN_USAGE, type RunArgs } from "./args.js";
 import { listProjects, loadProject, projectEnvFiles, type Project } from "./project.js";
 import { deriveOutcome } from "./status.js";
-import { createAndCheckPR, orgUrl, existingPrWebUrl, findOpenTicketPr, buildPrTitle, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
+import { az, createAndCheckPR, orgUrl, originUrl, prListArgs, repoNameFromRemote, type AzPullRequest, existingPrWebUrl, findOpenTicketPr, commitSubject, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
+import { applyThreadActions, listThreads, mergeSweep, planThreadActions, postReply, resolveThread, sweepPrComments, type SweepResult } from "./pr-comments.js";
+import { loadPrCommentState, prKey, pruneClosed, savePrCommentState, type PrCommentState } from "./pr-comment-state.js";
 import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";
 import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { reportBase, REPORTS_DIR, writeReport } from "./report.js";
 import { heartbeatFile, startHeartbeat } from "./heartbeat.js";
-import { writeJsonAtomic } from "./state.js";
+import { statePaths, writeJsonAtomic } from "./state.js";
 import { nightRecord, writeNightRecord } from "./night-record.js";
 import { postmortemMarkdown, postmortemSkipReason, runPostmortem, sessionLogData, type UsageGate } from "./postmortem.js";
 import { checkCommands, classifyChecks, discoverTerraformRoots, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
@@ -196,9 +199,52 @@ async function runLoggedChecks(label: string, cwd: string, commands: CheckComman
 const checkRecords = (checks: ClassifiedCheck[]): TicketResult["checks"] =>
   checks.map(({ outputTail: _tail, ...record }) => record);
 
+interface PrWrites { state: PrCommentState; file: string; blocked: { reason?: string } }
+
+const shortHead = (cwd: string): string | undefined => {
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd, encoding: "utf-8" }).trim();
+  } catch {
+    return undefined;
+  }
+};
+
+const LOWERING_END_STATES = ["needs_person", "retry", "gave_up"];
+
+function settlePrThreads(
+  ticketResult: TicketResult, work: PrCommentWork, input: { reports: ThreadReport[]; pushed: boolean; verified: boolean; changed: boolean },
+  writes: PrWrites, dryRun: boolean,
+): void {
+  try {
+    const known = new Set(work.threads.map(t => t.id));
+    for (const r of input.reports.filter(r => !known.has(r.id))) log(`  Ignoring a verdict for unknown thread ${r.id}`);
+    const target = { org: orgUrl(requireEnv("AZURE_DEVOPS_ORG")), project: requireEnv("AZURE_DEVOPS_PROJECT"), repoName: work.repoName, prId: work.pr.prId };
+    const outcomes = applyThreadActions(planThreadActions({ threads: work.threads, ...input }), {
+      target,
+      shortSha: input.pushed && !dryRun ? shortHead(ticketResult.worktreePath) : undefined,
+      records: (writes.state[prKey(work.repoName, work.pr.prId)] ??= {}),
+      save: () => savePrCommentState(writes.file, writes.state),
+      postReply: (threadId, parentCommentId, content) => postReply(target, threadId, parentCommentId, content),
+      resolve: threadId => resolveThread(target, threadId),
+      writesBlocked: writes.blocked,
+      now: () => new Date().toISOString(),
+      dryRun,
+      log,
+    });
+    ticketResult.prComments = outcomes;
+    if (ticketResult.status === "done" && outcomes.some(o => LOWERING_END_STATES.includes(o.endState) || o.replyError)) ticketResult.status = "partial";
+  } catch (e) {
+    const message = errorMessage(e);
+    log(`  Settling PR threads failed for ${ticketResult.ticket.id}: ${message}`);
+    ticketResult.status = "needs_review";
+    ticketResult.notes = [ticketResult.notes, `Settling PR threads failed: ${message}`].filter(Boolean).join(" | ");
+  }
+}
+
 async function processTicket(
   ticket: Ticket, project: Project, branchPrefix: string | undefined, instructions: string, dryRun: boolean,
   budgetRef: { current: NightBudget }, codexBudgetRef: { current: NightBudget }, processed: Map<string, ProcessedTicket>,
+  prWrites: PrWrites,
 ): Promise<TicketResult> {
   const { id: ticketId, name: ticketName, context, repo } = ticket;
   const { path: repoPath, toolchain } = project.repos[repo];
@@ -227,7 +273,7 @@ async function processTicket(
       linearUrl = linear.url;
       linearState = linear.state;
       log(`  Linear: ${linear.name} [${linear.state}]`);
-      if (!dryRun && shouldMarkInProgress(linear.stateType)) await moveLinearTicket(linear, linear.inProgressState);
+      if (!dryRun && !ticket.prComments && shouldMarkInProgress(linear.stateType)) await moveLinearTicket(linear, linear.inProgressState);
     } else {
       log(`  Linear: ticket ${ticketId} not found (using tonight.md context only)`);
     }
@@ -237,13 +283,22 @@ async function processTicket(
 
   const branchBase = ticketBranchName(branchPrefix, ticketId, linear?.name ?? ticketName);
   wt.branch = branchBase;
-  const existing = lookUpExistingPr(branchBase, repoPath);
+  const existing = ticket.prComments?.pr ?? lookUpExistingPr(branchBase, repoPath);
   if (dryRun) {
     log(`  [dry-run] Would create worktree at ${wt.wtPath} on ${wt.branch}`);
     if (parent) log(`  [dry-run] Would branch from origin/${parent.branch}`);
   } else {
     const startFrom = existing ? { branch: existing.sourceBranch, baseBranch: existing.targetBranch } : undefined;
     wt = createWorktree({ repoPath, ticketId, toolchain, branchBase, startFrom, stackedOn: parent?.branch }, log);
+    if (ticket.prComments && !wt.startedFromPr) {
+      const gone = placeholderResult(ticket, "needs_review", "PR branch gone; review comments not addressed", branchPrefix);
+      gone.linear = linear;
+      gone.worktreePath = wt.wtPath;
+      gone.notes = gone.summary;
+      settlePrThreads(gone, ticket.prComments, { reports: [], pushed: false, verified: false, changed: false }, prWrites, false);
+      gone.durationSec = Math.round((Date.now() - startTime) / 1000);
+      return gone;
+    }
   }
   const continuing = existing !== null && (dryRun || wt.startedFromPr);
   const agentContext = [...(continuing ? [continuingPrContext(existing.prId)] : []), ...(parent ? [stackedContext(parent)] : []), ...context];
@@ -260,7 +315,7 @@ async function processTicket(
   if (!dryRun) await waitForSession();
   const result = await runAgent(
     wt.wtPath, ticketId, ticketName, agentContext,
-    linearDesc, linearComments, linearUrl, linearState, dryRun, agentOptions,
+    linearDesc, linearComments, linearUrl, linearState, dryRun, agentOptions, Boolean(ticket.prComments),
   );
 
   const report = result.report;
@@ -299,6 +354,7 @@ async function processTicket(
   ticketResult.notes = [ticketResult.notes, ...outcome.notes].filter(Boolean).join(" | ");
 
   let pushed: PushedBranch | undefined;
+  const reports = report?.threads ?? [];
   if (dryRun) {
     log(`  [dry-run] Would review the change on ${wt.branch}, then fix any issues found`);
     const action = prAction(existing, true);
@@ -308,6 +364,7 @@ async function processTicket(
       : action === "hold"
         ? `  [dry-run] Would commit on ${wt.branch} but not push: PR #${existing!.prId} has auto-complete set`
         : `  [dry-run] Would commit, push ${wt.branch} and open a new Azure DevOps PR into ${wt.baseBranch}`);
+    if (ticket.prComments) log(`  [dry-run] Would address ${ticket.prComments.threads.length} review thread(s) on PR #${ticket.prComments.pr.prId}`);
   } else {
     saveLog(`${ticketId}-output.txt`, result.rawOutput);
 
@@ -386,8 +443,9 @@ async function processTicket(
     if (notRun.length > 0) ticketResult.notes = [ticketResult.notes, `Checks that did not run: ${notRun.map(c => c.name).join(", ")}.`].filter(Boolean).join(" | ");
     const publish = outcome.publish && stage.publish;
 
+    let committed: ReturnType<typeof commitWorktree> | undefined;
     try {
-      const commit = commitWorktree(wt, buildPrTitle(ticketId, ticketResult.title ?? "", ticketResult.summary), log);
+      const commit = committed = commitWorktree(wt, commitSubject(ticketId, ticketResult.title ?? "", ticketResult.summary), log);
       const excluded = commit === "no_changes" ? [] : excludedPathsInBranch(wt);
       if (excluded.length > 0) {
         const listed = excluded.slice(0, 5).join(", ");
@@ -437,6 +495,14 @@ async function processTicket(
       ticketResult.status = "needs_review";
       ticketResult.notes = [ticketResult.notes, `Commit/PR failed: ${message}`].filter(Boolean).join(" | ");
     }
+    const capStopped = pushed === undefined && (result.abortReason ?? (budgetRef.current.gateHit ? "budget cap reached" : undefined));
+    if (ticket.prComments && capStopped) {
+      ticketResult.notes = [ticketResult.notes, `Review comments not settled: ${capStopped}`].filter(Boolean).join(" | ");
+    } else if (ticket.prComments) {
+      const didPush = pushed !== undefined;
+      const verified = didPush && !stage.needsReview && ticketResult.pipelineStatus === "succeeded";
+      settlePrThreads(ticketResult, ticket.prComments, { reports, pushed: didPush, verified, changed: committed !== undefined && committed !== "no_changes" }, prWrites, false);
+    }
     try {
       saveLog(`${ticketId}-diff.txt`, branchDiff(wt));
     } catch (e) {
@@ -444,7 +510,7 @@ async function processTicket(
     }
   }
 
-  if (!dryRun && linear && shouldMarkInReview(ticketResult.status, linear.stateType)) await moveLinearTicket(linear, linear.inReviewState);
+  if (!dryRun && linear && !ticket.prComments && shouldMarkInReview(ticketResult.status, linear.stateType)) await moveLinearTicket(linear, linear.inReviewState);
   ticketResult.durationSec = Math.round((Date.now() - startTime) / 1000);
   log(`  Result: ${ticketResult.status} (${ticketResult.durationSec}s)`);
   processed.set(ticketId, { branch: wt.branch, repo, pushed });
@@ -517,6 +583,44 @@ function selectProject(): { args: RunArgs; project: Project } {
     console.error((e as Error).message);
     process.exit(2);
   }
+}
+
+const claimedByEarlierProjects = (projectName: string): Set<string> => {
+  const claimed = new Set<string>();
+  for (const name of listProjects().filter(n => n !== "example" && n < projectName)) {
+    try {
+      for (const repo of Object.values(loadProject(name).repos)) claimed.add(path.resolve(repo.path));
+    } catch (e) {
+      log(`PR sweep: could not read project ${name}: ${(e as Error).message}`);
+    }
+  }
+  return claimed;
+};
+
+function runPrSweep(project: Project, state: PrCommentState, stateFile: string, dryRun: boolean): SweepResult {
+  const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
+  const azProject = requireEnv("AZURE_DEVOPS_PROJECT");
+  const sweep = sweepPrComments(project.repos, state, {
+    me: () => getEnv("AZURE_DEVOPS_USER") ?? (az(["account", "show"]) as { user: { name: string } }).user.name,
+    listPrs: repoPath => {
+      const repoName = repoNameFromRemote(originUrl(repoPath));
+      return { repoName, prs: (az(prListArgs(org, azProject, repoName)) ?? []) as AzPullRequest[] };
+    },
+    listThreads: target => listThreads(target),
+    org, project: azProject, teams: project.linearTeams ?? [],
+    claimedElsewhere: claimedByEarlierProjects(project.name),
+    log,
+  });
+  log(sweep.error
+    ? `PR sweep failed: ${sweep.error}`
+    : `PR sweep: ${sweep.prsScanned} PR(s) scanned, ${sweep.items.length} with pending threads, ${sweep.held.length} held`);
+  if (!sweep.error && !dryRun) {
+    let pruned = state;
+    for (const { repoName, prIds } of sweep.active) pruned = pruneClosed(pruned, repoName, prIds);
+    savePrCommentState(stateFile, pruned);
+    Object.keys(state).forEach(key => { if (!(key in pruned)) delete state[key]; });
+  }
+  return sweep;
 }
 
 async function main() {
@@ -598,6 +702,20 @@ async function main() {
       }
     }
 
+    const tonightCount = tickets.length;
+    const prStateFile = statePaths().prComments(project.name);
+    const prWrites: PrWrites = { state: loadPrCommentState(prStateFile), file: prStateFile, blocked: {} };
+    let sweep: SweepResult;
+    try {
+      sweep = runPrSweep(project, prWrites.state, prStateFile, dryRun);
+    } catch (e) {
+      const error = `PR sweep crashed: ${errorMessage(e)}`;
+      log(error);
+      sweep = { items: [], held: [], prsScanned: 0, active: [], error };
+    }
+    tickets = mergeSweep(tickets, sweep.items);
+    const prSweep = { prsScanned: sweep.prsScanned, items: sweep.items.length, held: sweep.held, error: sweep.error };
+
     const processed = new Map<string, ProcessedTicket>();
     const needsTestDb = tickets.some(t => project.repos[t.repo].toolchain === "node");
     const testDb = !dryRun && project.testDbScript && needsTestDb ? startTestDb(log, undefined, process.env, project.testDbScript) : undefined;
@@ -627,11 +745,13 @@ async function main() {
         }
 
         try {
-          const r = await processTicket(ticket, project, branchPrefix, instructions, dryRun, budgetRef, codexBudgetRef, processed);
+          const r = await processTicket(ticket, project, branchPrefix, instructions, dryRun, budgetRef, codexBudgetRef, processed, prWrites);
           results.push(r);
         } catch (e) {
           log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
-          results.push(placeholderResult(ticket, "error", (e as Error).message, branchPrefix));
+          const placeholder = placeholderResult(ticket, "error", (e as Error).message, branchPrefix);
+          if (ticket.prComments) settlePrThreads(placeholder, ticket.prComments, { reports: [], pushed: false, verified: false, changed: false }, prWrites, dryRun);
+          results.push(placeholder);
         }
       }
     } finally {
@@ -647,8 +767,9 @@ async function main() {
       codexBudget: codexBudgetRef.current,
       gateHit,
       skipReason,
-      noTasks: tickets.length === 0 && !ticketError,
+      noTasks: tonightCount === 0 && !ticketError,
       ...(ticketError ? { ticketError } : {}),
+      prSweep: { ...prSweep, error: prSweep.error ?? prWrites.blocked.reason },
     };
     heartbeat.phase("postmortem");
     session.postmortem = await nightPostmortem(session, project, dryRun, reportsDir, budgetRef, base);
@@ -673,7 +794,7 @@ async function main() {
     log(`\n═══ Report written: ${reportPath} ═══`);
     log(`Open in browser: file://${reportPath}`);
 
-    if (!dryRun && tickets.length > 0) {
+    if (!dryRun && tonightCount > 0) {
       const archivePath = path.join(reportsDir, `${base}-tonight.md`);
       archiveTickets(archivePath, project.ticketsFile);
       log(`Tickets archived: ${archivePath}`);

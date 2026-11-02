@@ -1,5 +1,5 @@
 import { deriveOutcome } from "./status.js";
-import { buildPrTitle, type FailedCheck, type PRResult } from "./pr.js";
+import { commitSubject, type FailedCheck, type PRResult } from "./pr.js";
 import { formatCiFailures, type CiFailure } from "./ci-logs.js";
 import type { ClaudeResult } from "./claude.js";
 import type { CommitOutcome } from "./worktree.js";
@@ -60,7 +60,7 @@ export async function fixFailingChecks(
     notes.push(...agent.notes);
 
     const report = result.report;
-    const subject = buildPrTitle(ticket.ticketId, report?.title || ticket.title, report?.summary ?? "");
+    const subject = commitSubject(ticket.ticketId, report?.title || ticket.title, report?.summary ?? "");
     if (deps.commit(subject) === "no_changes") return outcome("no_changes");
     pr = await deps.publish();
   }

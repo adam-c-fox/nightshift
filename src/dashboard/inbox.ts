@@ -3,12 +3,14 @@ import type { PolicyVerdict, VoteSummary } from "../pr.js";
 import {
   countTickets,
   postmortemActionKey,
+  sweepActionKey,
   ticketActionKey,
   type TicketCounts,
 } from "../report.js";
 import type {
   NightRecord,
   PostmortemSuggestion,
+  ThreadOutcome,
   TicketResult,
   TicketStatus,
 } from "../types.js";
@@ -51,7 +53,9 @@ export type InboxItem =
       prUrl?: string;
       prId?: number;
       pr?: PrLive;
+      threadsNeedingYou?: number;
     })
+  | (ItemBase & { kind: "sweep"; error: string })
   | (ItemBase & { kind: "postmortem"; suggestion: PostmortemSuggestion });
 
 export interface PrRef {
@@ -76,6 +80,12 @@ const recordedNights = (nights: NightData[]): RecordedNight[] =>
   nights.flatMap(({ file, record }) =>
     record && !record.dryRun ? [{ file, record }] : [],
   );
+
+const needsYou = (o: ThreadOutcome): boolean =>
+  o.endState === "needs_person" ||
+  o.endState === "gave_up" ||
+  o.endState === "replied" ||
+  o.replyError !== undefined;
 
 const suggestionsOf = (record: NightRecord): PostmortemSuggestion[] =>
   record.postmortem?.outcome === "done" ? record.postmortem.suggestions : [];
@@ -117,6 +127,14 @@ export function buildInbox(
   const items: InboxItem[] = [];
   for (const { file, record } of recordedNights(nights)) {
     const ticked = tickedKeys(actions[file.reportId]);
+    const sweepKey = sweepActionKey();
+    if (record.prSweep?.error && !ticked.has(sweepKey)) {
+      items.push({
+        ...itemBase(file, sweepKey),
+        kind: "sweep",
+        error: record.prSweep.error,
+      });
+    }
     for (const result of record.tickets) {
       const key = ticketActionKey(result.ticket.id);
       const { prUrl } = result;
@@ -125,7 +143,12 @@ export function buildInbox(
       if (superseded || ticked.has(key)) continue;
       const pr = prUrl === undefined ? undefined : prLive(prUrl);
       if (pr?.state === "closed") continue;
-      if (!INBOX_STATUSES.includes(result.status) && !pr) continue;
+      if (
+        !INBOX_STATUSES.includes(result.status) &&
+        !pr &&
+        threadsNeedingYou(result) === 0
+      )
+        continue;
       items.push(ticketItem(file, key, result, pr));
     }
     for (const suggestion of suggestionsOf(record)) {
@@ -138,12 +161,16 @@ export function buildInbox(
   return items;
 }
 
+const threadsNeedingYou = (result: TicketResult): number =>
+  (result.prComments ?? []).filter(needsYou).length;
+
 function ticketItem(
   file: NightFile,
   key: string,
   result: TicketResult,
   pr: PrLive | undefined,
 ): InboxItem {
+  const threads = threadsNeedingYou(result);
   return {
     ...itemBase(file, key),
     kind: "ticket",
@@ -154,6 +181,7 @@ function ticketItem(
     ...(result.prUrl !== undefined ? { prUrl: result.prUrl } : {}),
     ...(result.prId !== undefined ? { prId: result.prId } : {}),
     ...(pr ? { pr } : {}),
+    ...(threads > 0 ? { threadsNeedingYou: threads } : {}),
   };
 }
 

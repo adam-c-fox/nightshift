@@ -319,3 +319,29 @@ describe("nightsHTML", () => {
     expect(nightsHTML([night()])).not.toContain("dry run");
   });
 });
+
+describe("inboxHTML PR comment sweep", () => {
+  it("shows how many review comments need you on a ticket item", () => {
+    const html = inboxHTML([ticketItem({ threadsNeedingYou: 3 })]);
+    expect(html).toContain("3 review comments need you");
+    expect(inboxHTML([ticketItem({ threadsNeedingYou: 1 })])).toContain("1 review comment needs you");
+    expect(inboxHTML([ticketItem()])).not.toContain("review comment");
+  });
+
+  it("renders a sweep item with the escaped error and a tick box", () => {
+    const item = {
+      kind: "sweep",
+      reportId: REPORT_ID,
+      project: "acme",
+      date: "2026-10-02",
+      key: "sweep:error",
+      reportHref: REPORT_HREF,
+      error: "az <failed>",
+    } as InboxItem;
+    const html = inboxHTML([item]);
+    expect(html).toContain("PR comment sweep needs you");
+    expect(html).toContain("az &lt;failed&gt;");
+    expect(html).toContain('data-key="sweep:error"');
+    expect(html).toContain(`href="${REPORT_HREF}"`);
+  });
+});

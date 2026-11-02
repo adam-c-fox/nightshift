@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildConfirmPrompt, buildDedupePrompt, buildFinderPrompt, buildFixPrompt, buildFixReviewPrompt, type AgentReport, type TicketBrief } from "../src/claude.js";
+import { buildConfirmPrompt, buildPrompt, buildDedupePrompt, buildFinderPrompt, buildFixPrompt, buildFixReviewPrompt, type AgentReport, type TicketBrief } from "../src/claude.js";
 import type { ClassifiedCheck } from "../src/checks.js";
 import type { ReviewCandidate, ReviewFinding } from "../src/types.js";
 
@@ -10,7 +10,7 @@ const check = (command: string, status: ClassifiedCheck["status"], passed: boole
   ({ name: command, command, status, passed, durationSec: 7, outputTail });
 
 const report = (over: Partial<AgentReport> = {}): AgentReport => ({
-  status: "done", title: "t", summary: "s", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "(1) skip empty rows", followups: [], decisions: [], ...over,
+  status: "done", title: "t", summary: "s", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "(1) skip empty rows", followups: [], decisions: [], threads: [], ...over,
 });
 
 describe("finder prompt sections", () => {
@@ -272,5 +272,18 @@ describe("buildFixPrompt", () => {
 
   it("leaves out the evidence line when a finding has none", () => {
     expect(buildFixPrompt(brief, [finding()])).not.toContain("evidence:");
+  });
+});
+
+describe("buildPrompt", () => {
+  const prCommentsLine = readFileSync(new URL("../prompts/pr-comments.md", import.meta.url), "utf-8").split("\n").find(l => l.startsWith("# "))!;
+
+  it("appends the PR comment instructions when prComments is set", () => {
+    expect(buildPrompt({ ...brief, prComments: true })).toContain(prCommentsLine);
+  });
+
+  it("omits them otherwise", () => {
+    expect(buildPrompt(brief)).not.toContain(prCommentsLine);
+    expect(buildPrompt({ ...brief, prComments: false })).not.toContain(prCommentsLine);
   });
 });

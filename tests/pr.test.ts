@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { TicketResult } from "../src/types.js";
-import { buildPrDescription, buildPrTitle, buildPrWebUrl, prContent, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, mainBuildDefinitions, pipelineRunArgs, pipelineRunShowArgs, repoShowArgs, mainPolicyListArgs, summarizeRuns, waitForBranchBuilds, DEFAULT_BASE_BRANCH, azEnvFrom, parseAzOutput, prListArgs, ORIGIN_URL_ARGS, voteSummary, type BuildDefinition, type PipelineRun, type PolicyConfiguration, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
+import { buildPrDescription, buildPrTitle, commitSubject, buildPrWebUrl, prContent, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, mainBuildDefinitions, pipelineRunArgs, pipelineRunShowArgs, repoShowArgs, mainPolicyListArgs, summarizeRuns, waitForBranchBuilds, DEFAULT_BASE_BRANCH, azEnvFrom, parseAzOutput, prListArgs, ORIGIN_URL_ARGS, voteSummary, type BuildDefinition, type PipelineRun, type PolicyConfiguration, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
 
 const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
   status,
@@ -549,5 +549,15 @@ describe("azEnvFrom", () => {
     } finally {
       if (before !== undefined) process.env.AZURE_DEVOPS_EXT_PAT = before;
     }
+  });
+});
+
+describe("commitSubject", () => {
+  it("keeps the ticket id suffix for a normal id", () => {
+    expect(commitSubject("ENG-1", "fix: a", "")).toBe("fix: a (ENG-1)");
+  });
+
+  it("leaves the suffix off for a PR- id", () => {
+    expect(commitSubject("PR-123", "fix: a (PR-123)", "")).toBe("fix: a");
   });
 });

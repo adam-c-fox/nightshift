@@ -10,7 +10,7 @@ const finding = (id: string, severity: ReviewFinding["severity"] = "major"): Rev
 const reviewed = (...findings: ReviewFinding[]): ReviewRunResult => ({ success: true, rawOutput: "review out", findings });
 
 const report = (over: Partial<AgentReport> = {}): AgentReport => ({
-  status: "done", title: "", summary: "Fixed it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [], decisions: [], ...over,
+  status: "done", title: "", summary: "Fixed it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [], decisions: [], threads: [], ...over,
 });
 
 const fixed = (fixes: FixResolution[], over: Partial<FixRunResult> = {}): FixRunResult =>

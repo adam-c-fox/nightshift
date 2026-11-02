@@ -66,7 +66,7 @@ describe("codex finder prompt", () => {
   const brief: TicketBrief = { ticketId: "ENG-12", ticketName: "Poll", context: [], linearDesc: "", linearComments: [], linearUrl: "u", state: "Todo" };
   const report: AgentReport = {
     status: "done", title: "t", summary: "s", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [],
-    decisions: [{ file: "src/a.ts", decision: "Empty rows are skipped." }],
+    decisions: [{ file: "src/a.ts", decision: "Empty rows are skipped." }], threads: [],
   };
 
   it("lists the implementer's decisions like the bugs lens", () => {

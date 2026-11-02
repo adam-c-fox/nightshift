@@ -8,10 +8,9 @@ const tempDir = () => mkdtempSync(join(tmpdir(), "nightshift-"));
 
 describe("statePaths", () => {
   it("places prep.json and actions.json under <root>/state", () => {
-    expect(statePaths("/r")).toEqual({
-      prep: "/r/state/prep.json",
-      actions: "/r/state/actions.json",
-    });
+    const paths = statePaths("/r");
+    expect(paths.prep).toBe("/r/state/prep.json");
+    expect(paths.actions).toBe("/r/state/actions.json");
   });
 });
 

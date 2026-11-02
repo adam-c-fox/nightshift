@@ -1,0 +1,273 @@
+{
+  "value": [
+    {
+      "id": 544166,
+      "isDeleted": false,
+      "publishedDate": "2026-10-27T21:08:23.17Z",
+      "properties": {
+        "CodeReviewReviewersUpdatedAddedIdentity": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewReviewersUpdatedByIdentity": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewReviewersUpdatedNumAdded": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewReviewersUpdatedNumChanged": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewReviewersUpdatedNumDeclined": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewReviewersUpdatedNumRemoved": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewThreadType": {
+          "$type": "System.String",
+          "$value": "x"
+        }
+      },
+      "threadContext": null,
+      "comments": [
+        {
+          "id": 1,
+          "parentCommentId": 0,
+          "commentType": "system",
+          "content": "system update",
+          "publishedDate": "2026-10-27T21:08:23.17Z",
+          "author": {
+            "displayName": "Project Collection Build Service",
+            "uniqueName": "",
+            "id": "00000000-0000-0000-0000-000000000001",
+            "descriptor": "s2s.SERVICE"
+          }
+        }
+      ]
+    },
+    {
+      "id": 544167,
+      "isDeleted": false,
+      "publishedDate": "2026-10-27T21:08:23.18Z",
+      "properties": {
+        "CodeReviewThreadType": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewVoteResult": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewVotedByIdentity": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewVotedByInitiatorIdentity": {
+          "$type": "System.String",
+          "$value": "x"
+        }
+      },
+      "threadContext": null,
+      "comments": [
+        {
+          "id": 1,
+          "parentCommentId": 0,
+          "commentType": "system",
+          "content": "Reviewer 1 voted 10",
+          "publishedDate": "2026-10-27T21:08:23.18Z",
+          "author": {
+            "displayName": "Reviewer 1",
+            "uniqueName": "reviewer1@example.com",
+            "id": "00000000-0000-0000-0000-000000000101",
+            "descriptor": "aad.REVIEWER1"
+          }
+        }
+      ]
+    },
+    {
+      "id": 544790,
+      "isDeleted": false,
+      "publishedDate": "2026-10-28T19:51:05.997Z",
+      "properties": {
+        "BypassPolicy": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewStatus": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewStatusUpdateAssociatedCommit": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewStatusUpdatedByIdentity": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "CodeReviewThreadType": {
+          "$type": "System.String",
+          "$value": "x"
+        }
+      },
+      "threadContext": null,
+      "comments": [
+        {
+          "id": 1,
+          "parentCommentId": 0,
+          "commentType": "system",
+          "content": "system update",
+          "publishedDate": "2026-10-28T19:51:05.997Z",
+          "author": {
+            "displayName": "Reviewer 1",
+            "uniqueName": "reviewer1@example.com",
+            "id": "00000000-0000-0000-0000-000000000101",
+            "descriptor": "aad.REVIEWER1"
+          }
+        }
+      ]
+    },
+    {
+      "id": 535082,
+      "status": "fixed",
+      "isDeleted": false,
+      "publishedDate": "2026-10-07T20:57:15.187Z",
+      "properties": {
+        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "Microsoft.TeamFoundation.Discussion.UniqueID": {
+          "$type": "System.String",
+          "$value": "x"
+        }
+      },
+      "threadContext": {
+        "filePath": "/environments/dev/terraform.tfvars",
+        "rightFileEnd": {
+          "line": 16,
+          "offset": 24
+        },
+        "rightFileStart": {
+          "line": 16,
+          "offset": 1
+        }
+      },
+      "comments": [
+        {
+          "id": 1,
+          "parentCommentId": 0,
+          "commentType": "text",
+          "content": "Let's use the same ID as the other drive here.",
+          "publishedDate": "2026-10-07T20:57:15.187Z",
+          "author": {
+            "displayName": "Reviewer 1",
+            "uniqueName": "reviewer1@example.com",
+            "id": "00000000-0000-0000-0000-000000000101",
+            "descriptor": "aad.REVIEWER1"
+          }
+        }
+      ]
+    },
+    {
+      "id": 535083,
+      "status": "active",
+      "isDeleted": false,
+      "publishedDate": "2026-10-07T20:57:23.88Z",
+      "properties": {
+        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {
+          "$type": "System.String",
+          "$value": "x"
+        },
+        "Microsoft.TeamFoundation.Discussion.UniqueID": {
+          "$type": "System.String",
+          "$value": "x"
+        }
+      },
+      "threadContext": {
+        "filePath": "/environments/dev/variables.tf",
+        "rightFileEnd": {
+          "line": 92,
+          "offset": 22
+        },
+        "rightFileStart": {
+          "line": 92,
+          "offset": 1
+        }
+      },
+      "comments": [
+        {
+          "id": 1,
+          "parentCommentId": 0,
+          "commentType": "text",
+          "content": "We should enable this flag.",
+          "publishedDate": "2026-10-07T20:57:23.88Z",
+          "author": {
+            "displayName": "Reviewer 1",
+            "uniqueName": "reviewer1@example.com",
+            "id": "00000000-0000-0000-0000-000000000101",
+            "descriptor": "aad.REVIEWER1"
+          }
+        }
+      ]
+    },
+    {
+      "id": 534333,
+      "status": "fixed",
+      "isDeleted": false,
+      "publishedDate": "2026-10-06T23:40:03.26Z",
+      "properties": {
+        "Microsoft.TeamFoundation.Discussion.UniqueID": {
+          "$type": "System.String",
+          "$value": "x"
+        }
+      },
+      "threadContext": {
+        "filePath": "/packages/doc-merge/src/word-replace-text.ts",
+        "rightFileEnd": {
+          "line": 50,
+          "offset": 200
+        },
+        "rightFileStart": {
+          "line": 50,
+          "offset": 1
+        }
+      },
+      "comments": [
+        {
+          "id": 1,
+          "parentCommentId": 0,
+          "commentType": "text",
+          "content": "Bug: a second match in the same run overwrites the first replacement.",
+          "publishedDate": "2026-10-06T23:40:03.26Z",
+          "author": {
+            "displayName": "Reviewer 1",
+            "uniqueName": "reviewer1@example.com",
+            "id": "00000000-0000-0000-0000-000000000101",
+            "descriptor": "aad.REVIEWER1"
+          }
+        },
+        {
+          "id": 2,
+          "parentCommentId": 1,
+          "commentType": "text",
+          "content": "Fixed in abc1234. It now collects every match first.",
+          "publishedDate": "2026-10-06T23:42:53.087Z",
+          "author": {
+            "displayName": "Reviewer 1",
+            "uniqueName": "reviewer1@example.com",
+            "id": "00000000-0000-0000-0000-000000000101",
+            "descriptor": "aad.REVIEWER1"
+          }
+        }
+      ]
+    }
+  ],
+  "count": 6
+}

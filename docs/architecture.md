@@ -46,6 +46,12 @@ Codex has a separate fixed allocation of 20% of weekly usage, read through `code
 
 Model constants, CLI assumptions and timezone behavior are listed in [supported scope](supported-scope.md#runtime-assumptions).
 
+## Review comments are swept before new tickets
+
+Before `tonight.md`, the runner lists your active PRs in the project's repos and collects human comment threads nobody has answered yet. Each PR with such threads runs through the same path as a ticket, on the PR's branch: checks, agent, the full review, fix review and CI fix. The agent gives each thread a verdict ([`prompts/pr-comments.md`](../prompts/pr-comments.md)): fixed, already handled, or needs a person. After the push, the runner replies on fixed and already-handled threads, and resolves a fixed one only once the review and CI are clean. A needs-a-person thread gets no reply; it appears under "Decisions needed" in the report and in the dashboard inbox.
+
+A thread is looked at again when someone adds a new comment. One that failed is retried the next night and then given up on. Sweep items run before the `tonight.md` tickets under the same budget gate, a PR with auto-complete set is never pushed to, and the first failed write to Azure stops further writes for the night. Per-thread state is kept in `state/pr-comments/<project>.json`.
+
 ## Reports preserve what happened
 
 The runner saves agent output, check results and usage in `logs/<name>/`. HTML and JSON night records go in `reports/<name>/`. A heartbeat records the current phase for the dashboard. At the end, the ticket list is archived beside the report so the next night does not rerun it.
@@ -63,5 +69,5 @@ Review and fix-review replays let a developer evaluate this process against a sa
 | Isolation and local checks | [`worktree.ts`](../src/worktree.ts), [`checks.ts`](../src/checks.ts), [`agent-env.ts`](../src/agent-env.ts) |
 | Agent processes and usage budgets | [`claude.ts`](../src/claude.ts), [`codex.ts`](../src/codex.ts), [`budget.ts`](../src/budget.ts) |
 | Review orchestration and citation verification | [`review.ts`](../src/review.ts), [`confirm.ts`](../src/confirm.ts) |
-| Linear, Azure PRs and CI repair | [`linear.ts`](../src/linear.ts), [`pr.ts`](../src/pr.ts), [`ci-logs.ts`](../src/ci-logs.ts), [`ci-fix.ts`](../src/ci-fix.ts) |
+| Linear, Azure PRs and CI repair | [`linear.ts`](../src/linear.ts), [`pr.ts`](../src/pr.ts), [`pr-comments.ts`](../src/pr-comments.ts), [`pr-comment-state.ts`](../src/pr-comment-state.ts), [`ci-logs.ts`](../src/ci-logs.ts), [`ci-fix.ts`](../src/ci-fix.ts) |
 | Reports and dashboard | [`report.ts`](../src/report.ts), [`night-record.ts`](../src/night-record.ts), [`dashboard/server.ts`](../src/dashboard/server.ts) |

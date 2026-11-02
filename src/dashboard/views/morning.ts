@@ -13,6 +13,7 @@ const MINUTE_MS = 60_000;
 type ActivePr = Extract<PrLive, { state: "active" }>;
 type TicketItem = Extract<InboxItem, { kind: "ticket" }>;
 type PostmortemItem = Extract<InboxItem, { kind: "postmortem" }>;
+type SweepItem = Extract<InboxItem, { kind: "sweep" }>;
 
 export function formatDuration(ms: number): string {
   const minutes = Math.floor(ms / MINUTE_MS);
@@ -81,6 +82,12 @@ function prHTML(item: TicketItem): string {
   return `<span class="pr">${parts.join(" ")}</span>`;
 }
 
+function threadsHTML(item: TicketItem): string {
+  const n = item.threadsNeedingYou;
+  if (n === undefined) return "";
+  return `<span class="summary">${n} review ${n === 1 ? "comment needs" : "comments need"} you</span>`;
+}
+
 function ticketBody(item: TicketItem): string {
   const status = badge(
     item.status.replace("_", " "),
@@ -93,6 +100,7 @@ function ticketBody(item: TicketItem): string {
     `<span class="name">${esc(item.name)}</span>`,
     prHTML(item),
     `<span class="summary dim">${esc(summaryLine(item.summary))}</span>`,
+    threadsHTML(item),
   ]
     .filter(Boolean)
     .join(" ");
@@ -110,14 +118,28 @@ function postmortemBody(item: PostmortemItem): string {
   ].join(" ");
 }
 
+function sweepBody(item: SweepItem): string {
+  return [
+    badge("PR comments", STATUS_COLORS.error),
+    `<strong><a href="${esc(item.reportHref)}">PR comment sweep needs you</a></strong>`,
+    `<span class="summary">${esc(item.error)}</span>`,
+  ].join(" ");
+}
+
 function inboxLabel(item: InboxItem): string {
-  return item.kind === "ticket" ? item.ticketId : item.suggestion.id;
+  if (item.kind === "ticket") return item.ticketId;
+  return item.kind === "sweep" ? "PR comment sweep" : item.suggestion.id;
+}
+
+function inboxBody(item: InboxItem): string {
+  if (item.kind === "ticket") return ticketBody(item);
+  return item.kind === "sweep" ? sweepBody(item) : postmortemBody(item);
 }
 
 function inboxItemHTML(item: InboxItem): string {
   const tick = `<input type="checkbox" class="inbox-tick" data-report="${esc(item.reportId)}" data-key="${esc(item.key)}" aria-label="Mark ${esc(inboxLabel(item))} actioned">`;
   const when = `<span class="dim when">${esc(item.date)} · ${esc(item.project)}</span>`;
-  const body = item.kind === "ticket" ? ticketBody(item) : postmortemBody(item);
+  const body = inboxBody(item);
   return `<li class="inbox-item">${tick} ${when} <div class="inbox-body">${body}</div></li>`;
 }
 

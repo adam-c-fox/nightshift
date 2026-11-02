@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { runWithWatchdog, type WatchdogResult } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
-import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, Verdict, VerifyResult } from "./types.js";
+import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, ThreadReport, ThreadVerdict, Verdict, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const REVIEW_MD = path.join(ROOT, "prompts", "review.md");
 const FIX_MD = path.join(ROOT, "prompts", "fix.md");
 const FIX_REVIEW_MD = path.join(ROOT, "prompts", "fix-review.md");
 const CONFIRM_MD = path.join(ROOT, "prompts", "confirm.md");
+const PR_COMMENTS_MD = path.join(ROOT, "prompts", "pr-comments.md");
 const DEDUPE_MD = path.join(ROOT, "prompts", "dedupe.md");
 const lensMd = (lens: ReviewLens) => path.join(ROOT, "prompts", `review-${lens}.md`);
 export const LAYER_SEPARATOR = "\n\n---\n\n";
@@ -22,6 +23,7 @@ export interface TicketBrief {
   linearComments: LinearComment[];
   linearUrl: string;
   state: string;
+  prComments?: boolean;
 }
 
 function commentLines(comments: LinearComment[]): string[] {
@@ -48,11 +50,12 @@ function ticketSection(brief: TicketBrief): string[] {
   ];
 }
 
-function buildPrompt(brief: TicketBrief): string {
+export function buildPrompt(brief: TicketBrief): string {
   return [
     ...ticketSection(brief),
     `Work on this ticket now.`,
     `Follow the TDD process in the operating instructions exactly.`,
+    ...(brief.prComments ? [``, readFileSync(PR_COMMENTS_MD, "utf-8"), ``] : []),
     `When you are finished, end your final message with the ---REPORT--- block as specified in the operating instructions §6.`,
   ].join("\n");
 }
@@ -259,6 +262,7 @@ export interface AgentReport {
   tests: TestResult[]; verifyCommands: string[]; notes: string;
   followups: Followup[];
   decisions: Decision[];
+  threads: ThreadReport[];
 }
 
 const VALID_STATUSES = ["done", "partial", "needs_review"];
@@ -269,6 +273,8 @@ const FIX_REVIEW_START = "---FIXREVIEW---";
 const CONFIRM_START = "---CONFIRM---";
 const DEDUPE_START = "---DEDUPE---";
 const BLOCK_END = "---";
+const THREAD_VERDICTS: ThreadVerdict[] = ["fixed", "no_change", "needs_person"];
+const THREAD_SEVERITIES: ThreadReport["severity"][] = ["low", "medium", "high"];
 const SEVERITIES: Severity[] = ["blocker", "major", "minor"];
 
 function unquote(value: string): string {
@@ -463,6 +469,18 @@ export function parseFixesBlock(output: string): FixResolution[] {
     .map(r => ({ id: r.id, status: r.status === "fixed" ? "fixed" : "not_fixed", how: r.how ?? "" }));
 }
 
+function parseThreads(lines: string[] | undefined): ThreadReport[] {
+  return parseRecords(lines, ["id", "verdict", "severity", "reason", "reply"])
+    .filter(r => /^\d+$/.test(r.id ?? "") && Number(r.id) > 0 && THREAD_VERDICTS.includes(r.verdict as ThreadVerdict))
+    .map(r => ({
+      id: Number(r.id),
+      verdict: r.verdict as ThreadVerdict,
+      severity: THREAD_SEVERITIES.includes(r.severity as ThreadReport["severity"]) ? r.severity as ThreadReport["severity"] : "medium",
+      reason: r.reason ?? "",
+      reply: r.reply ?? "",
+    }));
+}
+
 export interface ParsedFixReview { results: VerifyResult[]; findings: FoundFinding[]; risks: ReviewRisk[] }
 
 export function parseFixReviewBlock(output: string): ParsedFixReview {
@@ -486,6 +504,7 @@ export function parseReportBlock(output: string): AgentReport {
     notes: scalar(groups.get("notes")),
     followups: parseFollowups(groups.get("followups")),
     decisions: parseDecisions(groups.get("decisions")),
+    threads: parseThreads(groups.get("threads")),
   };
 }
 
@@ -731,15 +750,16 @@ export async function runAgent(
   linearState: string,
   dryRun: boolean,
   options: RunAgentOptions,
+  prComments?: boolean,
 ): Promise<ClaudeResult> {
-  const prompt = buildPrompt({ ticketId, ticketName, context, linearDesc, linearComments, linearUrl, state: linearState });
+  const prompt = buildPrompt({ ticketId, ticketName, context, linearDesc, linearComments, linearUrl, state: linearState, prComments });
 
   if (dryRun) {
     console.log(`  [dry-run] Would run: claude ${buildClaudeArgs("<instructions>").slice(0, -2).join(" ")} (in ${worktreePath})`);
     console.log(`  [dry-run] Prompt:\n${prompt.slice(0, 500)}...`);
     return { success: true, rawOutput: "", report: {
       status: "done", title: "", summary: "dry run", filesCreated: [], filesModified: [],
-      tests: [], verifyCommands: [], notes: "dry run – no changes", followups: [], decisions: [],
+      tests: [], verifyCommands: [], notes: "dry run – no changes", followups: [], decisions: [], threads: [],
     }};
   }
 

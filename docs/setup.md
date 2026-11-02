@@ -23,7 +23,10 @@ Fill in the project's `.env` (see [Projects](#projects)). An empty value there f
 | Variable | What it's for |
 | --- | --- |
 | `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT` | Opening PRs and reading CI results |
+| `AZURE_DEVOPS_USER` | Optional. Your Azure DevOps email, for finding your PRs, when `az account show` doesn't give it |
 | `BRANCH_PREFIX` | Optional prefix for ticket branches |
+
+The `az` login, or the PAT with Code (Read & write) scope, must be able to read and write PR threads, because the PR comment sweep replies to and resolves them.
 
 Run `codex login` once with your ChatGPT plan. The runner uses the Codex CLI login stored under `~/.codex/`, so cron needs no separate Codex token.
 
@@ -85,4 +88,4 @@ The report lands in `reports/<name>/nightshift-<date>.html`. Agent output and ru
 
 ## Each morning
 
-Read `reports/<name>/nightshift-<date>.html`. Ticket conflicts are listed first, under "Decisions needed". Each one needs a decision: update the ticket or the code. The Postmortem section at the bottom lists suggested fixes to the instructions, also saved in `reports/<name>/nightshift-<date>-postmortem.md`. Ask Claude to implement the ones you pick by id, for example "implement P1 and P3". `/postmortem [date]` re-runs the postmortem by hand.
+Read `reports/<name>/nightshift-<date>.html`. Ticket conflicts and review comments that need a person are listed first, under "Decisions needed". Each one needs a decision: update the ticket or the code, or answer the comment. The Postmortem section at the bottom lists suggested fixes to the instructions, also saved in `reports/<name>/nightshift-<date>-postmortem.md`. Ask Claude to implement the ones you pick by id, for example "implement P1 and P3". `/postmortem [date]` re-runs the postmortem by hand.

@@ -6,12 +6,14 @@ export const ROOT = path.resolve(import.meta.dirname, "..");
 export interface StatePaths {
   prep: string;
   actions: string;
+  prComments: (project: string) => string;
 }
 
 export function statePaths(root: string = ROOT): StatePaths {
   return {
     prep: path.join(root, "state", "prep.json"),
     actions: path.join(root, "state", "actions.json"),
+    prComments: (project: string) => path.join(root, "state", "pr-comments", `${project}.json`),
   };
 }
 

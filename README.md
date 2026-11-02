@@ -10,11 +10,12 @@ This is a personal tool shared as-is. Support is best-effort, and changes still 
 
 ## How it works
 
-1. Read an ordered ticket list from `projects/<name>/tonight.md` and fetch each ticket's description and comments.
-2. Create an isolated worktree, or continue an existing PR, and record the repo's checks before making changes.
-3. Run Claude Code test-first, then compare checks against the baseline.
-4. Review the diff through independent bug, spec and reuse passes, plus a Codex pass. Confirm findings against the code, fix confirmed issues, and review the fixes.
-5. Open or update the PR, attempt repairs for failing CI, and write the morning report. Ambiguous requirements and unresolved issues are left for a person to review.
+1. Sweep your own active PRs for unanswered review comments and work each PR that has some like a ticket on its branch, replying to and resolving the threads it fixes.
+2. Read an ordered ticket list from `projects/<name>/tonight.md` and fetch each ticket's description and comments.
+3. Create an isolated worktree, or continue an existing PR, and record the repo's checks before making changes.
+4. Run Claude Code test-first, then compare checks against the baseline.
+5. Review the diff through independent bug, spec and reuse passes, plus a Codex pass. Confirm findings against the code, fix confirmed issues, and review the fixes.
+6. Open or update the PR, attempt repairs for failing CI, and write the morning report. Ambiguous requirements and unresolved issues are left for a person to review.
 
 The runner controls commits and publication. Agent permissions and network access are restricted. Weekly usage budgets limit when new work can start; they are not dollar spending caps.
 
