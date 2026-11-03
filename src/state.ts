@@ -32,9 +32,13 @@ export function readJsonFile<T>(file: string, fallback: T): T {
   }
 }
 
-export function writeJsonAtomic(file: string, data: unknown): void {
+export function writeTextAtomic(file: string, text: string): void {
   mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
-  writeFileSync(temp, JSON.stringify(data, null, 2) + "\n");
+  writeFileSync(temp, text);
   renameSync(temp, file);
+}
+
+export function writeJsonAtomic(file: string, data: unknown): void {
+  writeTextAtomic(file, JSON.stringify(data, null, 2) + "\n");
 }

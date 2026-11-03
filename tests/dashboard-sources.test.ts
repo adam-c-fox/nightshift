@@ -92,6 +92,7 @@ const todoNode = (identifier: string, title: string) => ({
   estimate: 1,
   description: "d",
   team: { key: "DEMO" },
+  project: { name: "Demo" },
   comments: { nodes: [] },
 });
 
@@ -194,10 +195,7 @@ function writeAcme() {
     join(root, "projects/acme/.env"),
     `LINEAR_API_KEY=k\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nAZURE_DEVOPS_PAT=${PAT}\nBRANCH_PREFIX=ns\n`,
   );
-  write(
-    join(root, "projects/acme/tonight.md"),
-    "## DEMO-1 – first\nrepo: app\n",
-  );
+  write(join(root, "tonight.md"), "## DEMO-1 – first\nproject: acme\nrepo: app\n");
 }
 
 beforeEach(() => {
@@ -255,19 +253,20 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-async function clockOffView(project = "acme") {
-  const loaded = await sources.clockOff(project);
-  if (!loaded.ok) throw new Error(`clockOff failed: ${loaded.error}`);
+async function eveningView() {
+  const loaded = await sources.evening();
+  if (!loaded.ok) throw new Error(`evening failed: ${loaded.error}`);
   return loaded.value;
 }
 
-describe("clockOff", () => {
-  it("composes Linear, tonight.md, PRs and usage for the project", async () => {
-    const view = await clockOffView();
+describe("evening", () => {
+  it("composes Linear, the root queue, PRs and usage across projects", async () => {
+    const view = await eveningView();
 
-    const first = view.rows.find((r) => r.id === "DEMO-1");
-    expect(first).toMatchObject({
-      tonightPosition: 1,
+    expect(view.queue[0]).toMatchObject({
+      id: "DEMO-1",
+      project: "acme",
+      position: 1,
       repo: "app",
       pr: {
         prId: 8,
@@ -275,9 +274,13 @@ describe("clockOff", () => {
         url: buildPrWebUrl("o", "P", "app", 8),
       },
     });
-    expect(view.rows.map((r) => r.id)).toEqual(["DEMO-1", "DEMO-2"]);
-    expect(view.rows[1].pr).toBeNull();
+    expect(view.tabs.map((t) => [t.project, t.rows.map((r) => r.id)])).toEqual([
+      ["acme", ["DEMO-1", "DEMO-2"]],
+      ["example", []],
+    ]);
     expect(view.warnings.map((w) => w.code)).toContain("auto_complete");
+    expect(view.sweep[0]).toEqual({ project: "acme", openPrs: { ok: true, value: 2 } });
+    expect(view.allowance).toEqual({ percent: 15, source: "nightly default" });
     expect(view.usage).toMatchObject({
       ok: true,
       value: { weeklyPercent: 40, resetInfo: "Oct 9" },
@@ -289,98 +292,99 @@ describe("clockOff", () => {
   });
 
   it("never lets a credential reach the returned view", async () => {
-    const view = await clockOffView();
-    expect(JSON.stringify(view)).not.toContain(PAT);
+    expect(JSON.stringify(await eveningView())).not.toContain(PAT);
   });
 
-  it("uses the usage command from the code root with the project", async () => {
-    await clockOffView();
-    const usage = execCalls.find((c) => c.cmd.endsWith("tsx"))!;
-    expect(usage.args).toEqual(["src/usage.ts", "--project", "acme"]);
-    expect(usage.cwd).toBe(codeRoot);
+  it("runs usage once from the code root without a project", async () => {
+    await eveningView();
+    const usage = execCalls.filter((c) => c.cmd.endsWith("tsx"));
+    expect(usage).toHaveLength(1);
+    expect(usage[0].args).toEqual(["src/usage.ts"]);
+    expect(usage[0].cwd).toBe(codeRoot);
   });
 
-  it("still renders tonight.md rows when LINEAR_API_KEY is missing", async () => {
+  it("takes the allowance from the root .env and the queue header", async () => {
+    write(join(root, ".env"), "NIGHTLY_ALLOWANCE_PERCENT=30\n");
+    expect((await eveningView()).allowance).toEqual({ percent: 30, source: "nightly default" });
+    write(join(root, "tonight.md"), "allowance: 60\n\n## DEMO-1 – first\nproject: acme\n");
+    expect((await eveningView()).allowance).toEqual({ percent: 60, source: "tonight.md" });
+  });
+
+  it("still renders queue rows when LINEAR_API_KEY is missing", async () => {
     write(
       join(root, "projects/acme/.env"),
       "AZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nBRANCH_PREFIX=ns\n",
     );
-    const view = await clockOffView();
+    const view = await eveningView();
     expect(view.linearError).toMatch(/LINEAR_API_KEY/);
-    expect(view.rows.map((r) => r.id)).toEqual(["DEMO-1"]);
-    expect(view.rows[0].tonightPosition).toBe(1);
+    expect(view.queue.map((r) => r.id)).toEqual(["DEMO-1"]);
     expect(fetchCalls).toHaveLength(0);
   });
 
-  it("reads the project .env on every load so edits are picked up", async () => {
-    await clockOffView();
+  it("reads the env files on every load so edits are picked up", async () => {
+    await eveningView();
     sources.refresh("all");
     write(
       join(root, "projects/acme/.env"),
       "AZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\n",
     );
-    const view = await clockOffView();
-    expect(view.linearError).toMatch(/LINEAR_API_KEY/);
+    expect((await eveningView()).linearError).toMatch(/LINEAR_API_KEY/);
   });
 
   it("caches Linear and PR loads until they are refreshed", async () => {
-    await clockOffView();
-    await clockOffView();
+    await eveningView();
+    await eveningView();
     expect(todoFetches()).toBe(1);
     expect(prListCalls()).toBe(1);
 
     sources.refresh("linear");
-    await clockOffView();
+    await eveningView();
     expect(todoFetches()).toBe(2);
     expect(prListCalls()).toBe(1);
 
     sources.refresh("all");
-    await clockOffView();
+    await eveningView();
     expect(todoFetches()).toBe(3);
     expect(prListCalls()).toBe(2);
   });
 
   it("shares one load between concurrent calls on a cold cache", async () => {
-    await Promise.all([sources.clockOff("acme"), sources.clockOff("acme")]);
+    await Promise.all([sources.evening(), sources.evening()]);
     expect(todoFetches()).toBe(1);
     expect(prListCalls()).toBe(1);
   });
 
-  it("fetches snapshots only for tonight tickets missing from Todo", async () => {
+  it("fetches snapshots only for queued tickets missing from Todo", async () => {
     write(
-      join(root, "projects/acme/tonight.md"),
-      "## DEMO-1 – first\nrepo: app\n## DEMO-5 – five\n",
+      join(root, "tonight.md"),
+      "## DEMO-1 – first\nproject: acme\n## DEMO-5 – five\nproject: acme\n",
     );
-    const view = await clockOffView();
+    const view = await eveningView();
     const snapshotCalls = fetchCalls.filter((c) =>
       c.query.includes("Snapshots"),
     );
     expect(snapshotCalls).toHaveLength(1);
     expect(snapshotCalls[0].variables).toEqual({ i0: "DEMO-5" });
-    expect(view.rows.map((r) => r.id)).toContain("DEMO-5");
+    expect(view.queue.map((r) => r.id)).toContain("DEMO-5");
   });
 
-  it("reports an unknown project", async () => {
-    expect(await sources.clockOff("nope")).toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/not found/),
-    });
+  it("fails when a project's config is invalid", async () => {
+    write(join(root, "projects/acme/project.json"), "{}");
+    expect(await sources.evening()).toMatchObject({ ok: false });
   });
 
-  it("shows the tonight.md parse error and keeps the Todo rows", async () => {
-    write(
-      join(root, "projects/acme/tonight.md"),
-      "## DEMO-1 – first\nrepo: web\n",
-    );
-    const view = await clockOffView();
-    expect(view.tonightError).toMatch(/unknown repo/);
-    expect(view.rows.map((r) => r.id)).toEqual(["DEMO-1", "DEMO-2"]);
+  it("shows the queue parse error and keeps the Todo tabs", async () => {
+    write(join(root, "tonight.md"), "## DEMO-1 – first\nproject: gone\n");
+    const view = await eveningView();
+    expect(view.queueError).toMatch(/unknown project "gone"/);
+    expect(view.queue).toEqual([]);
+    expect(view.tabs[0].rows.map((r) => r.id)).toEqual(["DEMO-1", "DEMO-2"]);
   });
 
   it("fails on a corrupt prep.json and leaves it untouched", async () => {
     const file = join(root, "state/prep.json");
     write(file, "{ not json");
-    expect(await sources.clockOff("acme")).toMatchObject({
+    expect(await sources.evening()).toMatchObject({
       ok: false,
       error: expect.stringMatching(/prep\.json is not valid JSON/),
     });
@@ -389,28 +393,23 @@ describe("clockOff", () => {
 
   it("marks a row unknown when only its repo's PR list failed", async () => {
     write(
-      join(root, "projects/duo/project.json"),
+      join(root, "projects/acme/project.json"),
       JSON.stringify({
         repos: {
           app: { path: appRepo, checks: [{ name: "t", command: "x" }] },
           web: { path: webRepo, checks: [{ name: "t", command: "x" }] },
         },
         defaultRepo: "app",
-        linearTeams: ["DEMO"],
         linearProjects: ["Demo"],
       }),
     );
     write(
-      join(root, "projects/duo/.env"),
-      "LINEAR_API_KEY=k\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nBRANCH_PREFIX=ns\n",
-    );
-    write(
-      join(root, "projects/duo/tonight.md"),
-      "## DEMO-1 – first\nrepo: app\n## DEMO-2 – second\nrepo: web\n",
+      join(root, "tonight.md"),
+      "## DEMO-1 – first\nproject: acme\nrepo: app\n## DEMO-2 – second\nproject: acme\nrepo: web\n",
     );
     prListFailsFor.add("web");
-    const view = await clockOffView("duo");
-    const byId = Object.fromEntries(view.rows.map((r) => [r.id, r.pr]));
+    const view = await eveningView();
+    const byId = Object.fromEntries(view.queue.map((r) => [r.id, r.pr]));
     expect(byId["DEMO-1"]).toMatchObject({ prId: 8 });
     expect(byId["DEMO-2"]).toBe("unknown");
     expect(view.prError).toBeUndefined();
@@ -418,30 +417,28 @@ describe("clockOff", () => {
 
   it("fails the PR lookup with the first error when every list fails", async () => {
     allPrsFail = true;
-    const view = await clockOffView();
+    const view = await eveningView();
     expect(view.prError).toMatch(/az exploded/);
-    expect(view.rows.every((r) => r.pr === "unknown")).toBe(true);
+    expect(view.queue.every((r) => r.pr === "unknown")).toBe(true);
   });
 
   it("reports a missing Azure org as a PR error without failing the view", async () => {
     write(join(root, "projects/acme/.env"), "LINEAR_API_KEY=k\n");
-    const view = await clockOffView();
+    const view = await eveningView();
     expect(view.prError).toMatch(/AZURE_DEVOPS_ORG/);
-    expect(view.rows.length).toBeGreaterThan(0);
+    expect(view.queue.length).toBeGreaterThan(0);
   });
 
   it("shows the error the usage command printed on stdout", async () => {
     usageResult = "error-stdout";
-    const view = await clockOffView();
-    expect(view.usage).toEqual({ ok: false, error: "no usage available" });
+    expect((await eveningView()).usage).toEqual({ ok: false, error: "no usage available" });
   });
 
   it("does not cache a failed usage load", async () => {
     usageResult = "error-stdout";
-    await clockOffView();
+    await eveningView();
     usageResult = "ok";
-    const view = await clockOffView();
-    expect(view.usage.ok).toBe(true);
+    expect((await eveningView()).usage.ok).toBe(true);
   });
 
   it("times out a slow usage load but keeps it running in the cache", async () => {
@@ -454,21 +451,68 @@ describe("clockOff", () => {
         return fakeExec(cmd, args, opts);
       };
       const slow = createSources(deps({ exec: slowExec }));
-      const pending = slow.clockOff("acme");
+      const pending = slow.evening();
       await vi.advanceTimersByTimeAsync(SLOW_MS.usage + 1);
-      const view = await pending;
-      expect(view).toMatchObject({
+      expect(await pending).toMatchObject({
         ok: true,
         value: { usage: { ok: false, error: /still loading/ } },
       });
       release();
       await vi.advanceTimersByTimeAsync(1);
-      const again = await slow.clockOff("acme");
-      expect(again).toMatchObject({ value: { usage: { ok: true } } });
+      expect(await slow.evening()).toMatchObject({ value: { usage: { ok: true } } });
       expect(execCalls.filter((c) => c.cmd.endsWith("tsx"))).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("editQueue", () => {
+  const queue = () => readFileSync(join(root, "tonight.md"), "utf-8");
+
+  it("adds a Todo ticket with its title and the project default repo", async () => {
+    await sources.editQueue({ op: "add", id: "DEMO-2", project: "acme" });
+    expect(queue()).toContain("## DEMO-2 – second\nproject: acme\nrepo: app");
+  });
+
+  it("uses the repo recorded by prep when the project has it", async () => {
+    write(
+      join(root, "state/prep.json"),
+      JSON.stringify({ "DEMO-2": { project: "acme", preppedAt: "2026-10-01T00:00:00.000Z", descHash: "h", outcome: "ready", repo: "app" } }),
+    );
+    await sources.editQueue({ op: "add", id: "DEMO-2", project: "acme", repo: "app" });
+    expect(queue()).toContain("DEMO-2");
+  });
+
+  it("creates the queue file when there is none", async () => {
+    rmSync(join(root, "tonight.md"));
+    await sources.editQueue({ op: "add", id: "DEMO-1", project: "acme" });
+    expect(queue()).toBe("## DEMO-1 – first\nproject: acme\nrepo: app\n");
+  });
+
+  it("refuses a ticket that is not in Todo, a duplicate and a wrong project", async () => {
+    await expect(
+      sources.editQueue({ op: "add", id: "DEMO-9", project: "acme" }),
+    ).rejects.toThrow(/isn't in your Linear Todo list/);
+    await expect(
+      sources.editQueue({ op: "add", id: "DEMO-1", project: "acme" }),
+    ).rejects.toThrow(/already in the queue/);
+    await expect(
+      sources.editQueue({ op: "add", id: "DEMO-2", project: "example" }),
+    ).rejects.toThrow(/doesn't belong to example/);
+  });
+
+  it("removes, moves and re-repos, writing nothing when the edit is invalid", async () => {
+    await sources.editQueue({ op: "add", id: "DEMO-2", project: "acme" });
+    await sources.editQueue({ op: "move", order: ["DEMO-2", "DEMO-1"] });
+    expect(queue().indexOf("DEMO-2")).toBeLessThan(queue().indexOf("DEMO-1"));
+    const before = queue();
+    await expect(
+      sources.editQueue({ op: "repo", id: "DEMO-1", repo: "web" }),
+    ).rejects.toThrow(/unknown repo/);
+    expect(queue()).toBe(before);
+    await sources.editQueue({ op: "remove", id: "DEMO-2" });
+    expect(queue()).not.toContain("DEMO-2");
   });
 });
 
@@ -550,12 +594,12 @@ describe("runs", () => {
 
 describe("launch", () => {
   it("falls back to a command when herdr is missing", async () => {
-    const result = await sources.launch({ kind: "tonight", project: "acme" });
+    const result = await sources.launch({ kind: "tonight" });
     expect(result).toMatchObject({
       launched: false,
       reason: "herdr not found",
     });
-    expect(result.command).toContain("claude '/tonight acme'");
+    expect(result.command).toContain("claude '/tonight'");
     expect(result.command).toContain(codeRoot);
   });
 });
@@ -571,23 +615,6 @@ describe("projects", () => {
       expect(["pass", "warn", "fail"]).toContain(summary.level);
       expect(typeof summary.reason).toBe("string");
     }
-  });
-
-  it("defaults to NIGHTSHIFT_PROJECT from the root .env when listed", () => {
-    write(join(root, ".env"), "NIGHTSHIFT_PROJECT=acme\n");
-    expect(sources.defaultProject()).toBe("acme");
-  });
-
-  it("defaults to the first project", () => {
-    expect(sources.defaultProject()).toBe("acme");
-    write(join(root, ".env"), "NIGHTSHIFT_PROJECT=gone\n");
-    expect(sources.defaultProject()).toBe("acme");
-  });
-
-  it("has no default when there are no projects", () => {
-    rmSync(join(root, "projects/acme"), { recursive: true });
-    rmSync(join(root, "projects/example"), { recursive: true });
-    expect(sources.defaultProject()).toBeUndefined();
   });
 });
 

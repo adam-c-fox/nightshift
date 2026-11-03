@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { nightlyAllowancePercent, parseUsageSummary, type UsageSummary } from "../budget.js";
-import { envLookup, parseEnv } from "../env.js";
+import { envLookup } from "../env.js";
 import {
   fetchIssueSnapshots,
   fetchTeams,
@@ -18,12 +18,23 @@ import { buildPrWebUrl, pickTicketPr, voteSummary } from "../pr.js";
 import { readPrepStore } from "../prep.js";
 import {
   listProjects,
+  loadAllProjects,
   loadProject,
+  NIGHT_DIR_NAME,
   PROJECT_NAME,
+  projectForLinearProject,
   type Project,
 } from "../project.js";
-import { ROOT, statePaths, type StatePaths } from "../state.js";
-import { loadAllowance, loadTickets } from "../tickets.js";
+import {
+  addToQueue,
+  loadQueue,
+  moveInQueue,
+  removeFromQueue,
+  setQueueRepo,
+  type QueueRepos,
+} from "../queue.js";
+import { ROOT, statePaths, writeTextAtomic, type StatePaths } from "../state.js";
+import { loadAllowance } from "../tickets.js";
 import type { Ticket } from "../types.js";
 import { ticketBranchName } from "../worktree.js";
 import { readActions } from "./actions.js";
@@ -47,8 +58,8 @@ import {
   type TtlCache,
 } from "./cache.js";
 import {
-  buildClockOff,
-  type ClockOffView,
+  buildEvening,
+  type EveningView,
   type PrLookup,
   type TicketPr,
 } from "./clock-off.js";
@@ -75,6 +86,7 @@ import {
   type CheckLevel,
   type ConfigCheck,
 } from "./project-checks.js";
+import type { QueueOp } from "./queue-edit.js";
 import { listNightFiles } from "./reports.js";
 
 export const SLOW_MS = { usage: 8_000, prs: 10_000, linear: 15_000 };
@@ -118,8 +130,8 @@ export function defaultDeps(root: string): DashboardDeps {
 
 export interface Sources {
   projects(): string[];
-  defaultProject(): string | undefined;
-  clockOff(project: string): Promise<Loaded<ClockOffView>>;
+  evening(): Promise<Loaded<EveningView>>;
+  editQueue(op: QueueOp): Promise<void>;
   morning(): Promise<{ items: InboxItem[]; rows: NightRow[] }>;
   runs(): ProjectRun[];
   projectSummaries(): { name: string; level: CheckLevel; reason: string }[];
@@ -182,21 +194,16 @@ export function createSources(deps: DashboardDeps): Sources {
     };
   }
 
-  function linearClient(name: string, lookup: Lookup): Loaded<LinearClient> {
+  function linearClient(lookup: Lookup, where: string): Loaded<LinearClient> {
     const apiKey = lookup("LINEAR_API_KEY");
-    if (!apiKey) {
-      return fail(`LINEAR_API_KEY is not set (projects/${name}/.env or .env)`);
-    }
+    if (!apiKey) return fail(`LINEAR_API_KEY is not set (${where})`);
     return ok({ apiKey, fetch: deps.fetch });
   }
 
-  function loadTodo(
-    { project }: ProjectContext,
-    client: Loaded<LinearClient>,
-  ): Promise<Loaded<TodoIssue[]>> {
+  function loadTodo(client: Loaded<LinearClient>): Promise<Loaded<TodoIssue[]>> {
     if (!client.ok) return Promise.resolve(client);
     return settle(
-      cache.get(cacheKeys.todo(project.name), TTL_MS.todo, () =>
+      cache.get(cacheKeys.todo(NIGHT_DIR_NAME), TTL_MS.todo, () =>
         fetchTodoIssues(client.value),
       ),
       SLOW_MS.linear,
@@ -205,20 +212,19 @@ export function createSources(deps: DashboardDeps): Sources {
   }
 
   function loadSnapshots(
-    { project }: ProjectContext,
     client: Loaded<LinearClient>,
     todo: Loaded<TodoIssue[]>,
-    tonight: Loaded<{ tickets: Ticket[] }>,
+    queue: Loaded<{ tickets: Ticket[] }>,
   ): Promise<Loaded<Record<string, IssueSnapshot | null>>> {
     if (!todo.ok) return Promise.resolve(fail(todo.error));
     if (!client.ok) return Promise.resolve(client);
     const inTodo = new Set(todo.value.map((issue) => issue.identifier));
-    const ids = (tonight.ok ? tonight.value.tickets : [])
+    const ids = (queue.ok ? queue.value.tickets : [])
       .map((ticket) => ticket.id)
       .filter((id) => !inTodo.has(id));
     if (ids.length === 0) return Promise.resolve(ok({}));
     return settle(
-      cache.get(cacheKeys.issues(project.name, ids), TTL_MS.todo, () =>
+      cache.get(cacheKeys.issues(NIGHT_DIR_NAME, ids), TTL_MS.todo, () =>
         fetchIssueSnapshots(client.value, ids),
       ),
       SLOW_MS.linear,
@@ -226,24 +232,31 @@ export function createSources(deps: DashboardDeps): Sources {
     );
   }
 
-  function loadTonight({
-    project,
-  }: ProjectContext): Loaded<{ tickets: Ticket[]; allowance?: number }> {
+  const queueFile = () => path.join(deps.root, "tonight.md");
+
+  const queueRepos = (projects: Project[]): QueueRepos =>
+    Object.fromEntries(
+      projects.map((p) => [
+        p.name,
+        { names: Object.keys(p.repos), defaultRepo: p.defaultRepo },
+      ]),
+    );
+
+  function loadQueueState(
+    projects: Project[],
+  ): Loaded<{ tickets: Ticket[]; allowance?: number }> {
     return attempt(() => {
-      const tickets = loadTickets(project.ticketsFile, {
-        names: Object.keys(project.repos),
-        defaultRepo: project.defaultRepo,
-      });
-      const allowance = loadAllowance(project.ticketsFile);
+      const tickets = loadQueue(queueFile(), queueRepos(projects));
+      const allowance = loadAllowance(queueFile());
       return { tickets, ...(allowance !== undefined ? { allowance } : {}) };
     });
   }
 
-  async function runUsage(name: string): Promise<UsageSummary> {
+  async function runUsage(): Promise<UsageSummary> {
     try {
       const { stdout } = await exec(
         path.join(deps.codeRoot, "node_modules/.bin/tsx"),
-        ["src/usage.ts", "--project", name],
+        ["src/usage.ts"],
         { cwd: deps.codeRoot, timeoutMs: USAGE_TIMEOUT_MS },
       );
       return parseUsageSummary(stdout);
@@ -252,9 +265,9 @@ export function createSources(deps: DashboardDeps): Sources {
     }
   }
 
-  function loadUsage(name: string): Promise<Loaded<UsageSummary>> {
+  function loadUsage(): Promise<Loaded<UsageSummary>> {
     return settle(
-      cache.get(cacheKeys.usage(name), TTL_MS.usage, () => runUsage(name)),
+      cache.get(cacheKeys.usage(NIGHT_DIR_NAME), TTL_MS.usage, runUsage),
       SLOW_MS.usage,
       USAGE_SLOW,
     );
@@ -293,20 +306,18 @@ export function createSources(deps: DashboardDeps): Sources {
   }
 
   function prCandidates(
-    todo: Loaded<TodoIssue[]>,
-    tonight: Loaded<{ tickets: Ticket[] }>,
+    issues: TodoIssue[],
+    tickets: Ticket[],
     snapshots: Loaded<Record<string, IssueSnapshot | null>>,
   ): PrCandidate[] {
-    const tonightTickets = tonight.ok ? tonight.value.tickets : [];
-    const repoOf = new Map(tonightTickets.map((t) => [t.id, t.repo]));
-    const todoIssues = todo.ok ? todo.value : [];
-    const candidates: PrCandidate[] = todoIssues.map((issue) => ({
+    const repoOf = new Map(tickets.map((t) => [t.id, t.repo]));
+    const candidates: PrCandidate[] = issues.map((issue) => ({
       id: issue.identifier,
       title: issue.title,
       repo: repoOf.get(issue.identifier),
     }));
-    const inTodo = new Set(todoIssues.map((issue) => issue.identifier));
-    for (const ticket of tonightTickets) {
+    const inTodo = new Set(issues.map((issue) => issue.identifier));
+    for (const ticket of tickets) {
       if (inTodo.has(ticket.id)) continue;
       const snapshot = snapshots.ok ? snapshots.value[ticket.id] : undefined;
       candidates.push({
@@ -357,41 +368,140 @@ export function createSources(deps: DashboardDeps): Sources {
     return ok(lookups);
   }
 
-  async function clockOff(name: string): Promise<Loaded<ClockOffView>> {
-    let context: ProjectContext;
+  function countOpenPrs(lists: Loaded<RepoPrLists>): Loaded<number> {
+    if (!lists.ok) return lists;
+    const open = Object.values(lists.value.byRepoPath).reduce(
+      (count, list) => (list.ok ? count + list.value.prs.length : count),
+      0,
+    );
+    return ok(open);
+  }
+
+  async function evening(): Promise<Loaded<EveningView>> {
+    const rootLookup = envLookup([rootEnvFile()]);
+    let projects: Project[];
     let prep;
+    let rootAllowance: number;
     try {
-      context = openProject(name);
+      projects = loadAllProjects(deps.projectsDir);
       prep = readPrepStore(deps.state.prep);
+      rootAllowance = nightlyAllowancePercent(rootLookup);
     } catch (error) {
       return fail(firstLine(error));
     }
-    const { project, lookup } = context;
-    const client = linearClient(project.name, lookup);
-    const tonight = loadTonight(context);
-    const [todo, usage, repoLists] = await Promise.all([
-      loadTodo(context, client),
-      loadUsage(project.name),
-      loadRepoPrLists(context),
-    ]);
-    const snapshots = await loadSnapshots(context, client, todo, tonight);
-    const prs = lookupPrs(
-      context,
-      repoLists,
-      prCandidates(todo, tonight, snapshots),
+    const contexts: ProjectContext[] = projects.map((project) => ({
+      project,
+      lookup: envLookup([project.envFile, rootEnvFile()]),
+    }));
+    const client = linearClient(
+      envLookup([rootEnvFile(), ...projects.map((p) => p.envFile)]),
+      ".env",
     );
+    const queue = loadQueueState(projects);
+    const [todo, usage, repoLists] = await Promise.all([
+      loadTodo(client),
+      loadUsage(),
+      Promise.all(contexts.map(loadRepoPrLists)),
+    ]);
+    const snapshots = await loadSnapshots(client, todo, queue);
+    const issues = todo.ok ? todo.value : [];
+    const tickets = queue.ok ? queue.value.tickets : [];
+    const lookups = contexts.map((context, i) => {
+      const { name } = context.project;
+      const candidates = prCandidates(
+        issues.filter(
+          (issue) => projectForLinearProject(projects, issue.projectName) === name,
+        ),
+        tickets.filter((ticket) => ticket.project === name),
+        snapshots,
+      );
+      return { candidates, loaded: lookupPrs(context, repoLists[i], candidates) };
+    });
+    const firstFailure = lookups.map((l) => l.loaded).find((l) => !l.ok);
+    const prs: Loaded<Record<string, PrLookup>> =
+      firstFailure && !firstFailure.ok && lookups.every((l) => !l.loaded.ok)
+        ? firstFailure
+        : ok(
+            Object.fromEntries(
+              lookups.flatMap(({ candidates, loaded }) =>
+                candidates.map((c) => [
+                  c.id,
+                  loaded.ok ? loaded.value[c.id] : "unknown",
+                ]),
+              ),
+            ),
+          );
     return ok(
-      buildClockOff({
-        project: { ...project, allowancePercent: nightlyAllowancePercent() },
+      buildEvening({
+        projects,
         todo,
-        tonight,
+        queue,
+        rootAllowance,
         snapshots,
         prep,
         prs,
+        openPrs: Object.fromEntries(
+          contexts.map((c, i) => [c.project.name, countOpenPrs(repoLists[i])]),
+        ),
         usage,
         now: deps.now(),
       }),
     );
+  }
+
+  function readQueueText(): string {
+    try {
+      return readFileSync(queueFile(), "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw error;
+    }
+  }
+
+  async function resolveAdd(
+    projects: Project[],
+    op: Extract<QueueOp, { op: "add" }>,
+  ) {
+    const project = projects.find((p) => p.name === op.project);
+    if (!project) throw new Error(`unknown project "${op.project}"`);
+    const client = linearClient(
+      envLookup([rootEnvFile(), ...projects.map((p) => p.envFile)]),
+      ".env",
+    );
+    const todo = await loadTodo(client);
+    if (!todo.ok) throw new Error(todo.error);
+    const issue = todo.value.find((i) => i.identifier === op.id);
+    if (!issue) throw new Error(`${op.id} isn't in your Linear Todo list`);
+    if (projectForLinearProject(projects, issue.projectName) !== project.name) {
+      throw new Error(`${op.id} doesn't belong to ${project.name}`);
+    }
+    const recorded = readPrepStore(deps.state.prep)[op.id]?.repo;
+    const repo =
+      op.repo ??
+      (recorded && Object.hasOwn(project.repos, recorded)
+        ? recorded
+        : project.defaultRepo);
+    return { id: op.id, name: issue.title, project: project.name, repo };
+  }
+
+  async function editQueue(op: QueueOp): Promise<void> {
+    const projects = loadAllProjects(deps.projectsDir);
+    const repos = queueRepos(projects);
+    const added = op.op === "add" ? await resolveAdd(projects, op) : undefined;
+    const raw = readQueueText();
+    const next = (() => {
+      switch (op.op) {
+        case "add":
+          return addToQueue(raw, repos, added!);
+        case "remove":
+          return removeFromQueue(raw, repos, op.id);
+        case "move":
+          return moveInQueue(raw, repos, op.order);
+        case "repo":
+          return setQueueRepo(raw, repos, op.id, op.repo);
+      }
+    })();
+    writeTextAtomic(queueFile(), next);
   }
 
   function readNights(): NightData[] {
@@ -479,7 +589,7 @@ export function createSources(deps: DashboardDeps): Sources {
       path.join(deps.projectsDir, name, ".env"),
       rootEnvFile(),
     ]);
-    const client = linearClient(name, lookup);
+    const client = linearClient(lookup, `projects/${name}/.env or .env`);
     if (!client.ok) return Promise.resolve(client);
     return settle(
       cache.get(cacheKeys.teams(name), TTL_MS.teams, () =>
@@ -490,25 +600,12 @@ export function createSources(deps: DashboardDeps): Sources {
     );
   }
 
-  function configuredDefaultProject(): string | undefined {
-    try {
-      return parseEnv(readFileSync(rootEnvFile(), "utf-8")).NIGHTSHIFT_PROJECT;
-    } catch {
-      return undefined;
-    }
-  }
-
   const projects = () => listProjects(deps.projectsDir);
 
   return {
     projects,
-    defaultProject() {
-      const listed = projects();
-      const configured = configuredDefaultProject();
-      if (configured && listed.includes(configured)) return configured;
-      return listed[0];
-    },
-    clockOff,
+    evening,
+    editQueue,
     morning,
     runs: () => readProjectRuns(deps.logsDir, deps.now()),
     projectSummaries: () => projects().map(summarise),
