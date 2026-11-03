@@ -94,6 +94,8 @@ export const DASHBOARD_CSS = `
     table.tickets td.action::before { content: none; }
     table.tickets td.grip { display: none; }
     table.tickets td.action { justify-content: flex-start; }
+    table.tickets tr.sweep td:not([colspan]) { display: none; }
+    table.tickets tr.sweep td[colspan] { display: block; text-align: left; }
   }`;
 
 export const CLIENT_SCRIPT = `(() => {
