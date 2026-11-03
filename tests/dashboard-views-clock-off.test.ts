@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  clockOffErrorHTML,
-  clockOffHTML,
+  eveningErrorHTML,
+  eveningHTML,
   homeHTML,
 } from "../src/dashboard/views/clock-off.js";
 import { CLIENT_SCRIPT, page } from "../src/dashboard/views/layout.js";
-import type { ClockOffRow, ClockOffView } from "../src/dashboard/clock-off.js";
+import type { ClockOffRow, EveningView, QueueRow } from "../src/dashboard/clock-off.js";
 
 function row(id: string, extra: Partial<ClockOffRow> = {}): ClockOffRow {
   return {
@@ -23,20 +23,30 @@ function row(id: string, extra: Partial<ClockOffRow> = {}): ClockOffRow {
   };
 }
 
-function view(extra: Partial<ClockOffView> = {}): ClockOffView {
+function queueRow(id: string, position: number, project: string, repos: string[], extra: Partial<QueueRow> = {}): QueueRow {
+  return { ...row(id, { tonightPosition: position }), project, repo: repos[0], repos, position, ...extra };
+}
+
+function view(extra: Partial<EveningView> = {}): EveningView {
   return {
-    project: "acme",
     allowance: { percent: 40, source: "tonight.md" },
     usage: {
       ok: true,
       value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false },
     },
-    rows: [
-      row("DEMO-1", {
-        tonightPosition: 1,
+    queue: [
+      queueRow("DEMO-1", 1, "acme", ["api", "web"], {
         pr: { prId: 8, url: "https://dev.azure.com/pr/8", autoComplete: true },
       }),
-      row("DEMO-2", { prep: { state: "none" } }),
+      queueRow("BETA-1", 2, "beta", ["app"]),
+    ],
+    sweep: [
+      { project: "acme", openPrs: { ok: true, value: 2 } },
+      { project: "beta", openPrs: { ok: true, value: 0 } },
+    ],
+    tabs: [
+      { project: "acme", rows: [row("DEMO-1", { tonightPosition: 1 }), row("DEMO-2", { prep: { state: "none" } })] },
+      { project: "beta", rows: [row("BETA-1", { tonightPosition: 2 }), row("BETA-2")] },
     ],
     warnings: [
       {
@@ -77,203 +87,173 @@ describe("page", () => {
     expect(CLIENT_SCRIPT).toContain('"X-Nightshift": "1"');
     expect(CLIENT_SCRIPT).toContain("/api/launch");
     expect(CLIENT_SCRIPT).toContain("/api/refresh");
+    expect(CLIENT_SCRIPT).toContain("/api/queue");
   });
 });
 
-describe("clockOffHTML", () => {
-  const html = clockOffHTML(view());
+describe("eveningHTML", () => {
+  const html = eveningHTML(view());
+  const at = (needle: string) => html.indexOf(needle);
 
-  it("shows the allowance, usage, warnings and PR", () => {
-    expect(html).toContain(
-      "Tonight's allowance: <strong>40%</strong> (tonight.md)",
-    );
+  it("orders the summary, the queue and the tabs", () => {
+    expect(at("Tonight's allowance")).toBeGreaterThan(-1);
+    expect(at("Tonight's allowance")).toBeLessThan(at("Tonight's queue"));
+    expect(at("data-queue-id")).toBeLessThan(at('aria-label="Projects"'));
+    expect(at("PR comment sweep")).toBeLessThan(at("data-queue-id"));
+  });
+
+  it("shows the summary with allowance, usage, counts, warnings and the buttons", () => {
+    expect(html).toContain("Tonight's allowance: <strong>40%</strong> (tonight.md)");
     expect(html).toContain("70%");
-    expect(html).toContain("Oct 8");
+    expect(html).toContain("2 tickets · 2 projects swept");
     expect(html).toContain('data-code="auto_complete"');
-    expect(html).toContain("#1");
-    expect(html).toContain("#8");
-    expect(html).toContain("auto-complete");
+    expect(html).toContain("&quot;kind&quot;:&quot;tonight&quot;}");
+    expect(html).not.toContain("&quot;kind&quot;:&quot;tonight&quot;,&quot;project");
+    expect(html).toContain('data-refresh="all"');
+    expect(html).not.toContain('id="project"');
   });
 
-  it("links the ticket to Linear in a new tab", () => {
-    expect(html).toContain('href="https://linear.app/acme/issue/DEMO-1"');
-    expect(html).toContain('target="_blank"');
-    expect(html).toContain('rel="noopener"');
+  it("pins a sweep row with each project's open PRs and no handles or move buttons", () => {
+    const sweep = html.match(/<tr class="sweep">[\s\S]*?<\/tr>/)![0];
+    expect(sweep).toContain("acme");
+    expect(sweep).toContain("2 open PRs");
+    expect(sweep).toContain("0 open PRs");
+    expect(sweep).not.toContain("draggable");
+    expect(sweep).not.toContain("data-queue-op");
   });
 
-  it("renders launch buttons with escaped JSON", () => {
+  it("renders each queue row with its project, repo select and keyboard buttons", () => {
+    const first = html.match(/<tr draggable="true" data-queue-id="DEMO-1"[\s\S]*?<\/tr>/)![0];
+    expect(first).toContain('data-label="Project"');
+    expect(first).toContain(">acme<");
+    expect(first).toContain('href="https://linear.app/acme/issue/DEMO-1"');
+    expect(first).toContain("Title DEMO-1");
+    expect(first).toContain("fresh");
+    expect(first).toContain('<option value="api" selected>');
+    expect(first).toContain('<option value="web">');
+    expect(first).not.toContain('value="app"');
+    expect(first).toContain('aria-label="Move DEMO-1 up"');
+    expect(first).toContain('aria-label="Move DEMO-1 down"');
+    expect(first).toContain('data-queue-op="remove"');
+    expect(first).toMatch(/aria-label="Move DEMO-1 up" disabled/);
+    expect(html).toMatch(/aria-label="Move BETA-1 down" disabled/);
+  });
+
+  it("makes the tabs links with the first project current by default", () => {
+    expect(html).toContain('<a href="?tab=acme" aria-current="page">acme (2 Todo)</a>');
+    expect(html).toContain('<a href="?tab=beta">beta (2 Todo)</a>');
+    expect(html).toContain("DEMO-2");
+    expect(html).not.toContain("BETA-2");
+  });
+
+  it("shows the selected tab and falls back to the first for an unknown one", () => {
+    const beta = eveningHTML(view(), "beta");
+    expect(beta).toContain('<a href="?tab=beta" aria-current="page">');
+    expect(beta).toContain("BETA-2");
+    expect(eveningHTML(view(), "nope")).toContain('<a href="?tab=acme" aria-current="page">');
+  });
+
+  it("shows in queue #N or a + add button in a tab", () => {
+    expect(html).toContain("in queue #1");
+    expect(html).toMatch(/data-queue-op="add" data-id="DEMO-2" data-project="acme">\+ add</);
+    expect(html).not.toMatch(/data-queue-op="add" data-id="DEMO-1"/);
+  });
+
+  it("renders a prep launch button per tab row with escaped JSON", () => {
     expect(html).toContain(
-      'data-launch="{&quot;kind&quot;:&quot;prep&quot;,&quot;id&quot;:&quot;DEMO-1&quot;,&quot;project&quot;:&quot;acme&quot;}"',
-    );
-    expect(html).toContain(
-      'data-launch="{&quot;kind&quot;:&quot;tonight&quot;,&quot;project&quot;:&quot;acme&quot;}"',
+      'data-launch="{&quot;kind&quot;:&quot;prep&quot;,&quot;id&quot;:&quot;DEMO-2&quot;,&quot;project&quot;:&quot;acme&quot;}"',
     );
   });
 
   it("labels every cell for the stacked mobile layout", () => {
-    for (const label of [
-      "ID",
-      "Title",
-      "Priority",
-      "Est.",
-      "Prep",
-      "Tonight",
-      "PR",
-    ]) {
+    for (const label of ["#", "Project", "ID", "Title", "Prep", "Repo", "Action", "Priority", "Est.", "Tonight", "PR"]) {
       expect(html).toContain(`data-label="${label}"`);
     }
   });
 
   it("colours the prep badge by state", () => {
     expect(html).toContain("#22c55e");
-    expect(html).toContain("fresh");
     expect(html).toContain("none");
   });
 
-  it("escapes Linear titles", () => {
-    const out = clockOffHTML(
-      view({ rows: [row("DEMO-1", { title: "<img onerror=x>" })] }),
+  it("escapes Linear titles and attribute values", () => {
+    const out = eveningHTML(
+      view({
+        queue: [queueRow("DEMO-1", 1, "acme", ["api"], { title: "<img onerror=x>", url: 'https://x/"onmouseover="y' })],
+      }),
     );
     expect(out).toContain("&lt;img onerror=x&gt;");
     expect(out).not.toContain("<img onerror=x>");
-  });
-
-  it("escapes attribute values", () => {
-    const out = clockOffHTML(
-      view({
-        rows: [row("DEMO-1", { url: 'https://x/"onmouseover="y' })],
-      }),
-    );
     expect(out).not.toContain('"onmouseover="y');
   });
 
-  it("shows Linear unavailable with the recorded prep state", () => {
-    const out = clockOffHTML(
-      view({
-        linearError: "LINEAR_API_KEY is not set",
-        rows: [
-          row("DEMO-1", {
-            prep: null,
-            prepRecord: {
-              project: "acme",
-              preppedAt: "2026-10-01T10:00:00.000Z",
-              descHash: "h",
-              outcome: "ready",
-            },
-          }),
-          row("DEMO-2", { prep: null }),
-        ],
-      }),
+  it("shows the Linear, queue and PR errors", () => {
+    const out = eveningHTML(
+      view({ linearError: "down", queueError: "unknown project", prError: "az not logged in" }),
     );
-    expect(out).toContain(
-      "Linear unavailable: LINEAR_API_KEY is not set. Showing tonight.md only.",
-    );
-    expect(out).toContain("recorded: ready");
-    expect(out).toContain(">?<");
-  });
-
-  it("shows tonight.md and PR errors", () => {
-    const out = clockOffHTML(
-      view({ tonightError: "unknown repo", prError: "az not logged in" }),
-    );
-    expect(out).toContain("tonight.md has a problem: unknown repo");
+    expect(out).toContain("Linear unavailable: down. Showing the queue only.");
+    expect(out).toContain("tonight.md has a problem: unknown project");
     expect(out).toContain("PR status unavailable: az not logged in");
   });
 
   it("shows codex weekly usage with its nightly allowance", () => {
-    const out = clockOffHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codex: { weeklyPercent: 7.4, resetInfo: "Oct 10" } } } }));
+    const out = eveningHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codex: { weeklyPercent: 7.4, resetInfo: "Oct 10" } } } }));
     expect(out).toContain("Codex weekly: <strong>7%</strong> used · resets Oct 10 · 20% a night");
   });
 
-  it("shows codex usage unavailable", () => {
-    const out = clockOffHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codexError: "not logged in" } } }));
+  it("shows codex usage unavailable and nothing without codex", () => {
+    const out = eveningHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codexError: "not logged in" } } }));
     expect(out).toContain('<span class="dim">Codex usage unavailable: not logged in</span>');
-  });
-
-  it("shows nothing about codex without codex usage", () => {
-    expect(clockOffHTML(view())).not.toContain("Codex");
+    expect(html).not.toContain("Codex");
   });
 
   it("shows usage unavailable", () => {
-    const out = clockOffHTML(
-      view({ usage: { ok: false, error: "no credentials" } }),
-    );
-    expect(out).toContain("Usage unavailable: no credentials");
+    expect(eveningHTML(view({ usage: { ok: false, error: "no credentials" } }))).toContain("Usage unavailable: no credentials");
   });
 
   it("marks PR lookups that failed and rows outside Todo", () => {
-    const out = clockOffHTML(
-      view({
-        rows: [
-          row("DEMO-3", {
-            pr: "unknown",
-            inTodo: false,
-            linearState: "In Progress",
-          }),
-        ],
-      }),
+    const out = eveningHTML(
+      view({ queue: [queueRow("DEMO-3", 1, "acme", ["api"], { pr: "unknown", inTodo: false, linearState: "In Progress" })] }),
     );
     expect(out).toContain("not-todo");
     expect(out).toContain("In Progress");
-    expect(out).toContain('title="PR status unknown"');
   });
 
-  it("shows the project default allowance and teams", () => {
-    const out = clockOffHTML(
-      view({
-        allowance: { percent: 25, source: "project default" },
-        teams: ["DEMO"],
-      }),
-    );
-    expect(out).toContain("(project default)");
-    expect(out).toContain("Teams: DEMO");
-  });
-
-  it("shows the empty state", () => {
-    const out = clockOffHTML(view({ rows: [], warnings: [], teams: ["DEMO"] }));
-    expect(out).toContain("No Todo tickets assigned to you in DEMO");
-    expect(out).not.toContain('class="tickets"');
-  });
-
-  it("omits the empty state when Linear is down", () => {
-    const out = clockOffHTML(view({ rows: [], linearError: "down" }));
-    expect(out).not.toContain("No Todo tickets");
+  it("shows empty states", () => {
+    const empty = eveningHTML(view({ queue: [], tabs: [{ project: "acme", rows: [] }, { project: "beta", rows: [] }] }));
+    expect(empty).toContain("Nothing queued");
+    expect(empty).toContain("No Todo tickets assigned to you in acme");
+    expect(eveningHTML(view({ tabs: [{ project: "acme", rows: [] }], linearError: "down" }))).not.toContain("No Todo tickets");
   });
 });
 
 describe("homeHTML", () => {
   it("points to setup when there are no projects", () => {
-    const html = homeHTML({ projects: [], selected: undefined });
+    const html = homeHTML({ projects: [] });
     expect(html).toContain("/nightshift-setup");
     expect(html).not.toContain("data-fragment=");
   });
 
-  it("renders the select and fragment slots", () => {
-    const html = homeHTML({ projects: ["acme", "beta"], selected: "acme" });
-    expect(html).toContain('data-fragment="/fragments/clock-off?project=acme"');
+  it("renders the fragment slots without a project picker", () => {
+    const html = homeHTML({ projects: ["acme", "beta"] });
+    expect(html).toContain('data-fragment="/fragments/evening"');
     expect(html).toContain('data-poll="30"');
     expect(html).toContain('data-fragment="/fragments/runs"');
     expect(html).toContain('data-fragment="/fragments/inbox"');
     expect(html).toContain('data-fragment="/fragments/nights"');
-    expect(html).toContain('<option value="acme" selected>');
+    expect(html).not.toContain("<select");
     expect(html).toContain("Loading tickets…");
   });
 
-  it("defaults to the first project", () => {
-    const html = homeHTML({ projects: ["acme", "beta"], selected: undefined });
-    expect(html).toContain("project=acme");
-  });
-
-  it("encodes the project in the fragment URL", () => {
-    const html = homeHTML({ projects: ["a&b"], selected: "a&b" });
-    expect(html).toContain("project=a%26b");
+  it("passes the selected tab to the evening fragment, encoded", () => {
+    expect(homeHTML({ projects: ["a&b"], tab: "a&b" })).toContain("/fragments/evening?tab=a%26b");
   });
 });
 
-describe("clockOffErrorHTML", () => {
-  it("links to the project page", () => {
-    const html = clockOffErrorHTML("acme", "bad");
-    expect(html).toContain('href="/projects/acme"');
-    expect(html).toContain("Project &quot;acme&quot; can't be loaded: bad");
+describe("eveningErrorHTML", () => {
+  it("explains the failure and links to the projects", () => {
+    const html = eveningErrorHTML("bad");
+    expect(html).toContain("Tonight can't be loaded: bad");
+    expect(html).toContain('href="/projects"');
   });
 });

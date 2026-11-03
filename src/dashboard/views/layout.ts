@@ -19,6 +19,7 @@ export const DASHBOARD_CSS = `
   nav a[aria-current="page"] { color: var(--text); background: var(--surface);
                                border-color: var(--border); }
   h2 { font-size: 1.05rem; margin: 1.75rem 0 0.75rem; }
+  h3 { font-size: 0.95rem; margin: 1rem 0 0.5rem; }
   .dim { color: var(--text-dim); }
   .loading { color: var(--text-dim); }
   .btn, select { font: inherit; color: var(--text); background: var(--surface);
@@ -30,7 +31,6 @@ export const DASHBOARD_CSS = `
   .btn:disabled { opacity: 0.5; cursor: progress; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn.primary:hover { filter: brightness(1.1); }
-  .project-picker { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem;
          background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
          padding: 0.75rem 1rem; margin-bottom: 1rem; }
@@ -51,6 +51,13 @@ export const DASHBOARD_CSS = `
        overflow-wrap: anywhere; }
   td.id { white-space: nowrap; }
   tr.not-todo { opacity: 0.6; }
+  tr.sweep td { color: var(--text-dim); font-style: italic; }
+  tr[draggable="true"] { cursor: grab; }
+  tr.dragging { opacity: 0.4; }
+  td.grip { color: var(--text-dim); width: 1rem; padding-right: 0; }
+  td.action .btn { padding: 0.25rem 0.6rem; min-height: 0; }
+  td.action { white-space: nowrap; }
+  nav.tabs { margin: 1.5rem 0 0.75rem; flex-wrap: wrap; }
   .badge { display: inline-block; color: #fff; font-size: 0.7rem; font-weight: 700;
            padding: 0.2rem 0.6rem; border-radius: 4px; letter-spacing: 0.5px; white-space: nowrap; }
   .state { color: var(--text-dim); font-size: 0.85rem; }
@@ -85,6 +92,7 @@ export const DASHBOARD_CSS = `
     table.tickets td::before { content: attr(data-label); color: var(--text-dim);
                                text-align: left; flex: none; }
     table.tickets td.action::before { content: none; }
+    table.tickets td.grip { display: none; }
     table.tickets td.action { justify-content: flex-start; }
   }`;
 
@@ -159,6 +167,47 @@ export const CLIENT_SCRIPT = `(() => {
     }
   };
 
+  const editQueue = async (body, el, focus) => {
+    const slot = el.closest("[data-fragment]");
+    try {
+      await post("/api/queue", body);
+    } catch (err) {
+      toast(err.message);
+    }
+    if (!slot) return;
+    await loadFragment(slot);
+    if (focus) {
+      const again = slot.querySelector('[data-queue-op="' + focus.op + '"][data-id="' + focus.id + '"]');
+      if (again) again.focus();
+    }
+  };
+
+  const queueRows = () => [...document.querySelectorAll("tr[data-queue-id]")];
+
+  const moveTo = (row, offset, op) => {
+    const order = queueRows().map((r) => r.dataset.queueId);
+    const from = order.indexOf(row.dataset.queueId);
+    const to = from + offset;
+    if (to < 0 || to >= order.length) return;
+    order.splice(to, 0, order.splice(from, 1)[0]);
+    return editQueue({ op: "move", order }, row, { op, id: row.dataset.queueId });
+  };
+
+  const queueClick = (button) => {
+    const id = button.dataset.id;
+    const op = button.dataset.queueOp;
+    const row = button.closest("tr");
+    if (op === "up" || op === "down") return moveTo(row, op === "up" ? -1 : 1, op);
+    if (op === "remove") return editQueue({ op: "remove", id }, button);
+    return editQueue({ op: "add", id, project: button.dataset.project }, button);
+  };
+
+  let dragged = null;
+  const queueRowOf = (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    return target && target.closest("tr[data-queue-id]");
+  };
+
   const tick = async (box) => {
     const now = new Date().toISOString();
     const item = box.closest(".inbox-item, li, tr");
@@ -184,6 +233,8 @@ export const CLIENT_SCRIPT = `(() => {
     if (launchButton) return launch(launchButton);
     const refreshButton = target && target.closest("[data-refresh]");
     if (refreshButton) return refresh(refreshButton);
+    const queueButton = target && target.closest("[data-queue-op]");
+    if (queueButton) return queueClick(queueButton);
     const retry = target && target.closest("[data-retry]");
     if (retry) {
       const slot = retry.closest("[data-fragment]");
@@ -194,7 +245,36 @@ export const CLIENT_SCRIPT = `(() => {
   document.addEventListener("change", (event) => {
     const target = event.target;
     if (target.matches && target.matches("input.inbox-tick")) tick(target);
-    if (target.id === "project") location.href = "/?project=" + encodeURIComponent(target.value);
+    if (target.matches && target.matches("select[data-queue-repo]")) {
+      editQueue({ op: "repo", id: target.dataset.id, repo: target.value }, target);
+    }
+  });
+
+  document.addEventListener("dragstart", (event) => {
+    dragged = queueRowOf(event);
+    if (!dragged) return;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", dragged.dataset.queueId);
+    dragged.classList.add("dragging");
+  });
+
+  document.addEventListener("dragover", (event) => {
+    if (dragged && queueRowOf(event)) event.preventDefault();
+  });
+
+  document.addEventListener("dragend", () => {
+    if (dragged) dragged.classList.remove("dragging");
+    dragged = null;
+  });
+
+  document.addEventListener("drop", (event) => {
+    const row = queueRowOf(event);
+    if (!dragged || !row || row === dragged) return;
+    event.preventDefault();
+    const order = queueRows().map((r) => r.dataset.queueId);
+    order.splice(order.indexOf(row.dataset.queueId), 0, order.splice(order.indexOf(dragged.dataset.queueId), 1)[0]);
+    dragged = null;
+    editQueue({ op: "move", order }, row);
   });
 
   document.querySelectorAll("[data-fragment]").forEach((el) => {

@@ -4,7 +4,7 @@ import { ExecError, type Exec } from "./exec.js";
 
 export type LaunchRequest =
   | { kind: "prep"; id: string; project: string }
-  | { kind: "tonight"; project: string };
+  | { kind: "tonight" };
 
 export type LaunchResult =
   | {
@@ -37,12 +37,11 @@ function assertShape(body: unknown): LaunchRequest {
   if (kind === "prep" && (typeof id !== "string" || !TICKET_ID.test(id))) {
     throw new Error("invalid ticket ID");
   }
+  if (kind === "tonight") return { kind };
   if (typeof project !== "string" || !PROJECT_NAME.test(project)) {
     throw new Error("unknown project");
   }
-  return kind === "prep"
-    ? { kind, id: id as string, project }
-    : { kind, project };
+  return { kind, id: id as string, project };
 }
 
 export function parseLaunchRequest(
@@ -50,14 +49,16 @@ export function parseLaunchRequest(
   projects: string[],
 ): LaunchRequest {
   const req = assertShape(body);
-  if (!projects.includes(req.project)) throw new Error("unknown project");
+  if (req.kind === "prep" && !projects.includes(req.project)) {
+    throw new Error("unknown project");
+  }
   return req;
 }
 
 export function skillPrompt(req: LaunchRequest): string {
   return req.kind === "prep"
     ? `/prep ${req.id} ${req.project}`
-    : `/tonight ${req.project}`;
+    : "/tonight";
 }
 
 export function shellQuote(s: string): string {
@@ -69,12 +70,11 @@ export function fallbackCommand(req: LaunchRequest, root: string): string {
 }
 
 export function workspaceLabel(req: LaunchRequest): string {
-  return req.kind === "prep" ? `prep ${req.id}` : `tonight ${req.project}`;
+  return req.kind === "prep" ? `prep ${req.id}` : "tonight";
 }
 
 export function agentName(req: LaunchRequest, suffix: string): string {
-  const subject = req.kind === "prep" ? req.id : req.project;
-  const base = `${req.kind}-${subject}`
+  const base = (req.kind === "prep" ? `prep-${req.id}` : "tonight")
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, "-");
   const tail = `-${suffix.toLowerCase()}`;

@@ -52,14 +52,12 @@ const write = (file: string, content: string) => {
 function fakeSources(): Sources {
   return {
     projects: vi.fn(() => ["acme", "example"]),
-    defaultProject: vi.fn(() => "acme"),
-    clockOff: vi.fn(async () => ({
+    evening: vi.fn(async () => ({
       ok: true as const,
       value: {
-        project: "acme",
-        allowance: { percent: 15, source: "project default" as const },
+        allowance: { percent: 15, source: "nightly default" as const },
         usage: { ok: false as const, error: "usage unavailable" },
-        rows: [
+        queue: [
           {
             id: "DEMO-1",
             title: "first ticket",
@@ -71,11 +69,21 @@ function fakeSources(): Sources {
             prep: null,
             tonightPosition: 1,
             pr: null,
+            project: "acme",
+            repo: "app",
+            repos: ["app"],
+            position: 1,
           },
+        ],
+        sweep: [{ project: "acme", openPrs: { ok: true as const, value: 0 } }],
+        tabs: [
+          { project: "acme", rows: [] },
+          { project: "example", rows: [] },
         ],
         warnings: [],
       },
     })),
+    editQueue: vi.fn(async () => {}),
     morning: vi.fn(async () => ({ items: [], rows: [] })),
     runs: vi.fn(() => []),
     projectSummaries: vi.fn(() => [
@@ -224,52 +232,36 @@ describe("failure after headers are sent", () => {
 });
 
 describe("pages and fragments", () => {
-  it("renders the home page with the clock-off slot", async () => {
+  it("renders the home page with the evening slot", async () => {
     const res = await req("GET", "/");
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/html/);
-    expect(res.body).toContain(
-      'data-fragment="/fragments/clock-off?project=acme"',
-    );
+    expect(res.body).toContain('data-fragment="/fragments/evening"');
   });
 
-  it("falls back to the default project for an unknown selection", async () => {
-    const res = await req("GET", "/?project=../x");
-    expect(res.status).toBe(200);
-    expect(res.body).toContain(
-      'data-fragment="/fragments/clock-off?project=acme"',
-    );
-    expect(res.body).not.toContain("../x");
+  it("passes a known tab to the evening slot and ignores an unknown one", async () => {
+    const known = await req("GET", "/?tab=example");
+    expect(known.body).toContain('data-fragment="/fragments/evening?tab=example"');
+    const unknown = await req("GET", "/?tab=../x");
+    expect(unknown.body).toContain('data-fragment="/fragments/evening"');
+    expect(unknown.body).not.toContain("../x");
   });
 
-  it("honours a known project selection", async () => {
-    const res = await req("GET", "/?project=example");
-    expect(res.body).toContain(
-      'data-fragment="/fragments/clock-off?project=example"',
-    );
-  });
-
-  it("renders clock-off rows for a known project", async () => {
-    const res = await req("GET", "/fragments/clock-off?project=acme");
+  it("renders the queue and tabs in the evening fragment", async () => {
+    const res = await req("GET", "/fragments/evening?tab=example");
     expect(res.status).toBe(200);
     expect(res.body).toContain("DEMO-1");
     expect(res.body).toContain("first ticket");
-    expect(sources.clockOff).toHaveBeenCalledWith("acme");
+    expect(res.body).toContain('<a href="?tab=example" aria-current="page">');
+    expect(sources.evening).toHaveBeenCalled();
   });
 
-  it("404s a clock-off fragment for an unknown project", async () => {
-    const res = await req("GET", "/fragments/clock-off?project=nope");
-    expect(res.status).toBe(404);
-    expect(res.body).toContain("error");
-    expect(sources.clockOff).not.toHaveBeenCalled();
-  });
-
-  it("explains a clock-off load failure with a 200 fragment", async () => {
-    vi.mocked(sources.clockOff).mockResolvedValue({
+  it("explains an evening load failure with a 200 fragment", async () => {
+    vi.mocked(sources.evening).mockResolvedValue({
       ok: false,
       error: "project.json is broken",
     });
-    const res = await req("GET", "/fragments/clock-off?project=acme");
+    const res = await req("GET", "/fragments/evening");
     expect(res.status).toBe(200);
     expect(res.body).toContain("can't be loaded");
     expect(res.body).toContain("project.json is broken");
@@ -510,7 +502,7 @@ describe("launch and refresh", () => {
       reason: "no herdr",
     };
     vi.mocked(sources.launch).mockResolvedValue(fallback);
-    const res = await post("/api/launch", { kind: "tonight", project: "acme" });
+    const res = await post("/api/launch", { kind: "tonight" });
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toEqual(fallback);
   });
@@ -535,6 +527,89 @@ describe("launch and refresh", () => {
     });
     expect(res.status).toBe(403);
     expect(sources.refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/queue", () => {
+  const nodes = ["DEMO-1", "DEMO-2"].map((identifier) => ({
+    id: `id-${identifier}`,
+    identifier,
+    title: `title ${identifier}`,
+    url: `https://linear.app/x/issue/${identifier}`,
+    priority: 2,
+    priorityLabel: "High",
+    estimate: 1,
+    description: "d",
+    team: { key: "DEMO" },
+    project: { name: "Demo" },
+    comments: { nodes: [] },
+  }));
+  const fetchStub = (async () =>
+    new Response(
+      JSON.stringify({ data: { viewer: { assignedIssues: { nodes } } } }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  const queueFile = () => join(root, "tonight.md");
+  const queue = () => readFileSync(queueFile(), "utf-8");
+  const post = (body: unknown, headers: Record<string, string> = jsonHeaders) =>
+    req("POST", "/api/queue", { headers, body: JSON.stringify(body) });
+
+  beforeEach(async () => {
+    vi.stubEnv("LINEAR_API_KEY", "");
+    await new Promise((resolve) => server.close(resolve));
+    const repo = join(root, "repos/app");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    write(
+      join(root, "projects/acme/project.json"),
+      JSON.stringify({
+        repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
+        linearProjects: ["Demo"],
+      }),
+    );
+    write(join(root, ".env"), "LINEAR_API_KEY=k\n");
+    const deps = { ...defaultDeps(root), fetch: fetchStub, cache: createCache() };
+    await listen({
+      sources: createSources(deps),
+      reportsDir: deps.reportsDir,
+      actionsFile: deps.state.actions,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("adds, moves and removes a ticket on the root queue", async () => {
+    expect((await post({ op: "add", id: "DEMO-1", project: "acme" })).status).toBe(200);
+    expect((await post({ op: "add", id: "DEMO-2", project: "acme" })).status).toBe(200);
+    expect(queue()).toBe(
+      "## DEMO-1 – title DEMO-1\nproject: acme\nrepo: app\n\n## DEMO-2 – title DEMO-2\nproject: acme\nrepo: app\n",
+    );
+    expect((await post({ op: "move", order: ["DEMO-2", "DEMO-1"] })).status).toBe(200);
+    expect(queue().indexOf("DEMO-2")).toBeLessThan(queue().indexOf("DEMO-1"));
+    expect((await post({ op: "remove", id: "DEMO-2" })).status).toBe(200);
+    expect(queue()).not.toContain("DEMO-2");
+  });
+
+  it("refuses a move that breaks base order and leaves the file unchanged", async () => {
+    const original =
+      "## DEMO-1 – one\nproject: acme\nrepo: app\n\n## DEMO-2 – two\nproject: acme\nrepo: app\nbase: DEMO-1\n";
+    write(queueFile(), original);
+    const res = await post({ op: "move", order: ["DEMO-2", "DEMO-1"] });
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/base DEMO-1/);
+    expect(queue()).toBe(original);
+  });
+
+  it("returns 400 for a malformed request", async () => {
+    for (const body of [{ op: "nope" }, { op: "remove", id: "x" }, { op: "move", order: "a" }]) {
+      expect((await post(body)).status, JSON.stringify(body)).toBe(400);
+    }
+  });
+
+  it("requires X-Nightshift like the other writes", async () => {
+    const res = await post({ op: "remove", id: "DEMO-1" }, { "content-type": "application/json" });
+    expect(res.status).toBe(403);
   });
 });
 
@@ -590,14 +665,21 @@ describe("no secrets in responses", () => {
       JSON.stringify({
         repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
         linearTeams: ["DEMO"],
+        linearProjects: ["Demo"],
       }),
     );
     write(
       join(root, "projects/acme/.env"),
       `LINEAR_API_KEY=${LINEAR}\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nAZURE_DEVOPS_PAT=${PAT}\n`,
     );
-    write(join(root, "projects/acme/tonight.md"), "## DEMO-1 – first\n");
-    write(join(root, "projects/example/project.json"), "{}");
+    write(join(root, "tonight.md"), "## DEMO-1 – first\nproject: acme\n");
+    write(
+      join(root, "projects/example/project.json"),
+      JSON.stringify({
+        repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
+        linearProjects: ["Example"],
+      }),
+    );
     const deps = {
       ...defaultDeps(root),
       exec: execStub,
@@ -619,9 +701,9 @@ describe("no secrets in responses", () => {
     const paths = [
       "/healthz",
       "/",
-      "/?project=acme",
+      "/?tab=acme",
       "/fragments/runs",
-      "/fragments/clock-off?project=acme",
+      "/fragments/evening?tab=acme",
       "/fragments/inbox",
       "/fragments/nights",
       "/projects",

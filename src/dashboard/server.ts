@@ -11,12 +11,13 @@ import {
 import { DASHBOARD_HOST, DASHBOARD_PORT } from "./address.js";
 import { firstLine, parseRefreshTarget } from "./cache.js";
 import { parseLaunchRequest } from "./launch.js";
+import { parseQueueOp } from "./queue-edit.js";
 import { resolveReportFile } from "./reports.js";
 import { checkRequest, preflightHeaders, type Verdict } from "./security.js";
 import { createSources, defaultDeps, type Sources } from "./sources.js";
 import {
-  clockOffErrorHTML,
-  clockOffHTML,
+  eveningErrorHTML,
+  eveningHTML,
   homeHTML,
 } from "./views/clock-off.js";
 import { errorBox, page } from "./views/layout.js";
@@ -149,12 +150,12 @@ function routes(ctx: ServerContext): Route[] {
       pattern: /^\/$/,
       handler: ({ query }) => {
         const projects = sources.projects();
-        const requested = query.get("project");
-        const selected =
+        const requested = query.get("tab");
+        const tab =
           requested !== null && projects.includes(requested)
             ? requested
-            : sources.defaultProject();
-        return html(homeHTML({ projects, selected }));
+            : undefined;
+        return html(homeHTML({ projects, tab }));
       },
     },
     {
@@ -164,17 +165,13 @@ function routes(ctx: ServerContext): Route[] {
     },
     {
       method: "GET",
-      pattern: /^\/fragments\/clock-off$/,
+      pattern: /^\/fragments\/evening$/,
       handler: async ({ query }) => {
-        const project = query.get("project");
-        if (!knownProject(project)) {
-          return html(errorBox("Unknown project"), 404);
-        }
-        const loaded = await sources.clockOff(project);
+        const loaded = await sources.evening();
         return html(
           loaded.ok
-            ? clockOffHTML(loaded.value)
-            : clockOffErrorHTML(project, loaded.error),
+            ? eveningHTML(loaded.value, query.get("tab") ?? undefined)
+            : eveningErrorHTML(loaded.error),
         );
       },
     },
@@ -263,6 +260,20 @@ function routes(ctx: ServerContext): Route[] {
           parseLaunchRequest(body, sources.projects()),
         );
         return json(await sources.launch(request));
+      },
+    },
+    {
+      method: "POST",
+      pattern: /^\/api\/queue$/,
+      handler: async ({ readJson }) => {
+        const body = await readJson();
+        const op = badRequest(() => parseQueueOp(body));
+        try {
+          await sources.editQueue(op);
+        } catch (error) {
+          throw new HttpError(400, firstLine(error));
+        }
+        return json({ ok: true });
       },
     },
     {

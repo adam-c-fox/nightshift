@@ -17,7 +17,7 @@ import {
 } from "../src/dashboard/launch.js";
 
 const prep: LaunchRequest = { kind: "prep", id: "ENG-142", project: "acme" };
-const tonight: LaunchRequest = { kind: "tonight", project: "acme" };
+const tonight: LaunchRequest = { kind: "tonight" };
 
 describe("parseLaunchRequest", () => {
   it("returns a valid prep request", () => {
@@ -30,13 +30,13 @@ describe("parseLaunchRequest", () => {
 
   it("returns a valid tonight request", () => {
     expect(
-      parseLaunchRequest({ kind: "tonight", project: "acme" }, ["acme"]),
+      parseLaunchRequest({ kind: "tonight" }, ["acme"]),
     ).toEqual(tonight);
   });
 
   it("drops fields that are not part of the request", () => {
     const parsed = parseLaunchRequest(
-      { kind: "tonight", project: "acme", id: "ENG-1", extra: "x" },
+      { kind: "tonight", project: "nope", id: "ENG-1", extra: "x" },
       ["acme"],
     );
     expect(parsed).toEqual(tonight);
@@ -47,9 +47,9 @@ describe("parseLaunchRequest", () => {
     [{ kind: "prep", id: "ENG-1; rm -rf ~", project: "acme" }, /ticket ID/],
     [{ kind: "prep", project: "acme" }, /ticket ID/],
     [{ kind: "prep", id: 142, project: "acme" }, /ticket ID/],
-    [{ kind: "tonight", project: "nope" }, /unknown project/],
-    [{ kind: "tonight" }, /unknown project/],
-    [{ kind: "tonight", project: ["acme"] }, /unknown project/],
+    [{ kind: "prep", id: "ENG-1", project: "nope" }, /unknown project/],
+    [{ kind: "prep", id: "ENG-1" }, /unknown project/],
+    [{ kind: "prep", id: "ENG-1", project: ["acme"] }, /unknown project/],
     [{ kind: "shell" }, /kind/],
     [{ kind: "prep ", id: "ENG-1", project: "acme" }, /kind/],
     [null, /kind/],
@@ -63,7 +63,7 @@ describe("parseLaunchRequest", () => {
 describe("skillPrompt", () => {
   it("names the skill and its arguments", () => {
     expect(skillPrompt(prep)).toBe("/prep ENG-142 acme");
-    expect(skillPrompt(tonight)).toBe("/tonight acme");
+    expect(skillPrompt(tonight)).toBe("/tonight");
   });
 });
 
@@ -82,7 +82,7 @@ describe("shellQuote and fallbackCommand", () => {
 describe("workspaceLabel", () => {
   it("labels both kinds", () => {
     expect(workspaceLabel(prep)).toBe("prep ENG-142");
-    expect(workspaceLabel(tonight)).toBe("tonight acme");
+    expect(workspaceLabel(tonight)).toBe("tonight");
   });
 });
 
@@ -91,22 +91,20 @@ describe("agentName", () => {
     expect(agentName(prep, "k3x9a")).toBe("prep-eng-142-k3x9a");
   });
 
-  it("stays a valid agent name for long and unusual project names", () => {
+  it("names the tonight agent without a project", () => {
+    const name = agentName(tonight, "zz");
+    expect(name).toBe("tonight-zz");
+    expect(name).toMatch(AGENT_NAME);
+  });
+
+  it("stays a valid agent name for long ticket ids", () => {
     const name = agentName(
-      { kind: "tonight", project: "My.Proj_with-a-very-long-name-indeed" },
+      { kind: "prep", id: "VERYLONGPROJECTKEY-123456789012345", project: "a" },
       "zz",
     );
     expect(name).toMatch(AGENT_NAME);
     expect(name.length).toBeLessThanOrEqual(32);
     expect(name.endsWith("-zz")).toBe(true);
-    expect(name).toBe(name.toLowerCase());
-    expect(name).not.toContain(".");
-  });
-
-  it("replaces dots with hyphens", () => {
-    expect(agentName({ kind: "tonight", project: "a.b" }, "zz")).toBe(
-      "tonight-a-b-zz",
-    );
   });
 });
 
@@ -303,7 +301,7 @@ describe("launch", () => {
       launch(bad as LaunchRequest, { exec, root, suffix }),
     ).rejects.toThrow(/ticket ID/);
     await expect(
-      launch({ kind: "tonight", project: "../x" }, { exec, root, suffix }),
+      launch({ kind: "prep", id: "ENG-1", project: "../x" }, { exec, root, suffix }),
     ).rejects.toThrow(/project/);
     await expect(
       launch({ kind: "shell" } as unknown as LaunchRequest, {
