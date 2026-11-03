@@ -79,7 +79,6 @@ The baseline runs unsandboxed, but night agents run sandboxed. Their network all
   - **Repos**: the layout, how to run one test file, and every place the generic `AGENTS.md` is wrong for this repo. The root `AGENTS.md` is stack-neutral, so stack-specific workflow notes go here (e.g. Terraform: validate instead of unit tests, never plan or apply).
   - **Services in this environment**.
   - **Missing here**.
-- **`tonight.md`**: the `# Tonight` heading only.
 - **`test-db.sh`**, if step 3 produced one. Run `chmod +x` on it.
 
 ## 6. Validate
@@ -95,4 +94,4 @@ Fix and re-run until every check is `pass`. If the user chose an empty `BRANCH_P
 - The files written.
 - The baseline as a table: command, pass or fail, and one line of reason.
 - The gaps, blockers first. Give each one its fix and where the fix belongs: in this repo (e.g. "add a `typecheck` script") or in nightshift (e.g. "support pnpm").
-- Next steps: `/prep <ID> <name>`, then `/tonight <name>`.
+- Next steps: `/prep <ID> <name>`, then `/tonight`.

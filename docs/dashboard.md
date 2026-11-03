@@ -22,13 +22,14 @@ To uninstall:
 launchctl bootout gui/$(id -u)/io.nightshift.dashboard && rm ~/Library/LaunchAgents/io.nightshift.dashboard.plist
 ```
 
-Open <http://127.0.0.1:4100>. It listens on that address only, so nothing else on the network can reach it.
+Open <http://127.0.0.1:4100>. It listens on that address only, so nothing else on the network can reach it. To use another port, set `NIGHTSHIFT_DASHBOARD_PORT`.
 
 ## Before clocking off
 
-The home page has a project picker and a "Before clocking off" section for the selected project:
+The home page has a "Before clocking off" section. It opens with a global summary, then the shared queue, then one tab per project (`?tab=<project>`):
 
-- **Todo tickets.** Your Linear Todo tickets, limited to the project's `linearTeams`, with priority, estimate, prep state, position in `tonight.md` and any open PR. Tickets that are in `tonight.md` but no longer in Todo are listed too, with their Linear state.
+- **Queue.** The root `tonight.md`, in run order, with a pinned PR-sweep row first. Drag a row, or use Up and Down, to reorder it, Remove to drop it, and the repo dropdown to change its repo. Tickets that are queued but no longer in Todo stay listed, with their Linear state.
+- **Project tabs.** Your Linear Todo tickets owned by that project through `linearProjects`, with priority, estimate, prep state, queue position and any open PR. `+ add` appends one to the queue.
 - **Prep state.** One of:
   - `fresh`: prepped with `/prep`, the description hasn't changed since and there are no newer comments.
   - `stale`: the description changed after `/prep`.
@@ -36,9 +37,9 @@ The home page has a project picker and a "Before clocking off" section for the s
   - `not ready`: `/prep` recorded blockers. Hover the badge to read them.
   - `inferred`: there's no `/prep` record, but the description already has a Decisions, Acceptance criteria or Pointers section.
   - `none`: no record and no such section.
-- **Allowance and usage.** Tonight's allowance and where it comes from (`tonight.md` or the project default), and the weekly usage with its reset time, with the Codex weekly usage and its 20% nightly allowance next to it.
-- **Warnings.** A ticket in `tonight.md` that Linear can't find, that isn't in Todo or isn't assigned to you; one that is unprepped, stale or not ready; a PR with auto-complete set, which the runner won't push to; and a weekly reset within 24 hours, when `allowance: 100` may be worth setting. If Linear is unavailable or `tonight.md` has a parse error, the page says so and still lists what it can.
-- **Prep and Plan tonight.** Each row has a Prep button and the section has a Plan tonight button. They open a herdr workspace running `/prep <ID> <project>` or `/tonight <project>`. If herdr isn't installed or isn't running, the dashboard copies the equivalent `claude` command to your clipboard instead.
+- **Allowance and usage.** Tonight's allowance and where it comes from (`tonight.md` or `NIGHTLY_ALLOWANCE_PERCENT`), and the weekly usage with its reset time, with the Codex weekly usage and its 20% nightly allowance next to it.
+- **Warnings.** A queued ticket that Linear can't find, that isn't in Todo or isn't assigned to you; one that is unprepped, stale or not ready; a PR with auto-complete set, which the runner won't push to; and a weekly reset within 24 hours, when `allowance: 100` may be worth setting. If Linear is unavailable or `tonight.md` has a parse error, the page says so and still lists what it can.
+- **Prep and Plan tonight.** Each row has a Prep button and the section has a Plan tonight button. They open a herdr workspace running `/prep <ID> <project>` or `/tonight`, with no project. If herdr isn't installed or isn't running, the dashboard copies the equivalent `claude` command to your clipboard instead.
 - **Refresh.** Clears the caches and reloads. Linear tickets are cached for 5 minutes, PRs and their CI results for 5 minutes, usage for 10 minutes and the Linear team list for 1 hour.
 
 ## Prep memory
@@ -51,15 +52,15 @@ npm run -s prep-mark -- <ID> --project <name> [--repo <repo>] [--not-ready "<blo
 
 It re-fetches the ticket from Linear and stores a hash of the description. Without `--not-ready` the outcome is recorded as ready. `--not-ready` records the blockers instead. The hash is how the dashboard and `/tonight` know a description changed after the prep.
 
-`prep-status` prints one JSON line per Todo ticket in the project's `linearTeams`, with its prep state. `/tonight` uses it for its prep column:
+`prep-status` prints one JSON line per Todo ticket that belongs to a project, with its `project` and prep state. `--project <name>` limits it to one. `/tonight` uses it for its prep column:
 
 ```sh
-npm run -s prep-status -- --project <name>
+npm run -s prep-status
 ```
 
 ## Each morning on the dashboard
 
-- **Run banner.** While a night is running, a banner shows the ticket, the phase and the time elapsed. It reads `logs/<name>/run.json`, which the runner refreshes every minute. If the heartbeat is more than 3 minutes old, the banner says the run looks stopped.
+- **Run banner.** While a night is running, a banner shows the ticket, the phase and the time elapsed. It reads `logs/night/run.json`, which the runner refreshes every minute. If the heartbeat is more than 3 minutes old, the banner says the run looks stopped.
 - **Outstanding.** One list of what needs you: tickets that ended `needs_review`, `partial` or `error`, open PRs with their CI result, votes and auto-complete state, and the postmortem suggestions. Each item has a checkbox. The checkboxes are the same ones as in the report, kept in `state/actions.json`, so a tick in one shows in the other.
 - **Nights.** One row per report with ticket counts, budget used, Codex used, duration, suggestions and outstanding items. Reports from before the JSON output only get a link. Reports directly under `reports/` are listed as project `legacy`.
 

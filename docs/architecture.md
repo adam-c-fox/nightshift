@@ -1,10 +1,10 @@
 # Architecture and design decisions
 
-Nightshift is a local TypeScript runner that coordinates git, issue tracking, coding agents and CI. It runs tickets in file order. Each ticket produces a structured record and a human-readable report; it does not merge its PRs.
+Nightshift is a local TypeScript runner that coordinates git, issue tracking, coding agents and CI. It runs tickets in file order, across every project in one night. Each ticket produces a structured record and a human-readable report; it does not merge its PRs.
 
 ## Worktrees isolate tickets
 
-The runner reads `projects/<name>/tonight.md` and fetches the Linear ticket and comments. It moves eligible tickets to In Progress, then creates a worktree beside the target repo, such as `/code/app-ENG-142` for `/code/app`.
+The runner reads the root `tonight.md`, where each ticket names its project, and fetches the Linear ticket and comments. It moves eligible tickets to In Progress, then creates a worktree beside the target repo, such as `/code/app-ENG-142` for `/code/app`.
 
 A new ticket starts from the remote default branch, falling back to `main` when that default is unavailable. An existing PR continues on its own branch. A ticket with `base: <ID>` starts from an earlier ticket's pushed branch in the same repo and targets that branch when opening its PR. A dependent ticket is skipped when its base was not pushed.
 
@@ -38,7 +38,7 @@ The runner commits and opens or updates the PR. If remote CI fails, it retrieves
 
 ## Budgets follow account usage windows
 
-Claude receives 15% of weekly usage per night by default, configurable through `allowancePercent`. A header `allowance: <pct>` in `tonight.md` overrides the project for one night; `--allowance <pct>` overrides both. The cap is the starting weekly usage plus the allocation, limited to 100%. The one-night header override is removed when tickets are archived.
+Claude receives 15% of weekly usage per night by default, configurable through `NIGHTLY_ALLOWANCE_PERCENT` in the root `.env`. One allowance covers the whole night. A header `allowance: <pct>` in `tonight.md` overrides it for one night; `--allowance <pct>` overrides both. The cap is the starting weekly usage plus the allocation, limited to 100%. The one-night header override is removed when tickets are archived.
 
 The runner checks usage before starting more work. If five-hour session usage reaches 80%, it waits for the reset. A Claude run interrupted by a session limit can resume after the reset, up to twice, while the weekly cap remains open. The usage reader uses the OAuth probe when a Claude OAuth token is configured and otherwise invokes the CLI's usage command.
 
@@ -48,13 +48,13 @@ Model constants, CLI assumptions and timezone behavior are listed in [supported 
 
 ## Review comments are swept before new tickets
 
-Before `tonight.md`, the runner lists your active PRs in the project's repos and collects human comment threads nobody has answered yet. Each PR with such threads runs through the same path as a ticket, on the PR's branch: checks, agent, the full review, fix review and CI fix. The agent gives each thread a verdict ([`prompts/pr-comments.md`](../prompts/pr-comments.md)): fixed, already handled, or needs a person. After the push, the runner replies on fixed and already-handled threads, and resolves a fixed one only once the review and CI are clean. A needs-a-person thread gets no reply; it appears under "Decisions needed" in the report and in the dashboard inbox.
+Before `tonight.md`, the runner lists your active PRs in every project's repos and collects human comment threads nobody has answered yet. Each PR with such threads runs through the same path as a ticket, on the PR's branch: checks, agent, the full review, fix review and CI fix. The agent gives each thread a verdict ([`prompts/pr-comments.md`](../prompts/pr-comments.md)): fixed, already handled, or needs a person. After the push, the runner replies on fixed and already-handled threads, and resolves a fixed one only once the review and CI are clean. A needs-a-person thread gets no reply; it appears under "Decisions needed" in the report and in the dashboard inbox.
 
 A thread is looked at again when someone adds a new comment. One that failed is retried the next night and then given up on. Sweep items run before the `tonight.md` tickets under the same budget gate, a PR with auto-complete set is never pushed to, and the first failed write to Azure stops further writes for the night. Per-thread state is kept in `state/pr-comments/<project>.json`.
 
 ## Reports preserve what happened
 
-The runner saves agent output, check results and usage in `logs/<name>/`. HTML and JSON night records go in `reports/<name>/`. A heartbeat records the current phase for the dashboard. At the end, the ticket list is archived beside the report so the next night does not rerun it.
+The runner saves agent output, check results and usage in `logs/night/`. HTML and JSON night records go in `reports/night/`. A heartbeat records the current phase for the dashboard. At the end, the ticket list is archived beside the report so the next night does not rerun it.
 
 A final read-only postmortem reviews the night's logs and suggests instruction or workflow changes. It never applies them. It is skipped for dry runs, when no ticket was worked, or when usage has run out, with the reason recorded in the report.
 

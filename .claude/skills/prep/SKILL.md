@@ -6,15 +6,15 @@ disable-model-invocation: true
 
 Prep one Linear ticket with the user so a nightshift agent can finish it without guessing. Find its gaps, get the user's decisions, and write them into the ticket's description. `/tonight` later re-checks the night's set as a final pass.
 
-The agent sees the ticket's description and comments, plus the title and bullets in `projects/<project>/tonight.md`. Comments reach it as a raw thread, oldest first, with no sign of which points were settled, so every decision goes into the description.
+The agent sees the ticket's description and comments, plus the title and bullets in the root `tonight.md`. Comments reach it as a raw thread, oldest first, with no sign of which points were settled, so every decision goes into the description.
 
-Run the nightshift commands below from its checkout root, where `package.json` names `nightshift` and `templates/project/` exists. If invoked elsewhere, resolve this skill's directory through any symlink and use its great-grandparent as the checkout root. If the skill is a standalone copy, ask the user for the checkout path.
+Run the nightshift commands below from its checkout root, where `package.json` names `nightshift` and `templates/tonight.md` exists. If invoked elsewhere, resolve this skill's directory through any symlink and use its great-grandparent as the checkout root. If the skill is a standalone copy, ask the user for the checkout path.
 
 Discover the connected Linear tools for fetching an issue, listing its comments, and updating its description, assignee and state. Tool names and schemas vary by connector; load deferred tools with the host's discovery tool and use their actual schemas. The operation names below describe intent. If no connected tool supports an operation, ask the user to connect Linear and stop before changing the ticket.
 
 ## Steps
 
-1. Take the ticket ID and optional project from the arguments (`/prep <ID> [project]`), or ask the user for the ID. The project defaults to the output of `npm run -s project`; if that prints nothing, list `projects/*/project.json` and ask. Fetch the issue and list its comments with the connected Linear tools.
+1. Take the ticket ID and optional project from the arguments (`/prep <ID> [project]`), or ask the user for the ID. The project is the one whose `linearProjects` holds the ticket's Linear project; if the argument is missing, use that, and if none does, list `projects/*/project.json` and ask. Fetch the issue and list its comments with the connected Linear tools.
    Done when you hold the ticket and all its comments.
 
 2. Pick the repo with the rule in step 7 of `.claude/skills/tonight/SKILL.md`. Repos, their paths and descriptions live in `projects/<project>/project.json`.

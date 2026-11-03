@@ -11,7 +11,7 @@ This is a personal tool shared as-is. Support is best-effort, and changes still 
 ## How it works
 
 1. Sweep your own active PRs for unanswered review comments and work each PR that has some like a ticket on its branch, replying to and resolving the threads it fixes.
-2. Read an ordered ticket list from `projects/<name>/tonight.md` and fetch each ticket's description and comments.
+2. Read an ordered ticket list from `tonight.md`, which can mix projects, and fetch each ticket's description and comments.
 3. Create an isolated worktree, or continue an existing PR, and record the repo's checks before making changes.
 4. Run Claude Code test-first, then compare checks against the baseline.
 5. Review the diff through independent bug, spec and reuse passes, plus a Codex pass. Confirm findings against the code, fix confirmed issues, and review the fixes.
@@ -49,10 +49,10 @@ mkdir -p logs
 Follow [setup and daily use](docs/setup.md) to configure credentials, install the bundled skills, add a project and schedule it. Start with a dry run before enabling cron:
 
 ```sh
-npm run run:dry -- --project <name>
+npm run run:dry
 ```
 
-Dry runs read external services and write local logs and reports, but do not edit target repos or publish PRs. A completed night writes `reports/<name>/nightshift-<date>.html`.
+Dry runs read external services and write local logs and reports, but do not edit target repos or publish PRs. A completed night writes `reports/night/nightshift-<date>.html`.
 
 For the evening and morning views, run `npm run dashboard` and open <http://127.0.0.1:4100>. See the [dashboard guide](docs/dashboard.md) for prep state, outstanding actions and automatic startup.
 

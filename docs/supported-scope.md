@@ -1,6 +1,6 @@
 # Supported scope and extension points
 
-Nightshift can work across different codebases without changing its source when they fit the stack below. Repo paths, routing descriptions, project instructions, Linear teams, test database scripts and nightly Claude allowances are project configuration. Each repo's setup and check commands are configuration too. Providers and agent integrations are code.
+Nightshift can work across different codebases without changing its source when they fit the stack below. Repo paths, routing descriptions, project instructions, Linear projects, and test database scripts are project configuration. The nightly Claude allowance is one setting for every project. Each repo's setup and check commands are configuration too. Providers and agent integrations are code.
 
 There is no connector registry or provider interface today. New integrations are feasible, but adding one means changing and testing the runner and its related tools.
 
