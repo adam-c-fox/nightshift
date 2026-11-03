@@ -178,6 +178,7 @@ describe("cacheKeys and constants", () => {
       usage: 600_000,
       teams: 3_600_000,
       azLogin: 300_000,
+      azUser: 3_600_000,
     });
   });
 });

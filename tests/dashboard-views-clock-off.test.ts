@@ -116,8 +116,8 @@ describe("eveningHTML", () => {
   it("pins a sweep row with each project's open PRs and no handles or move buttons", () => {
     const sweep = html.match(/<tr class="sweep">[\s\S]*?<\/tr>/)![0];
     expect(sweep).toContain("acme");
-    expect(sweep).toContain("2 open PRs");
-    expect(sweep).toContain("0 open PRs");
+    expect(sweep).toContain("2 open PRs of yours");
+    expect(sweep).toContain("0 open PRs of yours");
     expect(sweep).not.toContain("draggable");
     expect(sweep).not.toContain("data-queue-op");
   });

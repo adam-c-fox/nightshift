@@ -141,8 +141,8 @@ const fakeExec: Exec = async (cmd, args, opts) => {
       throw new ExecError("az exploded", "", "az exploded", 1);
     }
     const prs = [
-      ...(prListHasPr7 ? [pr(7, "ns/demo-9-x")] : []),
-      pr(8, "ns/demo-1-first", { autoCompleteSetBy: {} }),
+      ...(prListHasPr7 ? [pr(7, "ns/demo-9-x", { createdBy: { uniqueName: "someone@else.com" } })] : []),
+      pr(8, "ns/demo-1-first", { autoCompleteSetBy: {}, createdBy: { uniqueName: "Me@Acme.com" } }),
     ];
     return { stdout: JSON.stringify(prs), stderr: "" };
   }
@@ -158,6 +158,9 @@ const fakeExec: Exec = async (cmd, args, opts) => {
       stdout: '{"weeklyPercent":40,"resetInfo":"Oct 9"}\n',
       stderr: "",
     };
+  }
+  if (cmd === "az" && args[0] === "account" && args[1] === "show") {
+    return { stdout: JSON.stringify({ user: { name: "me@acme.com" } }), stderr: "" };
   }
   throw new ExecError("spawn herdr ENOENT", "", "", "ENOENT");
 };
@@ -193,7 +196,7 @@ function writeAcme() {
   );
   write(
     join(root, "projects/acme/.env"),
-    `LINEAR_API_KEY=k\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nAZURE_DEVOPS_PAT=${PAT}\nBRANCH_PREFIX=ns\n`,
+    `LINEAR_API_KEY=k\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nAZURE_DEVOPS_PAT=${PAT}\nBRANCH_PREFIX=ns\nAZURE_DEVOPS_USER=me@acme.com\n`,
   );
   write(join(root, "tonight.md"), "## DEMO-1 – first\nproject: acme\nrepo: app\n");
 }
@@ -279,7 +282,7 @@ describe("evening", () => {
       ["example", []],
     ]);
     expect(view.warnings.map((w) => w.code)).toContain("auto_complete");
-    expect(view.sweep[0]).toEqual({ project: "acme", openPrs: { ok: true, value: 2 } });
+    expect(view.sweep[0]).toEqual({ project: "acme", openPrs: { ok: true, value: 1 } });
     expect(view.allowance).toEqual({ percent: 15, source: "nightly default" });
     expect(view.usage).toMatchObject({
       ok: true,
@@ -289,6 +292,33 @@ describe("evening", () => {
     const todoCall = fetchCalls.find((c) => c.query.includes("TodoIssues"))!;
     expect(todoCall.variables.filter.team).toBeUndefined();
     expect(todoCall.headers.Authorization).toBe("k");
+  });
+
+  it("falls back to the az account when AZURE_DEVOPS_USER is unset", async () => {
+    write(
+      join(root, "projects/acme/.env"),
+      "LINEAR_API_KEY=k\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nBRANCH_PREFIX=ns\n",
+    );
+    const view = await eveningView();
+    expect(view.sweep[0].openPrs).toEqual({ ok: true, value: 1 });
+    expect(execCalls.some((c) => c.args[0] === "account")).toBe(true);
+  });
+
+  it("fails the sweep PR count when the user cannot be identified", async () => {
+    write(
+      join(root, "projects/acme/.env"),
+      "LINEAR_API_KEY=k\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nBRANCH_PREFIX=ns\n",
+    );
+    const failing: Exec = (cmd, args, opts) =>
+      cmd === "az" && args[0] === "account"
+        ? Promise.reject(new ExecError("not logged in", "", "", 1))
+        : fakeExec(cmd, args, opts);
+    sources = createSources(deps({ exec: failing }));
+    const view = await eveningView();
+    expect(view.sweep[0].openPrs).toEqual({
+      ok: false,
+      error: "couldn't identify the az user: not logged in",
+    });
   });
 
   it("never lets a credential reach the returned view", async () => {

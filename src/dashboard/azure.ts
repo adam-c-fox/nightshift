@@ -34,7 +34,7 @@ export function azProjectFrom(
   return { org: orgUrl(org), project, env: azEnvFrom(lookup) };
 }
 
-async function azJson(
+export async function azJson(
   exec: Exec,
   az: AzProject,
   args: string[],

@@ -39,6 +39,7 @@ import type { Ticket } from "../types.js";
 import { ticketBranchName } from "../worktree.js";
 import { readActions } from "./actions.js";
 import {
+  azJson,
   azLoginStatus,
   azProjectFrom,
   listActivePrs,
@@ -368,13 +369,44 @@ export function createSources(deps: DashboardDeps): Sources {
     return ok(lookups);
   }
 
-  function countOpenPrs(lists: Loaded<RepoPrLists>): Loaded<number> {
+  async function resolveMe(
+    lookup: (name: string) => string | undefined,
+    az: AzProject,
+  ): Promise<Loaded<string>> {
+    const configured = lookup("AZURE_DEVOPS_USER");
+    if (configured) return ok(configured.toLowerCase());
+    return settle(
+      cache.get(cacheKeys.azUser(), TTL_MS.azUser, async () => {
+        const account = (await azJson(exec, az, ["account", "show"])) as {
+          user: { name: string };
+        };
+        return account.user.name.toLowerCase();
+      }),
+      SLOW_MS.prs,
+      PRS_SLOW,
+    ).then((me) =>
+      me.ok ? me : fail(`couldn't identify the az user: ${me.error}`),
+    );
+  }
+
+  async function countOpenPrs(
+    { lookup }: ProjectContext,
+    lists: Loaded<RepoPrLists>,
+  ): Promise<Loaded<number>> {
     if (!lists.ok) return lists;
-    const open = Object.values(lists.value.byRepoPath).reduce(
-      (count, list) => (list.ok ? count + list.value.prs.length : count),
+    const me = await resolveMe(lookup, lists.value.az);
+    if (!me.ok) return me;
+    const mine = Object.values(lists.value.byRepoPath).reduce(
+      (count, list) =>
+        list.ok
+          ? count +
+            list.value.prs.filter(
+              (p) => p.createdBy?.uniqueName?.toLowerCase() === me.value,
+            ).length
+          : count,
       0,
     );
-    return ok(open);
+    return ok(mine);
   }
 
   async function evening(): Promise<Loaded<EveningView>> {
@@ -431,6 +463,14 @@ export function createSources(deps: DashboardDeps): Sources {
               ),
             ),
           );
+    const openPrs = Object.fromEntries(
+      await Promise.all(
+        contexts.map(async (c, i) => [
+          c.project.name,
+          await countOpenPrs(c, repoLists[i]),
+        ]),
+      ),
+    );
     return ok(
       buildEvening({
         projects,
@@ -440,9 +480,7 @@ export function createSources(deps: DashboardDeps): Sources {
         snapshots,
         prep,
         prs,
-        openPrs: Object.fromEntries(
-          contexts.map((c, i) => [c.project.name, countOpenPrs(repoLists[i])]),
-        ),
+        openPrs,
         usage,
         now: deps.now(),
       }),

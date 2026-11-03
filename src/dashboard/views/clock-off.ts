@@ -158,7 +158,7 @@ ${cell("Action", actions, "action")}
 function sweepRowHTML(view: EveningView, tag: Tag): string {
   const parts = view.sweep.map(({ project, openPrs }) => {
     const count = openPrs.ok
-      ? `${openPrs.value} open PR${openPrs.value === 1 ? "" : "s"}`
+      ? `${openPrs.value} open PR${openPrs.value === 1 ? "" : "s"} of yours`
       : "PRs unknown";
     return `${tag(project)} ${esc(count)}`;
   });

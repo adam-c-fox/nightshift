@@ -6,6 +6,7 @@ export const TTL_MS = {
   usage: 600_000,
   teams: 3_600_000,
   azLogin: 300_000,
+  azUser: 3_600_000,
 } as const;
 
 export interface TtlCache {
@@ -97,6 +98,7 @@ export const cacheKeys = {
   ci: (org: string, prId: number) => `ci:${org}:${prId}`,
   usage: (project: string) => `usage:${project}`,
   azLogin: () => "az:login",
+  azUser: () => "az:user",
 };
 
 export type RefreshTarget = "linear" | "prs" | "usage" | "teams" | "all";
