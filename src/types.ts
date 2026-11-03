@@ -334,6 +334,7 @@ export interface SessionResult {
   gateHit: boolean;
   skipReason: string;
   noTasks: boolean;
+  projects?: string[];
   ticketError?: string;
   postmortem?: SessionPostmortem;
   codexBudget?: NightBudget;

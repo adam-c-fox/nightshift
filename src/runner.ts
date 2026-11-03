@@ -2,17 +2,19 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { REVIEW_LENSES, lensStage, roundStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type LinearComment, type LinearTicket, type NightBudget, type RunUsage, type PrCommentWork, type ThreadReport } from "./types.js";
-import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
-import { nightlyAllowancePercent, startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
+import { archiveTickets, loadAllowance } from "./tickets.js";
+import { loadQueue, QUEUE_FILE, type QueueRepos } from "./queue.js";
+import { createProjectSwitcher, nightOrder, type PrWrites, type ProjectContext } from "./night.js";
+import { nightlyAllowancePercent, resolveAllowance, startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
 import { openCodexBudget, readCodexUsage, runCodexFinder, runCodexLens } from "./codex.js";
 import { runAgent, runConfirm, runDedupe, runFinder, runFix, runFixReview, type TicketBrief } from "./claude.js";
 import { readCited, ticketText } from "./confirm.js";
-import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
-import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
+import { GENERIC_AGENTS_MD } from "./instructions.js";
+import { agentEnv, buildAgentSettings } from "./agent-env.js";
 import { getEnv, requireEnv, useProjectEnv } from "./env.js";
 import { parseRunArgs, RUN_USAGE, type RunArgs } from "./args.js";
-import { listProjects, loadProject, projectEnvFiles, type Project } from "./project.js";
+import { listProjects, loadAllProjects, loadProject, NIGHT_DIR_NAME, projectEnvFiles, type Project } from "./project.js";
 import { deriveOutcome } from "./status.js";
 import { az, createAndCheckPR, orgUrl, originUrl, prListArgs, repoNameFromRemote, type AzPullRequest, existingPrWebUrl, findOpenTicketPr, commitSubject, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
 import { applyThreadActions, listThreads, mergeSweep, planThreadActions, postReply, resolveThread, sweepPrComments, type SweepResult } from "./pr-comments.js";
@@ -202,7 +204,6 @@ async function runLoggedChecks(label: string, cwd: string, commands: CheckComman
 const checkRecords = (checks: ClassifiedCheck[]): TicketResult["checks"] =>
   checks.map(({ outputTail: _tail, ...record }) => record);
 
-interface PrWrites { state: PrCommentState; file: string; blocked: { reason?: string } }
 
 const shortHead = (cwd: string): string | undefined => {
   try {
@@ -264,7 +265,7 @@ async function processTicket(
     wtPath: plannedPath, branch: ticketBranchName(branchPrefix, ticketId, ticketName), baseRef: "origin/main", baseBranch: "main", startedFromPr: false,
   };
 
-  log(`\n── Ticket ${ticketId} – ${ticketName} [${repo}] ──`);
+  log(`\n── [${project.name}] Ticket ${ticketId} – ${ticketName} [${repo}] ──`);
 
   let linear: LinearTicket | null = null;
   let linearDesc = "", linearUrl = "", linearState = "";
@@ -537,7 +538,7 @@ function freshGate(budgetRef: { current: NightBudget }): UsageGate {
 const ticketWorktrees = (session: SessionResult): string[] =>
   session.tickets.map(t => t.worktreePath).filter(p => p !== "" && existsSync(p));
 
-async function nightPostmortem(session: SessionResult, project: Project, dryRun: boolean, reportsDir: string, budgetRef: { current: NightBudget }, base: string): Promise<SessionPostmortem> {
+async function nightPostmortem(session: SessionResult, dryRun: boolean, reportsDir: string, budgetRef: { current: NightBudget }, base: string): Promise<SessionPostmortem> {
   const { date } = session;
   try {
     saveLog(`session-${date}.json`, JSON.stringify(sessionLogData(session, name => existsSync(path.join(logsDir, name)), path.relative(ROOT, logsDir)), null, 2));
@@ -571,21 +572,21 @@ async function nightPostmortem(session: SessionResult, project: Project, dryRun:
   }
 }
 
-function selectProject(): { args: RunArgs; project: Project } {
-  let args: RunArgs;
+function parseArgs(): RunArgs {
   try {
-    args = parseRunArgs(process.argv.slice(2));
+    return parseRunArgs(process.argv.slice(2));
   } catch (e) {
     const message = (e as Error).message;
     console.error(message.includes(RUN_USAGE) ? message : `${message}\n${RUN_USAGE}`);
     process.exit(2);
   }
+}
+
+function loadProjects(): Project[] {
   try {
-    const name = getEnv("NIGHTSHIFT_PROJECT");
-    if (!name) {
-      throw new Error(`no project selected: set NIGHTSHIFT_PROJECT (available: ${listProjects().join(", ") || "none"})`);
-    }
-    return { args, project: loadProject(name) };
+    const projects = loadAllProjects();
+    if (projects.length === 0) throw new Error("no projects configured: add one under projects/ (see docs/setup.md)");
+    return projects;
   } catch (e) {
     console.error((e as Error).message);
     process.exit(2);
@@ -631,20 +632,37 @@ function runPrSweep(project: Project, state: PrCommentState, stateFile: string, 
 }
 
 async function main() {
-  const { args, project } = selectProject();
-  useProjectEnv(project.envFile);
-  const claudeToken = getEnv(CLAUDE_TOKEN);
-  if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
+  const args = parseArgs();
+  const projects = loadProjects();
   const dryRun = args.dryRun;
-  const branchPrefix = getEnv("BRANCH_PREFIX");
-  const reportsDir = path.join(REPORTS_DIR, project.name);
-  logsDir = path.join(ROOT, "logs", project.name);
-  const instructions = composeInstructions(readFileSync(GENERIC_AGENTS_MD, "utf-8"), project.name, project.instructions);
+  const reportsDir = path.join(REPORTS_DIR, NIGHT_DIR_NAME);
+  logsDir = path.join(ROOT, "logs", NIGHT_DIR_NAME);
+  const switcher = createProjectSwitcher({
+    load: name => projects.find(p => p.name === name)!,
+    useEnv: useProjectEnv,
+    getEnv,
+    startDb: script => {
+      if (dryRun) return undefined;
+      const db = startTestDb(log, undefined, process.env, script);
+      return db && { ...db, stop: () => { db.stop(); delete process.env.TEST_DATABASE_URL; } };
+    },
+    loadPrState: name => {
+      const file = statePaths().prComments(name);
+      return { state: loadPrCommentState(file), file };
+    },
+    genericInstructions: readFileSync(GENERIC_AGENTS_MD, "utf-8"),
+  });
+  const entered = new Map<string, ProjectContext>();
+  const enter = (name: string, options?: { db?: boolean }): ProjectContext => {
+    const ctx = switcher.enter(name, options);
+    entered.set(name, ctx);
+    return ctx;
+  };
   const date = localDate();
   const startedAtDate = new Date();
   const startedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
   log(`═══ Nightshift session ${date} started ${dryRun ? "(DRY RUN)" : ""} ═══`);
-  log(`Project: ${project.name}`);
+  log(`Projects: ${projects.map(p => p.name).join(", ")}`);
 
   mkdirSync(logsDir, { recursive: true });
   mkdirSync(reportsDir, { recursive: true });
@@ -676,14 +694,13 @@ async function main() {
     let ticketError = "";
     let nightAllowance: number | undefined;
     try {
-      nightAllowance = loadAllowance(project.ticketsFile);
+      nightAllowance = loadAllowance(QUEUE_FILE);
     } catch (e) {
       ticketError = (e as Error).message;
       log(`ERROR loading tickets: ${ticketError}`);
     }
     try {
-      const allocationPct = args.allowancePercent ?? nightAllowance ?? nightlyAllowancePercent();
-      const source = args.allowancePercent !== undefined ? "--allowance override" : nightAllowance !== undefined ? "tonight.md" : "nightly default";
+      const { percent: allocationPct, source } = resolveAllowance(args.allowancePercent, nightAllowance, nightlyAllowancePercent());
       budget = startNightBudget(allocationPct);
       log(`Tonight's allocation: ${allocationPct}% (${source}). Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
     } catch (e) {
@@ -698,33 +715,43 @@ async function main() {
     const codexBudgetRef = { current: dryRun ? closedBudget("dry run") : await openCodexBudget() };
     const closedAtStart = gateHit;
 
-    let tickets: Ticket[] = [];
+    let queue: Ticket[] = [];
     if (!ticketError) {
       try {
-        tickets = loadTickets(project.ticketsFile, { names: Object.keys(project.repos), defaultRepo: project.defaultRepo });
-        log(`Loaded ${tickets.length} ticket(s) from ${path.basename(project.ticketsFile)}`);
+        const queueRepos: QueueRepos = Object.fromEntries(projects.map(p => [p.name, { names: Object.keys(p.repos), defaultRepo: p.defaultRepo }]));
+        queue = loadQueue(QUEUE_FILE, queueRepos);
+        log(`Loaded ${queue.length} ticket(s) from ${path.basename(QUEUE_FILE)}`);
       } catch (e) {
         ticketError = (e as Error).message;
         log(`ERROR loading tickets: ${ticketError}`);
       }
     }
 
-    const tonightCount = tickets.length;
-    const prStateFile = statePaths().prComments(project.name);
-    const prWrites: PrWrites = { state: loadPrCommentState(prStateFile), file: prStateFile, blocked: {} };
-    let sweep: SweepResult;
-    try {
-      sweep = runPrSweep(project, prWrites.state, prStateFile, dryRun);
-    } catch (e) {
-      const error = `PR sweep crashed: ${errorMessage(e)}`;
-      log(error);
-      sweep = { items: [], held: [], prsScanned: 0, active: [], error };
+    const tonightCount = queue.length;
+    const sweeps: { project: string; items: Ticket[] }[] = [];
+    const sweepErrors: string[] = [];
+    let prsScanned = 0;
+    const held: SweepResult["held"] = [];
+    for (const project of projects) {
+      log(`\n── PR sweep: ${project.name} ──`);
+      const { prWrites } = enter(project.name, { db: false });
+      let sweep: SweepResult;
+      try {
+        sweep = runPrSweep(project, prWrites.state, prWrites.file, dryRun);
+      } catch (e) {
+        const error = `PR sweep crashed: ${errorMessage(e)}`;
+        log(error);
+        sweep = { items: [], held: [], prsScanned: 0, active: [], error };
+      }
+      sweeps.push({ project: project.name, items: sweep.items });
+      prsScanned += sweep.prsScanned;
+      held.push(...sweep.held);
+      if (sweep.error) sweepErrors.push(`${project.name}: ${sweep.error}`);
     }
-    tickets = mergeSweep(tickets, sweep.items);
-    const prSweep = { prsScanned: sweep.prsScanned, items: sweep.items.length, held: sweep.held, error: sweep.error };
+    const tickets = nightOrder(queue, sweeps);
+    const prSweep = { prsScanned, items: sweeps.reduce((n, s) => n + s.items.length, 0), held, error: sweepErrors.join("; ") || undefined };
 
     const processed = new Map<string, ProcessedTicket>();
-    const testDb = !dryRun && project.testDbScript && tickets.length > 0 ? startTestDb(log, undefined, process.env, project.testDbScript) : undefined;
     try {
       for (const [i, ticket] of tickets.entries()) {
         heartbeat.phase("ticket", { index: i + 1, total: tickets.length, id: ticket.id });
@@ -746,22 +773,24 @@ async function main() {
 
         if (gateHit) {
           log(`  Skipping ${ticket.id}`);
-          results.push(placeholderResult(ticket, "skipped", skipReason, branchPrefix));
+          results.push(placeholderResult(ticket, "skipped", skipReason, enter(ticket.project!, { db: false }).branchPrefix));
           continue;
         }
 
+        const ctx = enter(ticket.project!);
+        const { prWrites } = ctx;
         try {
-          const r = await processTicket(ticket, project, branchPrefix, instructions, dryRun, budgetRef, codexBudgetRef, processed, prWrites);
+          const r = await processTicket(ticket, ctx.project, ctx.branchPrefix, ctx.instructions, dryRun, budgetRef, codexBudgetRef, processed, prWrites);
           results.push(r);
         } catch (e) {
           log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
-          const placeholder = placeholderResult(ticket, "error", (e as Error).message, branchPrefix);
+          const placeholder = placeholderResult(ticket, "error", (e as Error).message, ctx.branchPrefix);
           if (ticket.prComments) settlePrThreads(placeholder, ticket.prComments, { reports: [], pushed: false, verified: false, changed: false }, prWrites, dryRun);
           results.push(placeholder);
         }
       }
     } finally {
-      testDb?.stop();
+      switcher.stop();
     }
 
     const session: SessionResult = {
@@ -775,10 +804,11 @@ async function main() {
       skipReason,
       noTasks: tonightCount === 0 && !ticketError,
       ...(ticketError ? { ticketError } : {}),
-      prSweep: { ...prSweep, error: prSweep.error ?? prWrites.blocked.reason },
+      projects: projects.map(p => p.name),
+      prSweep: { ...prSweep, error: prSweep.error ?? [...entered.values()].find(c => c.prWrites.blocked.reason)?.prWrites.blocked.reason },
     };
     heartbeat.phase("postmortem");
-    session.postmortem = await nightPostmortem(session, project, dryRun, reportsDir, budgetRef, base);
+    session.postmortem = await nightPostmortem(session, dryRun, reportsDir, budgetRef, base);
 
     try {
       if (!closedAtStart) budgetRef.current = checkGate(budgetRef.current);
@@ -802,7 +832,7 @@ async function main() {
 
     if (!dryRun && tonightCount > 0) {
       const archivePath = path.join(reportsDir, `${base}-tonight.md`);
-      archiveTickets(archivePath, project.ticketsFile);
+      archiveTickets(archivePath, QUEUE_FILE);
       log(`Tickets archived: ${archivePath}`);
     }
   } finally {
