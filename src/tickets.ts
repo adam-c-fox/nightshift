@@ -28,10 +28,6 @@ export function loadFile<T>(file: string, parse: (raw: string) => T, whenMissing
   return parse(raw);
 }
 
-export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
-  return loadFile(file, (raw) => parseTickets(raw, repos), []);
-}
-
 export function loadAllowance(file: string): number | undefined {
   try {
     return parseAllowance(readFileSync(file, "utf-8"));
@@ -53,16 +49,6 @@ export function parseAllowance(raw: string): number | undefined {
 }
 
 export type ParsedTicket = Omit<Ticket, "repo"> & { repo?: string };
-
-export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
-  const tickets = parseSections(raw).map(({ project: _project, ...ticket }) => ({
-    ...ticket,
-    repo: ticket.repo ?? repos.defaultRepo,
-  }));
-  validateRepos(tickets, repos.names);
-  validateBases(tickets);
-  return tickets;
-}
 
 export function parseSections(raw: string): ParsedTicket[] {
   const lines = raw.replace(COMMENT, "").split(/\r?\n/);

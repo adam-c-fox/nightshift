@@ -53,7 +53,6 @@ describe("parseProjectConfig", () => {
       defaultRepo: "main",
       testDbScript: "/p/acme/test-db.sh",
       linearProjects: ["Acme"],
-      ticketsFile: "/p/acme/tonight.md",
       envFile: "/p/acme/.env",
     });
   });

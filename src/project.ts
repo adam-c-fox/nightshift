@@ -36,7 +36,6 @@ export interface Project {
   testDbScript?: string;
   linearProjects: string[];
   linearTeams?: string[];
-  ticketsFile: string;
   envFile: string;
 }
 
@@ -209,7 +208,6 @@ export function parseProjectConfig(
     testDbScript,
     linearProjects: linearProjects as string[],
     ...(teams.length > 0 ? { linearTeams: teams } : {}),
-    ticketsFile: path.join(dir, "tonight.md"),
     envFile: path.join(dir, ".env"),
   };
 }
