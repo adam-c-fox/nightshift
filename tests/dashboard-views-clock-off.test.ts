@@ -242,9 +242,9 @@ describe("clockOffHTML", () => {
 });
 
 describe("homeHTML", () => {
-  it("offers project creation when there are no projects", () => {
+  it("points to setup when there are no projects", () => {
     const html = homeHTML({ projects: [], selected: undefined });
-    expect(html).toContain("/projects/new");
+    expect(html).toContain("/nightshift-setup");
     expect(html).not.toContain("data-fragment=");
   });
 

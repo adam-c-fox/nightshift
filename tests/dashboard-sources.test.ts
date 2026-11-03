@@ -184,7 +184,7 @@ function writeAcme() {
   write(
     join(root, "projects/acme/project.json"),
     JSON.stringify({
-      repos: { app: { path: appRepo, toolchain: "node" } },
+      repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } },
       linearTeams: ["DEMO"],
     }),
   );
@@ -224,7 +224,7 @@ beforeEach(() => {
   writeAcme();
   write(
     join(root, "projects/example/project.json"),
-    JSON.stringify({ repos: { app: { path: appRepo, toolchain: "node" } } }),
+    JSON.stringify({ repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } } }),
   );
   write(join(root, "projects/example/.env.example"), "LINEAR_API_KEY=\n");
   write(join(root, "reports/acme/nightshift-2026-10-02.html"), "<html></html>");
@@ -390,8 +390,8 @@ describe("clockOff", () => {
       join(root, "projects/duo/project.json"),
       JSON.stringify({
         repos: {
-          app: { path: appRepo, toolchain: "node" },
-          web: { path: webRepo, toolchain: "node" },
+          app: { path: appRepo, checks: [{ name: "t", command: "x" }] },
+          web: { path: webRepo, checks: [{ name: "t", command: "x" }] },
         },
         defaultRepo: "app",
         linearTeams: ["DEMO"],

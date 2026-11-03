@@ -3,35 +3,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  checkCommands, classifyChecks, didNotRun, discoverTerraformRoots, discoverWorkspaces, firstFailingLine, regressionFindings, runChecks,
+  classifyChecks, didNotRun, firstFailingLine, regressionFindings, repoCheckCommands, repoSetupCommands, runChecks,
   type CheckExec, type CheckResult,
 } from "../src/checks.js";
+import type { RepoConfig } from "../src/project.js";
 
 const result = (command: string, passed: boolean, outputTail = ""): CheckResult =>
   ({ name: command, command, passed, durationSec: 1, outputTail });
 
-describe("checkCommands", () => {
-  it("lists the CI commands and one test run per workspace for node", () => {
-    const commands = checkCommands("node", ["services/a", "packages/b"]).map(c => c.command);
-    expect(commands).toEqual([
-      "npm run build", "npm run typecheck", "npm run lint", "npm run format", "npx vitest run",
-      "npm test -w services/a", "npm test -w packages/b",
-    ]);
-  });
-
-  it("validates each terraform root module, then checks fmt once at the root", () => {
-    expect(checkCommands("terraform", ["environments/dev", "environments/prod"])).toEqual([
-      { name: "terraform validate (environments/dev)", command: "terraform -chdir=environments/dev init -backend=false -input=false && terraform -chdir=environments/dev validate" },
-      { name: "terraform validate (environments/prod)", command: "terraform -chdir=environments/prod init -backend=false -input=false && terraform -chdir=environments/prod validate" },
-      { name: "terraform fmt", command: "terraform fmt -check -recursive" },
-    ]);
-  });
-});
-
-describe("discoverTerraformRoots", () => {
+describe("repoCheckCommands and repoSetupCommands", () => {
   const roots: string[] = [];
   const project = (files: string[]) => {
-    const root = mkdtempSync(join(tmpdir(), "nightshift-tf-"));
+    const root = mkdtempSync(join(tmpdir(), "nightshift-in-"));
     roots.push(root);
     for (const f of files) {
       mkdirSync(join(root, dirname(f)), { recursive: true });
@@ -39,79 +22,57 @@ describe("discoverTerraformRoots", () => {
     }
     return root;
   };
+  const repo = (checks: RepoConfig["checks"], setup: RepoConfig["setup"] = []): RepoConfig =>
+    ({ path: "/r", description: "", setup, checks, network: [], allowLocalBinding: false, tools: [] });
   afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
 
-  it("finds directories that directly contain .tf files, sorted", () => {
-    const root = project(["environments/prod/main.tf", "environments/dev/main.tf", "environments/dev/vars.tf", "README.md"]);
-    expect(discoverTerraformRoots(root)).toEqual(["environments/dev", "environments/prod"]);
+  it("keeps a check without in as one command at the worktree root", () => {
+    expect(repoCheckCommands(repo([{ name: "lint", command: "make lint" }]), "/w")).toEqual([{ name: "lint", command: "make lint" }]);
   });
 
-  it("skips modules, .terraform, .git and node_modules", () => {
-    const root = project([
-      "environments/dev/main.tf", "modules/vpc/main.tf", "environments/dev/modules/x/main.tf",
-      "environments/dev/.terraform/modules/y/main.tf", ".git/hooks/a.tf", "node_modules/p/main.tf",
+  it("expands in to one command per matching directory, sorted", () => {
+    const root = project(["env/prod/main.tf", "env/dev/main.tf", "env/dev/vars.tf", "README.md"]);
+    expect(repoCheckCommands(repo([{ name: "validate", command: "make validate", in: ["env/*/main.tf"] }]), root)).toEqual([
+      { name: "validate (env/dev)", command: "make validate", cwd: "env/dev" },
+      { name: "validate (env/prod)", command: "make validate", cwd: "env/prod" },
     ]);
-    expect(discoverTerraformRoots(root)).toEqual(["environments/dev"]);
   });
 
-  it("includes the worktree root when it has .tf files", () => {
-    const root = project(["main.tf", "environments/dev/main.tf"]);
-    expect(discoverTerraformRoots(root)).toEqual([".", "environments/dev"]);
+  it("merges several globs and dedupes directories", () => {
+    const root = project(["services/a/package.json", "packages/b/package.json", "packages/b/other.json"]);
+    const commands = repoCheckCommands(repo([{ name: "t", command: "npm test", in: ["services/*/package.json", "packages/*/*.json"] }]), root);
+    expect(commands.map(c => c.cwd)).toEqual(["packages/b", "services/a"]);
   });
 
-  it("throws when there are no root modules", () => {
-    const root = project(["modules/vpc/main.tf", "README.md"]);
-    expect(() => discoverTerraformRoots(root)).toThrow(`no terraform root modules in ${root}`);
-  });
-});
-
-describe("discoverWorkspaces", () => {
-  const roots: string[] = [];
-  const project = (pkg: unknown, dirs: string[] = []) => {
-    const root = mkdtempSync(join(tmpdir(), "nightshift-ws-"));
-    roots.push(root);
-    if (pkg !== undefined) writeFileSync(join(root, "package.json"), JSON.stringify(pkg));
-    for (const d of dirs) {
-      mkdirSync(join(root, d), { recursive: true });
-      writeFileSync(join(root, d, "package.json"), "{}");
-    }
-    return root;
-  };
-  const query = (...locations: string[]) => () => JSON.stringify(locations.map(location => ({ location })));
-  const broken = () => { throw new Error("npm broke"); };
-  afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
-
-  it("keeps in-tree locations from npm query output", () => {
-    const root = project({ workspaces: ["services/*"] });
-    expect(discoverWorkspaces(root, query("services/a", "packages/b"))).toEqual(["services/a", "packages/b"]);
+  it("skips node_modules, .git and .terraform segments", () => {
+    const root = project(["env/dev/main.tf", "node_modules/p/main.tf", ".git/hooks/a.tf", "env/dev/.terraform/modules/y/main.tf"]);
+    expect(repoCheckCommands(repo([{ name: "v", command: "x", in: ["**/*.tf"] }]), root).map(c => c.cwd)).toEqual(["env/dev"]);
   });
 
-  it("drops locations outside the worktree and falls back to the workspaces globs", () => {
-    const root = project({ workspaces: ["services/*"] }, ["services/b", "services/a"]);
-    expect(discoverWorkspaces(root, query("../../../other/services/a", "/abs/x", ".")))
-      .toEqual(["services/a", "services/b"]);
+  it("runs in the worktree root when the glob matches a root file", () => {
+    const root = project(["package.json"]);
+    expect(repoCheckCommands(repo([{ name: "t", command: "x", in: ["package.json"] }]), root)).toEqual([{ name: "t (.)", command: "x", cwd: "." }]);
   });
 
-  it("falls back to the globs when the query fails or prints junk", () => {
-    const root = project({ workspaces: ["packages/*"] }, ["packages/x"]);
-    expect(discoverWorkspaces(root, broken)).toEqual(["packages/x"]);
-    expect(discoverWorkspaces(root, () => "not json")).toEqual(["packages/x"]);
+  it("throws naming the check and glob when nothing matches", () => {
+    const root = project(["README.md"]);
+    expect(() => repoCheckCommands(repo([{ name: "validate", command: "x", in: ["env/*/main.tf"] }]), root))
+      .toThrow(`check "validate": "env/*/main.tf" matched nothing in ${root}`);
   });
 
-  it("expands the object form and skips matches without a package.json", () => {
-    const root = project({ workspaces: { packages: ["packages/*", "services/*"] } }, ["packages/x", "services/y"]);
-    mkdirSync(join(root, "packages", "empty"));
-    writeFileSync(join(root, "packages", "file.txt"), "x");
-    expect(discoverWorkspaces(root, broken)).toEqual(["packages/x", "services/y"]);
+  it("expands setup the same way, naming each step by its command", () => {
+    const root = project(["a/package.json", "b/package.json"]);
+    expect(repoSetupCommands(repo([], [{ command: "npm ci" }, { command: "npm i", in: ["*/package.json"] }]), root)).toEqual([
+      { name: "npm ci", command: "npm ci" },
+      { name: "npm i (a)", command: "npm i", cwd: "a" },
+      { name: "npm i (b)", command: "npm i", cwd: "b" },
+    ]);
   });
 
-  it("returns none when package.json declares no workspaces", () => {
-    expect(discoverWorkspaces(project({ name: "x" }), broken)).toEqual([]);
-  });
-
-  it("throws when workspaces are declared but none resolve inside the worktree", () => {
-    const root = project({ workspaces: ["packages/*"] });
-    expect(() => discoverWorkspaces(root, query("../outside/a"))).toThrow("workspace discovery broken");
+  it("throws for a setup glob that matches nothing", () => {
+    const root = project([]);
+    expect(() => repoSetupCommands(repo([], [{ command: "npm ci", in: ["x/package.json"] }]), root))
+      .toThrow(`setup "npm ci": "x/package.json" matched nothing in ${root}`);
   });
 });
 
@@ -129,6 +90,13 @@ describe("runChecks", () => {
     expect(seen).toEqual(["a@/w", "b@/w", "c@/w"]);
     expect(results.map(r => [r.name, r.command, r.passed])).toEqual([["A", "a", true], ["B", "b", false], ["C", "c", true]]);
     expect(results[1].outputTail).toBe("boom");
+  });
+
+  it("runs a command in its subdirectory and records it on the result", async () => {
+    const cwds: string[] = [];
+    const results = await runChecks("/w", [{ name: "A (x/y)", command: "a", cwd: "x/y" }, { name: "B", command: "b" }], env, async (_c, o) => { cwds.push(o.cwd); return { status: 0, output: "" }; });
+    expect(cwds).toEqual(["/w/x/y", "/w"]);
+    expect(results.map(r => r.cwd)).toEqual(["x/y", undefined]);
   });
 
   it("treats a missing exit status (timeout or spawn error) as failed", async () => {
@@ -189,6 +157,15 @@ describe("classifyChecks", () => {
   });
 });
 
+describe("classifyChecks by directory", () => {
+  const at = (cwd: string, passed: boolean): CheckResult => ({ ...result("npm test", passed), name: `tests (${cwd})`, cwd });
+
+  it("matches the same command in different directories separately", () => {
+    const statuses = classifyChecks([at("a", true), at("b", false)], [at("a", false), at("b", false)]).map(c => [c.cwd, c.status]);
+    expect(statuses).toEqual([["a", "regression"], ["b", "pre-existing"]]);
+  });
+});
+
 describe("didNotRun", () => {
   const fails = (outputTail: string, durationSec = 5): CheckResult => ({ ...result("a", false, outputTail), durationSec });
 
@@ -215,10 +192,10 @@ describe("didNotRun", () => {
 
 describe("regressionFindings", () => {
   const classified = classifyChecks(
-    [result("npm run lint", true), result("npm test -w services/a", true), result("npm run build", false)],
+    [result("npm run lint", true), { ...result("npm test", true), cwd: "services/a" }, result("npm run build", false)],
     [
       result("npm run lint", false, "src/a.ts\n  3:1  error  Unexpected any\n1 problem"),
-      result("npm test -w services/a", false, "FAIL tests/poll.test.ts > retries\nAssertionError"),
+      { ...result("npm test", false, "FAIL tests/poll.test.ts > retries\nAssertionError"), cwd: "services/a" },
       result("npm run build", false, "error TS1"),
     ],
   );
@@ -233,8 +210,8 @@ describe("regressionFindings", () => {
       },
       {
         id: "C2", severity: "blocker", file: "services/a",
-        issue: "npm test -w services/a fails after the change (passed before it): FAIL tests/poll.test.ts > retries",
-        suggestion: "Make npm test -w services/a pass again.",
+        issue: "npm test fails after the change (passed before it): FAIL tests/poll.test.ts > retries",
+        suggestion: "Make npm test pass again.",
       },
     ]);
   });

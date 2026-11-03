@@ -105,7 +105,8 @@ async function replay(args: ReplayFixArgs): Promise<ReplayFixResult> {
   useProjectEnv(project.envFile);
   const claudeToken = getEnv(CLAUDE_TOKEN);
   if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
-  const { path: repoPath, toolchain } = project.repos[project.defaultRepo];
+  const repo = project.repos[project.defaultRepo];
+  const repoPath = repo.path;
 
   const linear = await fetchTicket(args.ticket);
   if (!linear) throw new Error(`ticket ${args.ticket} not found in Linear`);
@@ -129,7 +130,8 @@ async function replay(args: ReplayFixArgs): Promise<ReplayFixResult> {
   mkdirSync(logDir, { recursive: true });
   const options = {
     env: agentEnv(process.env),
-    settings: buildAgentSettings(toolchain, ROOT, { secretFiles: projectEnvFiles() }),
+    settings: buildAgentSettings(repo, ROOT, { secretFiles: projectEnvFiles() }),
+    repo,
     instructions: composeInstructions(readFileSync(GENERIC_AGENTS_MD, "utf-8"), project.name, project.instructions),
   };
 

@@ -1,8 +1,6 @@
 import type { CheckStatus } from "./checks.js";
 import type { ExistingPr } from "./pr.js";
 
-export type Toolchain = "node" | "terraform";
-
 export interface Ticket {
   id: string;            // e.g. "ENG-142"
   name: string;          // e.g. "CSV export fix"

@@ -51,7 +51,7 @@ function writeProject(
 
 function goodConfig(overrides: Record<string, unknown> = {}) {
   return {
-    repos: { app: { path: repo, toolchain: "node", description: "d" } },
+    repos: { app: { path: repo, checks: [{ name: "t", command: "x" }], description: "d" } },
     testDb: "db.sh",
     linearTeams: ["DEMO"],
     ...overrides,
@@ -165,7 +165,7 @@ describe("fileChecks", () => {
     writeProject(
       "good",
       goodConfig({
-        repos: { app: { path: plain, toolchain: "node", description: "d" } },
+        repos: { app: { path: plain, checks: [{ name: "t", command: "x" }], description: "d" } },
       }),
       goodFiles,
     );
@@ -183,7 +183,7 @@ describe("fileChecks", () => {
         repos: {
           app: {
             path: join(root, "gone"),
-            toolchain: "node",
+            checks: [{ name: "t", command: "x" }],
             description: "d",
           },
         },
@@ -224,8 +224,8 @@ describe("fileChecks", () => {
       "good",
       goodConfig({
         repos: {
-          app: { path: repo, toolchain: "node", description: "d" },
-          web: { path: other, toolchain: "node", description: "d" },
+          app: { path: repo, checks: [{ name: "t", command: "x" }], description: "d" },
+          web: { path: other, checks: [{ name: "t", command: "x" }], description: "d" },
         },
         defaultRepo: "x",
       }),

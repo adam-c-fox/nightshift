@@ -54,15 +54,53 @@ A project is the set of repos nightshift works in, plus the instructions and tic
 
 | File | What it's for |
 | --- | --- |
-| `project.json` | Repos (`path`, `toolchain`, `description`), `defaultRepo`, optional `testDb` script, `allowancePercent` and `linearTeams` |
+| `project.json` | Repos (`path`, `description`, `setup`, `checks`, `network`, `allowLocalBinding`, `tools`), `defaultRepo`, optional `testDb` script, `allowancePercent` and `linearTeams` |
 | `AGENTS.md` | Project instructions appended to the root [`AGENTS.md`](../AGENTS.md): repo layout, services available, tools missing |
 | `.env` | Azure DevOps settings and `BRANCH_PREFIX` for this project |
 | `tonight.md` | Tonight's tickets |
 | `test-db.sh` | Optional script that starts the throwaway Postgres |
 
+Each repo lists its own commands. Nothing is built in:
+
+```json
+"repos": {
+  "app": {
+    "path": "/abs/path/to/app",
+    "description": "web app, React, API routes",
+    "setup": [{ "command": "npm ci --prefer-offline --no-audit" }],
+    "checks": [
+      { "name": "build", "command": "npm run build" },
+      { "name": "tests", "command": "npm test", "in": "services/*/package.json" }
+    ],
+    "network": ["registry.npmjs.org", "localhost", "127.0.0.1"],
+    "allowLocalBinding": true,
+    "tools": ["npm", "npx", "node"]
+  },
+  "infra": {
+    "path": "/abs/path/to/infra",
+    "description": "Terraform, AWS",
+    "checks": [
+      { "name": "terraform validate", "command": "terraform init -backend=false -input=false && terraform validate", "in": "environments/*/main.tf" },
+      { "name": "terraform fmt", "command": "terraform fmt -check -recursive" }
+    ],
+    "network": ["registry.terraform.io"],
+    "tools": ["terraform"]
+  }
+}
+```
+
+- `setup` (optional): commands run in each fresh worktree before the baseline. A failure stops the ticket.
+- `checks` (at least one, unique names): run before and after the change and compared.
+- `in` (optional, on `setup` and `checks`): a file glob or list of globs relative to the worktree. The directory of each matched file is a run location, and the command runs once in each. A glob that matches nothing is an error.
+- `network` (optional): hosts the sandbox lets agents and tests reach, such as package registries and local services.
+- `allowLocalBinding` (optional): lets sandboxed tests listen on localhost.
+- `tools` (optional): command prefixes the implementing agent may run, such as `npm` or `.venv/bin/pytest`. The review agent can only run the check commands.
+
+`toolchain` was removed. A repo that still has it fails validation.
+
 `linearTeams` is a list of Linear team keys such as `["ENG"]`. When it's set, `prep-status` and the [dashboard](dashboard.md) only list your Todo tickets from those teams. `/tonight` still lists every Todo ticket assigned to you, and tickets outside `linearTeams` show "—" in its prep column. Leave it out to see all of them. `/prep` and `/tonight` also use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](dashboard.md#prep-memory).
 
-Start a new project by running `/nightshift-setup` from the root of its repo, after installing the skill above. It writes `projects/<name>/`, runs the night's checks against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`projects/example`](../projects/example) to `projects/<name>`, create its `.env` from `.env.example`, and replace the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
+Start a new project by running `/nightshift-setup` from the root of its repo, after installing the skill above. It writes `projects/<name>/`, reads the repo's CI config for `setup` and `checks`, runs them against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`projects/example`](../projects/example) to `projects/<name>`, create its `.env` from `.env.example`, and replace the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
 
 ## Each evening
 

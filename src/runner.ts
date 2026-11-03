@@ -25,7 +25,7 @@ import { heartbeatFile, startHeartbeat } from "./heartbeat.js";
 import { statePaths, writeJsonAtomic } from "./state.js";
 import { nightRecord, writeNightRecord } from "./night-record.js";
 import { postmortemMarkdown, postmortemSkipReason, runPostmortem, sessionLogData, type UsageGate } from "./postmortem.js";
-import { checkCommands, classifyChecks, discoverTerraformRoots, discoverWorkspaces, regressionFindings, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
+import { classifyChecks, regressionFindings, repoCheckCommands, runChecks, type CheckCommand, type CheckResult, type ClassifiedCheck } from "./checks.js";
 import { relatedTickets, type ProcessedTicket, type PushedBranch } from "./related.js";
 import { stackDecision, stackedContext } from "./stack.js";
 import { startTestDb } from "./test-db.js";
@@ -188,6 +188,9 @@ function lookUpExistingPr(expectedBranch: string, repoPath: string): ExistingPr 
 const continuingPrContext = (prId: number) =>
   `This ticket already has open PR #${prId} from an earlier run. The worktree contains that work; continue from it instead of starting over.`;
 
+const checksContext = (commands: CheckCommand[]) =>
+  `The runner runs these checks before and after your change, and CI is expected to run them too:\n${commands.map(c => `- ${c.name}: ${c.command}${c.cwd ? ` (in ${c.cwd})` : ""}`).join("\n")}`;
+
 async function runLoggedChecks(label: string, cwd: string, commands: CheckCommand[]): Promise<CheckResult[]> {
   log(`  Running checks ${label}`);
   const results = await runChecks(cwd, commands, agentEnv(process.env));
@@ -247,7 +250,8 @@ async function processTicket(
   prWrites: PrWrites,
 ): Promise<TicketResult> {
   const { id: ticketId, name: ticketName, context, repo } = ticket;
-  const { path: repoPath, toolchain } = project.repos[repo];
+  const repoConfig = project.repos[repo];
+  const repoPath = repoConfig.path;
   const startTime = Date.now();
   const stack = stackDecision(ticket, processed);
   if (stack.kind === "skip") {
@@ -289,7 +293,7 @@ async function processTicket(
     if (parent) log(`  [dry-run] Would branch from origin/${parent.branch}`);
   } else {
     const startFrom = existing ? { branch: existing.sourceBranch, baseBranch: existing.targetBranch } : undefined;
-    wt = createWorktree({ repoPath, ticketId, toolchain, branchBase, startFrom, stackedOn: parent?.branch }, log);
+    wt = createWorktree({ repoPath, ticketId, repo: repoConfig, branchBase, startFrom, stackedOn: parent?.branch }, log);
     if (ticket.prComments && !wt.startedFromPr) {
       const gone = placeholderResult(ticket, "needs_review", "PR branch gone; review comments not addressed", branchPrefix);
       gone.linear = linear;
@@ -301,16 +305,19 @@ async function processTicket(
     }
   }
   const continuing = existing !== null && (dryRun || wt.startedFromPr);
-  const agentContext = [...(continuing ? [continuingPrContext(existing.prId)] : []), ...(parent ? [stackedContext(parent)] : []), ...context];
+  const commands = dryRun ? [] : repoCheckCommands(repoConfig, wt.wtPath);
+  const agentContext = [
+    ...(continuing ? [continuingPrContext(existing.prId)] : []), ...(parent ? [stackedContext(parent)] : []),
+    ...(commands.length > 0 ? [checksContext(commands)] : []), ...context,
+  ];
 
   const weeklyGateReason = () => weeklyGate(budgetRef, "mid-ticket");
   const agentOptions = {
     shouldAbort: weeklyGateReason,
     shouldPause: () => sessionAbortReason(budgetRef.current),
     waitForSession: async () => { await waitForSession(); weeklyGateReason(); },
-    env: agentEnv(process.env), settings: buildAgentSettings(toolchain, ROOT, { secretFiles: projectEnvFiles() }), instructions,
+    env: agentEnv(process.env), settings: buildAgentSettings(repoConfig, ROOT, { secretFiles: projectEnvFiles() }), repo: repoConfig, instructions,
   };
-  const commands = dryRun ? [] : checkCommands(toolchain, toolchain === "node" ? discoverWorkspaces(wt.wtPath) : discoverTerraformRoots(wt.wtPath));
   const baseline = dryRun ? [] : await runLoggedChecks("before the change", wt.wtPath, commands);
   if (!dryRun) await waitForSession();
   const result = await runAgent(
@@ -546,7 +553,7 @@ async function nightPostmortem(session: SessionResult, project: Project, dryRun:
       shouldAbort: weeklyGateReason,
       shouldPause: () => sessionAbortReason(budgetRef.current),
       waitForSession: async () => { await waitForSession(); weeklyGateReason(); },
-      env: agentEnv(process.env), settings: buildAgentSettings("node", ROOT, { readLogs: true, secretFiles: projectEnvFiles() }),
+      env: agentEnv(process.env), settings: buildAgentSettings({ network: [], allowLocalBinding: false }, ROOT, { readLogs: true, secretFiles: projectEnvFiles() }),
     });
     saveLog(`postmortem-${date}.txt`, rawOutput);
     if (outcome.outcome !== "done") {
@@ -717,8 +724,7 @@ async function main() {
     const prSweep = { prsScanned: sweep.prsScanned, items: sweep.items.length, held: sweep.held, error: sweep.error };
 
     const processed = new Map<string, ProcessedTicket>();
-    const needsTestDb = tickets.some(t => project.repos[t.repo].toolchain === "node");
-    const testDb = !dryRun && project.testDbScript && needsTestDb ? startTestDb(log, undefined, process.env, project.testDbScript) : undefined;
+    const testDb = !dryRun && project.testDbScript && tickets.length > 0 ? startTestDb(log, undefined, process.env, project.testDbScript) : undefined;
     try {
       for (const [i, ticket] of tickets.entries()) {
         heartbeat.phase("ticket", { index: i + 1, total: tickets.length, id: ticket.id });

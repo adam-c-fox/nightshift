@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { runWithWatchdog, type WatchdogResult } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
+import type { RepoConfig } from "./project.js";
 import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, ThreadReport, ThreadVerdict, Verdict, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -538,35 +539,30 @@ export interface ToolProfile {
 
 const NEVER_PUBLISH = ["Bash(git push *)", "Bash(git config *)", "Bash(git commit *)"];
 
-export const EDIT_PROFILE: ToolProfile = {
-  permissionMode: "acceptEdits",
-  allowedTools: [
-    "Bash(npm *)", "Bash(npx *)", "Bash(node *)",
-    "Bash(git *)", "Bash(terraform *)",
-    "Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)",
-  ],
-  disallowedTools: NEVER_PUBLISH,
-};
+const READ_ONLY_SHELL = ["Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)"];
 
-export const REVIEW_PROFILE: ToolProfile = {
+export const editProfile = (repo?: Pick<RepoConfig, "tools">): ToolProfile => ({
+  permissionMode: "acceptEdits",
+  allowedTools: ["Bash(git *)", ...(repo?.tools ?? []).flatMap(tool => [`Bash(${tool} *)`, `Bash(${tool})`]), ...READ_ONLY_SHELL],
+  disallowedTools: NEVER_PUBLISH,
+});
+
+export const reviewProfile = (repo?: Pick<RepoConfig, "checks">): ToolProfile => ({
   permissionMode: "default",
   allowedTools: [
     "Read", "Grep", "Glob",
     "Bash(git diff *)", "Bash(git status*)", "Bash(git log *)", "Bash(git show *)",
-    "Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(ls *)", "Bash(cat *)", "Bash(head *)", "Bash(tail *)", "Bash(wc *)",
-    "Bash(npx vitest run*)", "Bash(npm run lint)", "Bash(npm run format)", "Bash(npx tsc --noEmit*)",
-    "Bash(npm run build)", "Bash(npm run typecheck)", "Bash(npm test)", "Bash(npm test -w *)",
-    "Bash(terraform init -backend=false*)", "Bash(terraform validate*)", "Bash(terraform fmt -check*)",
+    ...READ_ONLY_SHELL,
+    ...new Set((repo?.checks ?? []).flatMap(c => c.command.split(/&&|\|\||;/).map(part => part.trim()).filter(Boolean)).map(part => `Bash(${part}*)`)),
   ],
   disallowedTools: [
     "Edit", "Write", "NotebookEdit",
     "Bash(git * --output*)", "Bash(find * -delete*)", "Bash(find * -exec*)",
-    "Bash(npx vitest * -u*)", "Bash(npx vitest * --update*)",
     ...NEVER_PUBLISH,
   ],
   enforceAllowList: true,
   model: REVIEW_MODEL,
-};
+});
 
 export const DEDUPE_PROFILE: ToolProfile = {
   permissionMode: "default",
@@ -589,7 +585,7 @@ export const POSTMORTEM_PROFILE: ToolProfile = {
   enforceAllowList: true,
 };
 
-export function buildClaudeArgs(operatingInstructions: string, profile: ToolProfile = EDIT_PROFILE, addDirs: string[] = []): string[] {
+export function buildClaudeArgs(operatingInstructions: string, profile: ToolProfile = editProfile(), addDirs: string[] = []): string[] {
   return [
     "-p",
     "--output-format", "json",
@@ -610,7 +606,7 @@ function withEnforcedAllowList(settings: string): string {
   return JSON.stringify({ ...parsed, sandbox: { ...parsed.sandbox, autoAllowBashIfSandboxed: false } });
 }
 
-export function agentRunArgs(base: string[], settings: string, profile: ToolProfile = EDIT_PROFILE): string[] {
+export function agentRunArgs(base: string[], settings: string, profile: ToolProfile = editProfile()): string[] {
   return profile.enforceAllowList
     ? [...base, "--settings", withEnforcedAllowList(settings), "--strict-mcp-config", "--setting-sources", "project"]
     : [...base, "--settings", settings, "--strict-mcp-config", "--setting-sources", "user"];
@@ -623,6 +619,7 @@ export interface RunAgentOptions {
   checkIntervalMs?: number;
   env: NodeJS.ProcessEnv;
   settings: string;
+  repo?: RepoConfig;
   instructions?: string;
 }
 
@@ -764,7 +761,7 @@ export async function runAgent(
   }
 
   if (options.instructions === undefined) throw new Error("instructions missing");
-  const run = await execClaude(worktreePath, prompt, options.instructions, EDIT_PROFILE, options);
+  const run = await execClaude(worktreePath, prompt, options.instructions, editProfile(options.repo), options);
   const { value: report, error: parseError } = parseOrError(run.stdout, run.failure, parseReportBlock);
   return { success: run.failure === undefined, rawOutput: run.rawOutput, report, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }
@@ -791,7 +788,7 @@ export const dedupeSystemPrompt = (): string => readFileSync(DEDUPE_MD, "utf-8")
 export const fixReviewSystemPrompt = (): string => layered(REVIEW_MD, FIX_REVIEW_MD);
 
 async function execFinder(worktreePath: string, prompt: string, systemPrompt: string, options: RunAgentOptions): Promise<ReviewRunResult> {
-  const run = await execClaude(worktreePath, prompt, systemPrompt, REVIEW_PROFILE, options);
+  const run = await execClaude(worktreePath, prompt, systemPrompt, reviewProfile(options.repo), options);
   const { value: parsed, error: parseError } = parseOrError(run.stdout, run.failure, parseReviewBlock);
   return { success: run.failure === undefined, rawOutput: run.rawOutput, findings: parsed?.findings, risks: parsed?.risks, rulings: parsed?.rulings, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }
@@ -814,7 +811,7 @@ export async function runFix(
   const prompt = buildFixPrompt(brief, findings);
   if (options.instructions === undefined) throw new Error("instructions missing");
   const systemPrompt = [options.instructions, readFileSync(FIX_MD, "utf-8")].join("\n\n---\n\n");
-  const run = await execClaude(worktreePath, prompt, systemPrompt, EDIT_PROFILE, options);
+  const run = await execClaude(worktreePath, prompt, systemPrompt, editProfile(options.repo), options);
   const parsedReport = parseOrError(run.stdout, run.failure, parseReportBlock);
   const parsedFixes = parseOrError(run.stdout, run.failure, parseFixesBlock);
   return {
@@ -842,7 +839,7 @@ export async function runFixReview(
   extras: ReviewPromptExtras = {},
 ): Promise<FixReviewRunResult> {
   const prompt = buildFixReviewPrompt(brief, baseRef, scope, findings, resolutions, added, extras);
-  const run = await execClaude(worktreePath, prompt, fixReviewSystemPrompt(), REVIEW_PROFILE, options);
+  const run = await execClaude(worktreePath, prompt, fixReviewSystemPrompt(), reviewProfile(options.repo), options);
   const { value: parsed, error: parseError } = parseOrError(run.stdout, run.failure, parseFixReviewBlock);
   return { success: run.failure === undefined, rawOutput: run.rawOutput, results: parsed?.results, findings: parsed?.findings, risks: parsed?.risks, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }
@@ -862,7 +859,7 @@ export async function runConfirm(
   extras: ReviewPromptExtras = {},
 ): Promise<ConfirmRunResult> {
   const prompt = buildConfirmPrompt(brief, report, baseRef, batch, extras);
-  const run = await execClaude(worktreePath, prompt, confirmSystemPrompt(), REVIEW_PROFILE, options);
+  const run = await execClaude(worktreePath, prompt, confirmSystemPrompt(), reviewProfile(options.repo), options);
   const { value: verdicts, error: parseError } = parseOrError(run.stdout, run.failure, parseConfirmBlock);
   return { success: run.failure === undefined, rawOutput: run.rawOutput, verdicts, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }

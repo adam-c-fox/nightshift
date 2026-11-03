@@ -29,7 +29,7 @@ export interface CiFixOutcome {
 export function ciFixContext(prId: number, logs: string): string[] {
   return [
     `Required checks failed on PR #${prId}. Fix only these failures; do not change anything unrelated.`,
-    `Re-run the same commands locally (for example npm run lint, npm run format, npx vitest run) until they pass, then end with the usual report.\n${logs}`,
+    `Re-run the failing checks locally, along with the repo checks listed in your context, until they pass, then end with the usual report.\n${logs}`,
   ];
 }
 

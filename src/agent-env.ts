@@ -1,4 +1,4 @@
-import type { Toolchain } from "./types.js";
+import type { RepoConfig } from "./project.js";
 
 const SECRET_NAME = /^(LINEAR_|AZURE_|ARM_)|^(AWS_|TF_TOKEN_)|(_TOKEN|_PAT|_SECRET|_PASSWORD|_API_KEY|_KEY|_CREDENTIALS?|_PASSWD|_authToken)$/i;
 
@@ -11,13 +11,9 @@ export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 const DENY_READ = ["~/.ssh", "~/.aws", "~/.azure", "~/.config/gh", "~/.npmrc", "~/.netrc", "~/.git-credentials"];
 const ADO_DOMAINS = ["dev.azure.com", "*.dev.azure.com", "*.visualstudio.com", "vssps.visualstudio.com"];
-const ALLOWED_DOMAINS: Record<Toolchain, string[]> = {
-  node: ["registry.npmjs.org", "localhost", "127.0.0.1"],
-  terraform: ["registry.terraform.io"],
-};
 
 export function buildAgentSettings(
-  toolchain: Toolchain, nightshiftRoot: string, { readLogs = false, secretFiles = [] }: { readLogs?: boolean; secretFiles?: string[] } = {},
+  { network, allowLocalBinding }: Pick<RepoConfig, "network" | "allowLocalBinding">, nightshiftRoot: string, { readLogs = false, secretFiles = [] }: { readLogs?: boolean; secretFiles?: string[] } = {},
 ): string {
   const deniedFiles = [`${nightshiftRoot}/.env`, ...secretFiles, ...(readLogs ? [] : [`${nightshiftRoot}/logs`])];
   const denyRead = [...deniedFiles, ...DENY_READ];
@@ -35,8 +31,8 @@ export function buildAgentSettings(
       allowUnsandboxedCommands: false,
       filesystem: { denyRead },
       network: {
-        strictAllowlist: true, allowedDomains: ALLOWED_DOMAINS[toolchain], deniedDomains: ADO_DOMAINS,
-        ...(toolchain === "node" ? { allowLocalBinding: true } : {}),
+        strictAllowlist: true, allowedDomains: network, deniedDomains: ADO_DOMAINS,
+        ...(allowLocalBinding ? { allowLocalBinding: true } : {}),
       },
     },
   });

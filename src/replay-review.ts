@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,12 +12,12 @@ import { getEnv, useProjectEnv } from "./env.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { fetchTicket } from "./linear.js";
 import { parseGolden, scoreSummary, scoreTicket, type TicketScore } from "./golden.js";
-import { loadProject, projectEnvFiles, PROJECTS_DIR } from "./project.js";
+import { loadProject, projectEnvFiles, PROJECTS_DIR, type RepoConfig } from "./project.js";
 import { findAndConfirm, type FindAndConfirmResult } from "./review.js";
 import { TICKET_ID } from "./tickets.js";
 import { localDate } from "./time.js";
 import { REVIEW_LENSES, lensLabel, lensStage, type CheckRecord, type RunRecord, type RunUsage, type TicketReview, type TicketResult } from "./types.js";
-import { git, installDependencies, npmCi, worktreeSnapshot, type Worktree } from "./worktree.js";
+import { git, runSetup, worktreeSnapshot, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -129,23 +128,6 @@ export function prepareScratch(repoPath: string, scratch: string, base: string, 
   git(["apply", diff], scratch);
 }
 
-const npmBuild = (wtPath: string): void => {
-  execFileSync("npm", ["run", "build"], { cwd: wtPath, stdio: ["ignore", "pipe", "pipe"], timeout: 15 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 });
-};
-
-export function buildIfScripted(wtPath: string, log: (msg: string) => void, run: (wtPath: string) => void = npmBuild): boolean {
-  const pkg = JSON.parse(readFileSync(path.join(wtPath, "package.json"), "utf-8")) as { scripts?: Record<string, string> };
-  if (!pkg.scripts?.build) return false;
-  try {
-    run(wtPath);
-    return true;
-  } catch (e) {
-    const stderr = String((e as { stderr?: unknown }).stderr ?? (e as Error).message);
-    log(`Build failed in the replay worktree; finders may not run tests: ${stderr.split("\n")[0]}`);
-    return false;
-  }
-}
-
 export function replayLogDir(logsRoot: string, date: string, exists: (dir: string) => boolean): string {
   const first = path.join(logsRoot, `replay-${date}`);
   if (!exists(first)) return first;
@@ -189,14 +171,10 @@ export function replayRecord(args: ReplayArgs, found: FindAndConfirmResult, runs
   };
 }
 
-function prepareReplayWorktree(args: ReplayArgs, repoPath: string, toolchain: string, scratch: string): boolean {
-  prepareScratch(repoPath, scratch, args.base, path.resolve(args.diff));
-  const installed = args.install && toolchain === "node";
-  if (installed) {
-    installDependencies(scratch, npmCi, console.log);
-    buildIfScripted(scratch, console.log);
-  }
-  return installed;
+function prepareReplayWorktree(args: ReplayArgs, repo: RepoConfig, scratch: string): boolean {
+  prepareScratch(repo.path, scratch, args.base, path.resolve(args.diff));
+  if (args.install) runSetup(scratch, repo, console.log);
+  return args.install;
 }
 
 interface ReviewInputs {
@@ -252,7 +230,8 @@ async function replay(args: ReplayArgs): Promise<FindAndConfirmResult> {
   useProjectEnv(project.envFile);
   const claudeToken = getEnv(CLAUDE_TOKEN);
   if (claudeToken) process.env[CLAUDE_TOKEN] = claudeToken;
-  const { path: repoPath, toolchain } = project.repos[project.defaultRepo];
+  const repo = project.repos[project.defaultRepo];
+  const repoPath = repo.path;
 
   let from: { brief: TicketBrief; checks?: ClassifiedCheck[] };
   if (args.session) from = briefFromSession(JSON.parse(readFileSync(args.session, "utf-8")), args.ticket);
@@ -272,14 +251,15 @@ async function replay(args: ReplayArgs): Promise<FindAndConfirmResult> {
   mkdirSync(logDir, { recursive: true });
   const options = {
     env: agentEnv(process.env),
-    settings: buildAgentSettings(toolchain, ROOT, { secretFiles: projectEnvFiles() }),
+    settings: buildAgentSettings(repo, ROOT, { secretFiles: projectEnvFiles() }),
+    repo,
     instructions: composeInstructions(readFileSync(GENERIC_AGENTS_MD, "utf-8"), project.name, project.instructions),
   };
   const extras: ReviewPromptExtras = from.checks ? { related: args.related, checks: from.checks } : { related: args.related };
 
   const scratch = mkdtempSync(path.join(tmpdir(), "replay-review-"));
   try {
-    const installed = prepareReplayWorktree(args, repoPath, toolchain, scratch);
+    const installed = prepareReplayWorktree(args, repo, scratch);
     const startedAt = new Date().toISOString();
     const { found, runs } = await runReview(args, scratch, { brief: from.brief, extras, report, options, logDir });
     const meta = {

@@ -199,7 +199,7 @@ export function homeHTML(opts: {
     return page({
       title: "Nightshift",
       nav: "tonight",
-      body: `<p>No projects yet. <a href="/projects/new">Create one</a>.</p>`,
+      body: `<p>No projects yet. Run /nightshift-setup to create one.</p>`,
     });
   }
   const selected =

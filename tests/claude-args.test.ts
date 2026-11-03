@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, DEDUPE_PROFILE, dedupeSystemPrompt, finderSystemPrompt, fixReviewSystemPrompt, POSTMORTEM_PROFILE, REVIEW_PROFILE } from "../src/claude.js";
+import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, DEDUPE_PROFILE, dedupeSystemPrompt, finderSystemPrompt, fixReviewSystemPrompt, editProfile, POSTMORTEM_PROFILE, reviewProfile } from "../src/claude.js";
 
 describe("agent instructions", () => {
   const agentsMd = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf-8");
@@ -10,9 +10,8 @@ describe("agent instructions", () => {
     expect(agentsMd).not.toMatch(/one commit per ticket/i);
   });
 
-  it("leaves terraform plan to the PR pipeline", () => {
-    expect(agentsMd).not.toMatch(/terraform plan/);
-    expect(agentsMd).toMatch(/terraform init -backend=false/);
+  it("names no language, framework or package manager", () => {
+    expect(agentsMd).not.toMatch(/terraform|vitest|typescript/i);
   });
 
   it("denies git commit to the agent", () => {
@@ -24,7 +23,7 @@ describe("agent instructions", () => {
 
 describe("output format", () => {
   it("asks for JSON output in every profile", () => {
-    for (const profile of [undefined, REVIEW_PROFILE, DEDUPE_PROFILE, POSTMORTEM_PROFILE]) {
+    for (const profile of [undefined, reviewProfile(), DEDUPE_PROFILE, POSTMORTEM_PROFILE]) {
       const args = buildClaudeArgs("x", profile);
       expect(args[args.indexOf("--output-format") + 1]).toBe("json");
     }
@@ -33,21 +32,21 @@ describe("output format", () => {
 
 describe("effort", () => {
   it("pins high effort in every profile", () => {
-    for (const profile of [undefined, REVIEW_PROFILE, POSTMORTEM_PROFILE]) {
+    for (const profile of [undefined, reviewProfile(), POSTMORTEM_PROFILE]) {
       const args = buildClaudeArgs("x", profile);
       expect(args[args.indexOf("--effort") + 1]).toBe("high");
     }
   });
 
   it("lets a profile override the effort", () => {
-    const args = buildClaudeArgs("x", { ...REVIEW_PROFILE, effort: "low" });
+    const args = buildClaudeArgs("x", { ...reviewProfile(), effort: "low" });
     expect(args[args.indexOf("--effort") + 1]).toBe("low");
   });
 });
 
 describe("model", () => {
   it("pins the Opus model for review runs", () => {
-    const args = buildClaudeArgs("x", REVIEW_PROFILE);
+    const args = buildClaudeArgs("x", reviewProfile());
     expect(args[args.indexOf("--model") + 1]).toBe("claude-opus-5-5");
   });
 
@@ -65,7 +64,7 @@ describe("agentRunArgs", () => {
   });
 
   it("enforces the allow list for the review run and leaves out personal settings", () => {
-    const args = agentRunArgs(["-p"], JSON.stringify({ sandbox: { enabled: true } }), REVIEW_PROFILE);
+    const args = agentRunArgs(["-p"], JSON.stringify({ sandbox: { enabled: true } }), reviewProfile());
     const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
     expect(settings.sandbox).toEqual({ enabled: true, autoAllowBashIfSandboxed: false });
     expect(args[args.indexOf("--setting-sources") + 1]).toBe("project");
@@ -78,8 +77,35 @@ describe("agentRunArgs", () => {
   });
 });
 
+describe("edit profile", () => {
+  const allowed = (tools: string[]) => editProfile({ tools }).allowedTools;
+
+  it("allows each configured tool with and without arguments, on top of the generic entries", () => {
+    expect(allowed(["make", "docker compose"])).toEqual(expect.arrayContaining(
+      ["Bash(make *)", "Bash(make)", "Bash(docker compose *)", "Bash(docker compose)", "Bash(git *)", "Bash(grep *)", "Bash(cat *)"],
+    ));
+  });
+
+  it("grants no tool the repo did not list", () => {
+    expect(allowed([]).filter(t => !/^Bash\((git|grep|rg|find|ls|cat|head|tail|wc) /.test(t))).toEqual([]);
+  });
+
+  it("is edit-capable and still denies commit and push", () => {
+    const profile = editProfile({ tools: [] });
+    expect(profile.permissionMode).toBe("acceptEdits");
+    expect(profile.disallowedTools).toEqual(expect.arrayContaining(["Bash(git commit *)", "Bash(git push *)"]));
+  });
+});
+
 describe("review run args", () => {
-  const args = buildClaudeArgs("x", REVIEW_PROFILE);
+  const checks = {
+    checks: [
+      { name: "lint", command: "make lint" },
+      { name: "test a", command: "make test", in: ["a/*/x"] },
+      { name: "test b", command: "make test", in: ["b/*/x"] },
+    ],
+  };
+  const args = buildClaudeArgs("x", reviewProfile(checks));
   const value = (flag: string) => args[args.indexOf(flag) + 1];
 
   it("grants no edit tools and denies them explicitly", () => {
@@ -90,17 +116,20 @@ describe("review run args", () => {
     }
   });
 
-  it("allows the check scripts but not their write-mode variants", () => {
+  it("allows each distinct check command and nothing else that runs code", () => {
     const allowed = value("--allowedTools").split(",");
-    expect(allowed).toEqual(expect.arrayContaining(["Bash(npm run lint)", "Bash(npm run format)", "Bash(npx tsc --noEmit*)"]));
-    expect(allowed.some(t => /lint\*|format\*|tsc\*\)/.test(t))).toBe(false);
-    expect(value("--disallowedTools").split(",")).toContain("Bash(npx vitest * -u*)");
+    expect(allowed).toEqual(expect.arrayContaining(["Bash(make lint*)", "Bash(make test*)"]));
+    expect(allowed.filter(t => t === "Bash(make test*)")).toHaveLength(1);
+    expect(allowed.filter(t => t.startsWith("Bash(make"))).toHaveLength(2);
   });
 
-  it("allows the same build, typecheck and test commands CI runs", () => {
-    expect(value("--allowedTools").split(",")).toEqual(expect.arrayContaining(
-      ["Bash(npm run build)", "Bash(npm run typecheck)", "Bash(npm test)", "Bash(terraform validate*)", "Bash(terraform fmt -check*)"],
-    ));
+  it("allows each part of a compound check command separately", () => {
+    const compound = { checks: [{ name: "tf", command: "terraform init -backend=false -input=false && terraform validate" }] };
+    expect(reviewProfile(compound).allowedTools).toEqual(expect.arrayContaining(["Bash(terraform init -backend=false -input=false*)", "Bash(terraform validate*)"]));
+  });
+
+  it("allows no check commands without a repo", () => {
+    expect(reviewProfile().allowedTools.filter(t => t.endsWith("*)") && !/ \*\)$/.test(t) && t !== "Bash(git status*)")).toEqual([]);
   });
 
   it("does not auto-accept edits", () => {
@@ -110,8 +139,7 @@ describe("review run args", () => {
   it("limits bash to read-only commands", () => {
     const allowed = value("--allowedTools").split(",");
     expect(allowed).toContain("Bash(git diff *)");
-    expect(allowed).toContain("Bash(npx vitest run*)");
-    for (const writer of ["Bash(git *)", "Bash(npm *)", "Bash(npx *)", "Bash(node *)", "Bash(terraform *)"]) {
+    for (const writer of ["Bash(git *)", "Bash(make *)"]) {
       expect(allowed).not.toContain(writer);
     }
   });
@@ -255,7 +283,7 @@ describe("postmortem run args", () => {
   it("is read-only with the allow list enforced", () => {
     const allowed = value("--allowedTools").split(",");
     expect(allowed).toEqual(expect.arrayContaining(["Read", "Grep", "Glob", "Bash(git log *)", "Bash(git diff *)", "Bash(cat *)"]));
-    expect(allowed.some(t => /npm|npx|terraform|Edit|Write/.test(t))).toBe(false);
+    expect(allowed.some(t => /make|Edit|Write/.test(t))).toBe(false);
     for (const tool of ["Edit", "Write", "NotebookEdit"]) expect(value("--disallowedTools").split(",")).toContain(tool);
     expect(POSTMORTEM_PROFILE.enforceAllowList).toBe(true);
   });

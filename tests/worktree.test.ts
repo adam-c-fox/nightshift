@@ -62,27 +62,39 @@ describe("createWorktree", () => {
   let spec: WorktreeSpec;
   beforeEach(() => {
     env = makeRepo();
-    spec = { repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" };
+    spec = { repoPath: env.repoPath, ticketId: "ENG-1", repo: { setup: [] }, branchBase: "adamfox/eng-1-fix" };
   });
 
-  it("creates the ticket branch from origin/main and installs instead of symlinking node_modules", () => {
-    const installed: string[] = [];
-    const wt = createWorktree(spec, noop, p => installed.push(p));
+  it("creates the ticket branch from origin/main and runs the repo's setup commands in order", () => {
+    const ran: string[] = [];
+    const setup = [{ command: "first" }, { command: "second" }];
+    const wt = createWorktree({ ...spec, repo: { setup } }, noop, (p, step) => ran.push(`${step.command}@${p}`));
     expect(wt).toMatchObject({ branch: "adamfox/eng-1-fix", baseRef: "origin/main", baseBranch: "main" });
     expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("adamfox/eng-1-fix");
-    expect(installed).toEqual([wt.wtPath]);
+    expect(ran).toEqual([`first@${wt.wtPath}`, `second@${wt.wtPath}`]);
     expect(existsSync(join(wt.wtPath, "node_modules"))).toBe(false);
   });
 
-  it("aborts when the install fails", () => {
-    const failing = () => { throw Object.assign(new Error("x"), { stderr: "ERESOLVE boom" }); };
-    expect(() => createWorktree(spec, noop, failing)).toThrow(/npm ci failed.*ERESOLVE boom/);
+  it("runs an expanded setup command in each matching directory", () => {
+    const ran: (string | undefined)[] = [];
+    const wt = createWorktree({ ...spec, repo: { setup: [{ command: "init", in: [".gitignore"] }] } }, noop, (_p, step) => ran.push(step.cwd));
+    expect(ran).toEqual(["."]);
+    expect(wt.wtPath).toBeTruthy();
   });
 
-  it("does not install for terraform", () => {
-    const installed: string[] = [];
-    createWorktree({ ...spec, toolchain: "terraform" }, noop, p => installed.push(p));
-    expect(installed).toEqual([]);
+  it("aborts naming the step and the stderr tail when setup fails", () => {
+    const failing = () => { throw Object.assign(new Error("x"), { stderr: "ERESOLVE boom" }); };
+    expect(() => createWorktree({ ...spec, repo: { setup: [{ command: "make deps" }] } }, noop, failing)).toThrow(/setup "make deps" failed in .*ERESOLVE boom/);
+  });
+
+  it("aborts when a setup glob matches nothing", () => {
+    expect(() => createWorktree({ ...spec, repo: { setup: [{ command: "x", in: ["nope/*.json"] }] } }, noop, noInstall)).toThrow(/matched nothing/);
+  });
+
+  it("runs no setup when the repo lists none", () => {
+    const ran: string[] = [];
+    createWorktree(spec, noop, (_p, step) => ran.push(step.command));
+    expect(ran).toEqual([]);
   });
 
   it("replaces a worktree left over from a previous run on the next free branch", () => {
@@ -142,7 +154,7 @@ describe("commitWorktree", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", repo: { setup: [] }, branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   const committedFiles = () => run(wt.wtPath, "diff", "--name-only", `${wt.baseRef}..HEAD`).split("\n").filter(Boolean);
@@ -216,7 +228,7 @@ describe("excludedPathsInBranch", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", repo: { setup: [] }, branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   it("returns excluded paths the agent committed itself", () => {
@@ -245,7 +257,7 @@ describe("createWorktree stackedOn", () => {
   let spec: WorktreeSpec;
   beforeEach(() => {
     env = makeRepo();
-    spec = { repoPath: env.repoPath, ticketId: "ENG-2", toolchain: "node", branchBase: "adamfox/eng-2-child" };
+    spec = { repoPath: env.repoPath, ticketId: "ENG-2", repo: { setup: [] }, branchBase: "adamfox/eng-2-child" };
   });
 
   const pushParent = () => {
@@ -283,7 +295,7 @@ describe("createWorktree startFrom", () => {
   let spec: WorktreeSpec;
   beforeEach(() => {
     env = makeRepo();
-    spec = { repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" };
+    spec = { repoPath: env.repoPath, ticketId: "ENG-1", repo: { setup: [] }, branchBase: "adamfox/eng-1-fix" };
   });
 
   const pushPrBranch = () => {
@@ -360,7 +372,7 @@ describe("worktreeSnapshot and hasChangesVsBase", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", repo: { setup: [] }, branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   it("is stable while nothing changes", () => {
@@ -414,7 +426,7 @@ describe("reviewDiff", () => {
     run(env.repoPath, "add", "-A");
     run(env.repoPath, "commit", "-q", "-m", "add a");
     run(env.repoPath, "push", "-q", "origin", "main");
-    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", repo: { setup: [] }, branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   it("diffs uncommitted and untracked changes against the base", () => {
@@ -460,7 +472,7 @@ describe("worktreeTree and treeDiff", () => {
   let wt: ReturnType<typeof createWorktree>;
   beforeEach(() => {
     const env = makeRepo();
-    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", toolchain: "node", branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
+    wt = createWorktree({ repoPath: env.repoPath, ticketId: "ENG-1", repo: { setup: [] }, branchBase: "adamfox/eng-1-fix" }, noop, noInstall);
   });
 
   it("returns the same tree for an unchanged worktree", () => {

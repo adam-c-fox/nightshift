@@ -12,7 +12,7 @@ Worktrees get their own dependency installation. This keeps one ticket's files a
 
 ## Baseline checks distinguish regressions
 
-Before implementation, the runner records the repo's build, type, lint, formatting and test results, or Terraform validation and formatting results. It runs the checks again after the change and compares them against the baseline.
+Before implementation, the runner runs the repo's `setup` commands, then records the results of its configured `checks`. It runs the checks again after the change and compares them against the baseline.
 
 A failure already present on the base is reported separately from a regression. A check that never started is unproven, rather than a passing test. Agents receive both sets of results so they can investigate relevant failures without treating unrelated base failures as their own.
 

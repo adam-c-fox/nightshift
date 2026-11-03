@@ -28,15 +28,15 @@ See [architecture and design decisions](docs/architecture.md) for the review pro
 | Ticket tracker | Linear |
 | PR host and CI | Azure DevOps |
 | Coding agents | Claude Code, with an additional Codex review pass |
-| Target repos | npm/Vitest projects, including npm workspaces, and Terraform |
+| Target repos | Any repo whose setup and checks are shell commands |
 | Runtime | Node 22.12+ or Node 24 LTS, Git and a Unix shell |
 | Platforms | Developed on macOS; CI checks Node 22 and 24 on Linux. Dashboard startup installation uses macOS LaunchAgents. |
 
-Adding projects on this stack is configuration work. New ticket trackers, PR hosts and toolchains need code changes. There is no connector interface yet. [Supported scope and extension points](docs/supported-scope.md) maps the assumptions and the work a new connector would require.
+Adding projects on this stack is configuration work. Each repo's setup and check commands are project configuration. New ticket trackers and PR hosts need code changes. There is no connector interface yet. [Supported scope and extension points](docs/supported-scope.md) maps the assumptions and the work a new connector would require.
 
 ## Setup
 
-Install the Claude Code, Codex and Azure CLIs before configuring an unattended run. Terraform and Docker are needed only for projects that use them.
+Install the Claude Code, Codex and Azure CLIs before configuring an unattended run. Whatever runtimes a project's checks need (npm, Terraform, .NET and so on) and Docker for its test database must be installed too.
 
 ```sh
 git clone https://github.com/adam-c-fox/nightshift.git
@@ -70,8 +70,8 @@ npm run typecheck
 
 - [Setup and daily use](docs/setup.md): credentials, projects, skills, scheduling and morning reports.
 - [Architecture and design decisions](docs/architecture.md): worktrees, checks, review confirmation and budgets.
-- [Supported scope and extension points](docs/supported-scope.md): platform assumptions and adding providers or toolchains.
-- [Dashboard](docs/dashboard.md): evening planning, outstanding work, project editing and local HTTP security.
+- [Supported scope and extension points](docs/supported-scope.md): platform assumptions and adding providers.
+- [Dashboard](docs/dashboard.md): evening planning, outstanding work and local HTTP security.
 - [Review replay and scoring](docs/review-replay.md): reproduce a review, compare golden sets and inspect fix reviews.
 
 ## License

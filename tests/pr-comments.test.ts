@@ -195,7 +195,7 @@ function sweepDeps(prs: AzPullRequest[], threads: Record<number, AzThread[]>, ex
     listed, logs, ...extra,
   };
 }
-const repos = { api: { path: "/work/api", toolchain: "node" as const, description: "" } };
+const repos = { api: { path: "/work/api", description: "", setup: [], checks: [], network: [], allowLocalBinding: false, tools: [] } };
 
 describe("sweepPrComments", () => {
   it("builds an item for each of my PRs with pending threads and ignores colleagues' PRs", () => {

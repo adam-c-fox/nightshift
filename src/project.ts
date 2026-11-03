@@ -1,19 +1,30 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { Toolchain } from "./types.js";
 
 export const PROJECTS_DIR = path.resolve(import.meta.dirname, "..", "projects");
-export const TOOLCHAINS: readonly Toolchain[] = ["node", "terraform"];
 export const REPO_NAME_PATTERN = "[a-z0-9][a-z0-9_-]*";
 export const REPO_NAME = new RegExp(`^${REPO_NAME_PATTERN}$`);
 export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const DEFAULT_ALLOWANCE_PERCENT = 15;
 export const LINEAR_TEAM_KEY = /^[A-Z][A-Z0-9]*$/;
 
+export interface RepoCommand {
+  command: string;
+  in?: string[];
+}
+
+export interface RepoCheck extends RepoCommand {
+  name: string;
+}
+
 export interface RepoConfig {
   path: string;
-  toolchain: Toolchain;
   description: string;
+  setup: RepoCommand[];
+  checks: RepoCheck[];
+  network: string[];
+  allowLocalBinding: boolean;
+  tools: string[];
 }
 
 export interface Project {
@@ -30,7 +41,7 @@ export interface Project {
 }
 
 type RawConfig = {
-  repos?: Record<string, Partial<RepoConfig>>;
+  repos?: Record<string, Record<string, unknown>>;
   defaultRepo?: unknown;
   testDb?: unknown;
   allowancePercent?: unknown;
@@ -73,6 +84,56 @@ export function resolveTestDbPath(
   return script;
 }
 
+const REPO_KEYS = ["path", "description", "setup", "checks", "network", "allowLocalBinding", "tools"];
+const SETUP_KEYS = ["command", "in"];
+const CHECK_KEYS = ["name", "command", "in"];
+
+const isNonEmptyString = (value: unknown): value is string => typeof value === "string" && value.trim() !== "";
+const isStringList = (value: unknown): value is string[] => Array.isArray(value) && value.every(isNonEmptyString);
+
+function parseCommands(repoName: string, label: string, raw: unknown, keys: string[], fail: (reason: string) => never): RepoCheck[] {
+  if (!Array.isArray(raw)) return fail(`repo ${repoName} ${label} must be a list`);
+  return raw.map((entry: Record<string, unknown>, i) => {
+    const where = `repo ${repoName} ${label}[${i}]`;
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return fail(`${where} must be an object`);
+    const unknown = Object.keys(entry).find(key => !keys.includes(key));
+    if (unknown) fail(`${where} has unknown key "${unknown}" (expected ${keys.join(", ")})`);
+    if (keys.includes("name") && !isNonEmptyString(entry.name)) fail(`${where} needs a name`);
+    if (!isNonEmptyString(entry.command)) fail(`${where} needs a command`);
+    const globs = entry.in === undefined ? undefined : typeof entry.in === "string" ? [entry.in] : entry.in;
+    if (globs !== undefined && (!isStringList(globs) || globs.length === 0)) fail(`${where} "in" must be a glob or a list of globs`);
+    return { name: entry.name as string, command: entry.command, ...(globs ? { in: globs as string[] } : {}) };
+  });
+}
+
+function parseRepo(repoName: string, repo: Record<string, unknown>, fail: (reason: string) => never): RepoConfig {
+  if ("toolchain" in repo) {
+    fail(`repo ${repoName}: "toolchain" was removed; list setup, checks, network and tools instead (see docs/setup.md)`);
+  }
+  const unknown = Object.keys(repo).find(key => !REPO_KEYS.includes(key));
+  if (unknown) fail(`repo ${repoName} has unknown key "${unknown}" (expected ${REPO_KEYS.join(", ")})`);
+  const checks = parseCommands(repoName, "checks", repo.checks, CHECK_KEYS, fail);
+  if (checks.length === 0) fail(`repo ${repoName} needs at least one check`);
+  const duplicate = checks.find((c, i) => checks.findIndex(o => o.name === c.name) !== i);
+  if (duplicate) fail(`repo ${repoName} has two checks named "${duplicate.name}"`);
+  const setup = repo.setup === undefined ? [] : parseCommands(repoName, "setup", repo.setup, SETUP_KEYS, fail)
+    .map(({ name: _name, ...step }) => step);
+  const network = repo.network ?? [];
+  const tools = repo.tools ?? [];
+  if (!isStringList(network)) fail(`repo ${repoName} network must be a list of domains`);
+  if (!isStringList(tools)) fail(`repo ${repoName} tools must be a list of command prefixes`);
+  const allowLocalBinding = repo.allowLocalBinding ?? false;
+  if (typeof allowLocalBinding !== "boolean") fail(`repo ${repoName} allowLocalBinding must be true or false`);
+  return {
+    path: repo.path as string,
+    description: String(repo.description ?? ""),
+    setup, checks,
+    network: network as string[],
+    allowLocalBinding: allowLocalBinding as boolean,
+    tools: tools as string[],
+  };
+}
+
 function reject(reason: string): never {
   throw new Error(reason);
 }
@@ -105,21 +166,13 @@ export function parseProjectConfig(
         `repo "${repoName}" must be a lowercase name (letters, digits, "_" or "-", starting with a letter or digit)`,
       );
     }
-    if (!TOOLCHAINS.includes(repo.toolchain as Toolchain)) {
-      fail(
-        `repo ${repoName} has unknown toolchain "${repo.toolchain}" (expected ${TOOLCHAINS.join(" or ")})`,
-      );
-    }
+    const parsed = parseRepo(repoName, repo, fail);
     if (typeof repo.path !== "string" || !path.isAbsolute(repo.path)) {
       fail(`repo ${repoName} path must be absolute`);
     }
-    if (!exists(repo.path!))
+    if (!exists(repo.path as string))
       fail(`repo ${repoName} path ${repo.path} does not exist`);
-    repos[repoName] = {
-      path: repo.path!,
-      toolchain: repo.toolchain as Toolchain,
-      description: String(repo.description ?? ""),
-    };
+    repos[repoName] = parsed;
   }
 
   const defaultRepo = reasoned(fail, () =>

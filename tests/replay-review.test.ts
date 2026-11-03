@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TicketScore } from "../src/golden.js";
-import { briefFromSession, buildIfScripted, goldenPath, parseReplayArgs, prepareScratch, replayLogDir, replayRecord, replaySummary } from "../src/replay-review.js";
+import { briefFromSession, goldenPath, parseReplayArgs, prepareScratch, replayLogDir, replayRecord, replaySummary } from "../src/replay-review.js";
 import type { FindAndConfirmResult } from "../src/review.js";
 import type { CandidateVerdict, RecordedCandidate, RunRecord, RunUsage } from "../src/types.js";
 
@@ -240,39 +240,6 @@ describe("prepareScratch", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
-});
-
-describe("buildIfScripted", () => {
-  const withPackage = (pkg: object): string => {
-    const dir = mkdtempSync(path.join(tmpdir(), "replay-build-"));
-    writeFileSync(path.join(dir, "package.json"), JSON.stringify(pkg));
-    return dir;
-  };
-
-  it("runs the build script when package.json has one", () => {
-    const dir = withPackage({ scripts: { build: "tsc" } });
-    const ran: string[] = [];
-    expect(buildIfScripted(dir, () => {}, cwd => { ran.push(cwd); })).toBe(true);
-    expect(ran).toEqual([dir]);
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("skips when there is no build script", () => {
-    const dir = withPackage({ scripts: { test: "vitest" } });
-    const ran: string[] = [];
-    expect(buildIfScripted(dir, () => {}, cwd => { ran.push(cwd); })).toBe(false);
-    expect(ran).toEqual([]);
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("logs and carries on when the build fails", () => {
-    const dir = withPackage({ scripts: { build: "tsc" } });
-    const logs: string[] = [];
-    const fail = () => { throw Object.assign(new Error("boom"), { stderr: "error TS1\nmore" }); };
-    expect(buildIfScripted(dir, m => logs.push(m), fail)).toBe(false);
-    expect(logs).toEqual(["Build failed in the replay worktree; finders may not run tests: error TS1"]);
-    rmSync(dir, { recursive: true, force: true });
   });
 });
 

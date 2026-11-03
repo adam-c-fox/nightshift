@@ -3,14 +3,15 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Toolchain } from "./types.js";
+import { repoSetupCommands, type CheckCommand } from "./checks.js";
+import type { RepoConfig } from "./project.js";
 
 export type Log = (msg: string) => void;
 
 export interface WorktreeSpec {
   repoPath: string;
   ticketId: string;
-  toolchain: Toolchain;
+  repo: Pick<RepoConfig, "setup">;
   branchBase: string;
   startFrom?: { branch: string; baseBranch: string };
   stackedOn?: string;
@@ -41,20 +42,21 @@ function stderrOf(e: unknown): string {
 
 const STDERR_TAIL_LINES = 20;
 
-export function npmCi(wtPath: string): void {
-  execFileSync("npm", ["ci", "--prefer-offline", "--no-audit"], {
-    cwd: wtPath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15 * 60 * 1000, maxBuffer: 10 * 1024 * 1024,
+export function execSetupCommand(wtPath: string, { command, cwd }: CheckCommand): void {
+  execFileSync("sh", ["-c", command], {
+    cwd: cwd ? path.join(wtPath, cwd) : wtPath, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15 * 60 * 1000, maxBuffer: 10 * 1024 * 1024,
   });
 }
 
-export function installDependencies(wtPath: string, install: (wtPath: string) => void, log: Log): void {
-  log(`Installing node_modules in ${wtPath} (npm ci)`);
-  try {
-    install(wtPath);
-  } catch (e) {
-    throw new Error(`npm ci failed in ${wtPath}: ${stderrOf(e).split("\n").slice(-STDERR_TAIL_LINES).join("\n")}`);
+export function runSetup(wtPath: string, repo: Pick<RepoConfig, "setup">, log: Log, run: (wtPath: string, step: CheckCommand) => void = execSetupCommand): void {
+  for (const step of repoSetupCommands(repo, wtPath)) {
+    log(`Setup in ${wtPath}: ${step.name}`);
+    try {
+      run(wtPath, step);
+    } catch (e) {
+      throw new Error(`setup "${step.name}" failed in ${wtPath}: ${stderrOf(e).split("\n").slice(-STDERR_TAIL_LINES).join("\n")}`);
+    }
   }
-  log(`Installed node_modules in ${wtPath}`);
 }
 
 const SLUG_MAX = 32;
@@ -181,8 +183,8 @@ function removeStaleWorktree(repoPath: string, wtPath: string, ticketId: string,
   }
 }
 
-export function createWorktree(spec: WorktreeSpec, log: Log, install: (wtPath: string) => void = npmCi): Worktree {
-  const { repoPath, ticketId, toolchain, branchBase, startFrom, stackedOn } = spec;
+export function createWorktree(spec: WorktreeSpec, log: Log, run?: (wtPath: string, step: CheckCommand) => void): Worktree {
+  const { repoPath, ticketId, repo, branchBase, startFrom, stackedOn } = spec;
   const wtPath = worktreePath(repoPath, ticketId);
 
   removeStaleWorktree(repoPath, wtPath, ticketId, log);
@@ -205,7 +207,7 @@ export function createWorktree(spec: WorktreeSpec, log: Log, install: (wtPath: s
   git(["worktree", "add", "-b", branch, wtPath, baseRef], repoPath);
   log(`Worktree created: ${wtPath} (branch: ${branch} from ${baseRef})`);
 
-  if (toolchain === "node") installDependencies(wtPath, install, log);
+  runSetup(wtPath, repo, log, run);
 
   return { wtPath, branch, baseRef, baseBranch, startedFromPr };
 }

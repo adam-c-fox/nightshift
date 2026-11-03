@@ -40,27 +40,28 @@ describe("agentEnv", () => {
 
 describe("buildAgentSettings", () => {
   const root = "/Users/adam/Developer/nightshift";
+  const repo = { network: ["registry.example.com"], allowLocalBinding: false };
 
   it("enforces the sandbox with no unsandboxed escape", () => {
-    const s = JSON.parse(buildAgentSettings("node", root));
+    const s = JSON.parse(buildAgentSettings(repo, root));
     expect(s.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false });
     expect(s.sandbox.network.strictAllowlist).toBe(true);
   });
 
   it("blocks reading nightshift's .env from Bash and the Read tool", () => {
-    const s = JSON.parse(buildAgentSettings("node", root));
+    const s = JSON.parse(buildAgentSettings(repo, root));
     expect(s.sandbox.filesystem.denyRead).toContain(`${root}/.env`);
     expect(s.permissions.deny).toContain(`Read(/${root}/.env)`);
   });
 
   it("blocks reading nightshift's logs", () => {
-    const s = JSON.parse(buildAgentSettings("node", root));
+    const s = JSON.parse(buildAgentSettings(repo, root));
     expect(s.sandbox.filesystem.denyRead).toContain(`${root}/logs`);
     expect(s.permissions.deny).toEqual(expect.arrayContaining([`Read(/${root}/logs)`, `Read(/${root}/logs/**)`]));
   });
 
   it("lets the postmortem read logs but still not .env", () => {
-    const s = JSON.parse(buildAgentSettings("node", root, { readLogs: true }));
+    const s = JSON.parse(buildAgentSettings(repo, root, { readLogs: true }));
     expect(s.sandbox.filesystem.denyRead).not.toContain(`${root}/logs`);
     expect(s.permissions.deny).not.toContain(`Read(/${root}/logs/**)`);
     expect(s.sandbox.filesystem.denyRead).toContain(`${root}/.env`);
@@ -68,46 +69,36 @@ describe("buildAgentSettings", () => {
   });
 
   it("denies web and connector tools that run outside the sandbox", () => {
-    const s = JSON.parse(buildAgentSettings("node", root));
+    const s = JSON.parse(buildAgentSettings(repo, root));
     expect(s.permissions.deny).toEqual(expect.arrayContaining([
       "WebFetch", "WebSearch", "mcp__claude_ai_Linear", "mcp__claude_ai_Notion",
     ]));
   });
 
   it("never lets the agent reach Azure DevOps", () => {
-    for (const toolchain of ["node", "terraform"] as const) {
-      const s = JSON.parse(buildAgentSettings(toolchain, root));
-      expect(s.sandbox.network.allowedDomains).not.toContain("dev.azure.com");
-      expect(s.sandbox.network.deniedDomains).toEqual(expect.arrayContaining(["dev.azure.com", "*.visualstudio.com"]));
-    }
+    const s = JSON.parse(buildAgentSettings(repo, root));
+    expect(s.sandbox.network.allowedDomains).not.toContain("dev.azure.com");
+    expect(s.sandbox.network.deniedDomains).toEqual(expect.arrayContaining(["dev.azure.com", "*.visualstudio.com"]));
+    expect(s.sandbox.filesystem.denyRead).toContain("~/.azure");
   });
 
-  it("gives neither toolchain Azure credentials or Azure network access", () => {
-    for (const toolchain of ["node", "terraform"] as const) {
-      const s = JSON.parse(buildAgentSettings(toolchain, root));
-      expect(s.sandbox.filesystem.denyRead).toContain("~/.azure");
-      expect(s.sandbox.network.allowedDomains.join()).not.toMatch(/azure|microsoftonline|windows\.net/);
-    }
+  it("allows exactly the repo's network hosts", () => {
+    const s = JSON.parse(buildAgentSettings({ network: ["a.example.com", "localhost"], allowLocalBinding: false }, root));
+    expect(s.sandbox.network.allowedDomains).toEqual(["a.example.com", "localhost"]);
   });
 
-  it("lets terraform runs reach only the provider registry", () => {
-    const tf = JSON.parse(buildAgentSettings("terraform", root));
-    expect(tf.sandbox.network.allowedDomains).toEqual(["registry.terraform.io"]);
+  it("allows no hosts when the repo lists none", () => {
+    const s = JSON.parse(buildAgentSettings({ network: [], allowLocalBinding: false }, root));
+    expect(s.sandbox.network.allowedDomains).toEqual([]);
   });
 
-  it("lets node runs listen locally and reach the local test database", () => {
-    const node = JSON.parse(buildAgentSettings("node", root));
-    expect(node.sandbox.network.allowLocalBinding).toBe(true);
-    expect(node.sandbox.network.allowedDomains).toEqual(expect.arrayContaining(["registry.npmjs.org", "localhost", "127.0.0.1"]));
-  });
-
-  it("does not open local binding for terraform runs", () => {
-    const tf = JSON.parse(buildAgentSettings("terraform", root));
-    expect(tf.sandbox.network.allowLocalBinding).toBeUndefined();
+  it("opens local binding only when the repo asks for it", () => {
+    expect(JSON.parse(buildAgentSettings({ network: [], allowLocalBinding: true }, root)).sandbox.network.allowLocalBinding).toBe(true);
+    expect(JSON.parse(buildAgentSettings(repo, root)).sandbox.network.allowLocalBinding).toBeUndefined();
   });
 
   it("denies reading extra secret files", () => {
-    const settings = JSON.parse(buildAgentSettings("node", "/ns", { secretFiles: ["/ns/projects/acme/.env"] }));
+    const settings = JSON.parse(buildAgentSettings(repo, "/ns", { secretFiles: ["/ns/projects/acme/.env"] }));
     expect(settings.permissions.deny).toContain("Read(//ns/projects/acme/.env)");
     expect(settings.sandbox.filesystem.denyRead).toContain("/ns/projects/acme/.env");
   });
@@ -115,7 +106,7 @@ describe("buildAgentSettings", () => {
   it("denies every project's env file when given the full list", () => {
     const secretFiles = ["/ns/projects/acme/.env", "/ns/projects/other/.env"];
     for (const readLogs of [false, true]) {
-      const settings = JSON.parse(buildAgentSettings("node", "/ns", { readLogs, secretFiles }));
+      const settings = JSON.parse(buildAgentSettings(repo, "/ns", { readLogs, secretFiles }));
       expect(settings.permissions.deny).toContain("Read(//ns/projects/other/.env)");
       expect(settings.sandbox.filesystem.denyRead).toContain("/ns/projects/other/.env");
     }

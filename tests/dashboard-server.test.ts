@@ -163,8 +163,6 @@ beforeEach(async () => {
   ctx = {
     sources,
     reportsDir: join(root, "reports"),
-    projectsDir: join(root, "projects"),
-    exampleDir: join(root, "projects/example"),
     actionsFile: join(root, "state/actions.json"),
   };
   await listen(ctx);
@@ -295,40 +293,19 @@ describe("pages and fragments", () => {
     expect(res.body).toContain("/projects/acme");
   });
 
-  it("renders the new project form with the default project's teams", async () => {
-    const res = await req("GET", "/projects/new");
-    expect(res.status).toBe(200);
-    expect(res.body).toContain('data-mode="create"');
-    expect(sources.linearTeams).toHaveBeenCalledWith("acme");
-  });
-
-  it("renders the new project form when no project exists yet", async () => {
-    vi.mocked(sources.defaultProject).mockReturnValue(undefined);
-    const res = await req("GET", "/projects/new");
-    expect(res.status).toBe(200);
-    expect(res.body).toContain('data-mode="create"');
-    expect(sources.linearTeams).not.toHaveBeenCalled();
-  });
-
-  it("renders a project page with its raw config", async () => {
-    write(
-      join(root, "projects/acme/project.json"),
-      JSON.stringify({
-        repos: { app: { path: "/x", toolchain: "node" } },
-        testDb: "marker-test-db",
-      }),
-    );
+  it("renders a project page with its checks slot", async () => {
     const res = await req("GET", "/projects/acme");
     expect(res.status).toBe(200);
-    expect(res.body).toContain('data-mode="edit"');
-    expect(res.body).toContain("marker-test-db");
+    expect(res.body).toContain("/fragments/project-checks?name=acme");
+    expect(res.body).not.toContain("<form");
   });
 
-  it("shows a broken project.json instead of failing", async () => {
-    write(join(root, "projects/acme/project.json"), "{nope");
-    const res = await req("GET", "/projects/acme");
-    expect(res.status).toBe(200);
-    expect(res.body).toContain("can't be read");
+  it("no longer serves the project editor", async () => {
+    expect((await req("GET", "/projects/new")).status).toBe(404);
+    for (const path of ["/api/projects", "/api/projects/acme"]) {
+      const res = await req("POST", path, { headers: jsonHeaders, body: "{}" });
+      expect(res.status, path).toBe(404);
+    }
   });
 
   it("404s an unknown project page", async () => {
@@ -561,94 +538,6 @@ describe("launch and refresh", () => {
   });
 });
 
-describe("project API", () => {
-  const post = (path: string, body: unknown) =>
-    req("POST", path, { headers: jsonHeaders, body: JSON.stringify(body) });
-
-  const repoInput = (path: string) => ({
-    name: "app",
-    path,
-    toolchain: "node",
-    description: "",
-  });
-
-  beforeEach(() => {
-    mkdirSync(join(root, "repos/app/.git"), { recursive: true });
-    write(
-      join(root, "projects/example/project.json"),
-      JSON.stringify({ repos: { app: { path: "/x", toolchain: "node" } } }),
-    );
-    write(join(root, "projects/example/tonight.md"), "# tonight\n");
-    write(join(root, "projects/example/.env.example"), "LINEAR_API_KEY=\n");
-    write(
-      join(root, "projects/acme/project.json"),
-      JSON.stringify({
-        repos: { app: { path: join(root, "repos/app"), toolchain: "node" } },
-      }),
-    );
-  });
-
-  it("rejects invalid input on save with an error", async () => {
-    const res = await post("/api/projects/acme", { repos: "nope" });
-    expect(res.status).toBe(400);
-    expect(JSON.parse(res.body).error).toMatch(/repos/);
-  });
-
-  it("404s a save for an unknown project", async () => {
-    const res = await post("/api/projects/nope", { repos: [] });
-    expect(res.status).toBe(404);
-  });
-
-  it("saves a project and clears its cached Linear and PR data", async () => {
-    write(join(root, "projects/acme/db.sh"), "#!/bin/sh\n");
-    const res = await post("/api/projects/acme", {
-      repos: [repoInput(join(root, "repos/app"))],
-      testDb: "db.sh",
-    });
-    expect(res.status).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ ok: true });
-    const saved = JSON.parse(
-      readFileSync(join(root, "projects/acme/project.json"), "utf-8"),
-    );
-    expect(saved.testDb).toBe("db.sh");
-    const cleared = vi.mocked(sources.refresh).mock.calls.map(([t]) => t);
-    expect(cleared).toEqual(expect.arrayContaining(["linear", "teams", "prs"]));
-  });
-
-  it("creates a project and returns the env keys to fill", async () => {
-    const res = await post("/api/projects", {
-      name: "fresh",
-      repos: [repoInput(join(root, "repos/app"))],
-    });
-    expect(res.status).toBe(201);
-    expect(JSON.parse(res.body)).toEqual({
-      ok: true,
-      dir: "projects/fresh",
-      envKeys: expect.arrayContaining(["LINEAR_API_KEY"]),
-    });
-    expect(existsSync(join(root, "projects/fresh/project.json"))).toBe(true);
-    expect(sources.refresh).toHaveBeenCalled();
-  });
-
-  it("refuses to create a project that already exists", async () => {
-    const res = await post("/api/projects", {
-      name: "acme",
-      repos: [repoInput(join(root, "repos/app"))],
-    });
-    expect(res.status).toBe(400);
-    expect(JSON.parse(res.body).error).toMatch(/already exists/);
-  });
-
-  it("rejects a non-JSON body", async () => {
-    const res = await req("POST", "/api/projects", {
-      headers: jsonHeaders,
-      body: "nope",
-    });
-    expect(res.status).toBe(400);
-    expect(JSON.parse(res.body)).toEqual({ error: "body must be JSON" });
-  });
-});
-
 describe("no secrets in responses", () => {
   const PAT = "SENTINEL_PAT_123";
   const LINEAR = "SENTINEL_LIN_456";
@@ -699,7 +588,7 @@ describe("no secrets in responses", () => {
     write(
       join(root, "projects/acme/project.json"),
       JSON.stringify({
-        repos: { app: { path: repo, toolchain: "node" } },
+        repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
         linearTeams: ["DEMO"],
       }),
     );
@@ -718,8 +607,6 @@ describe("no secrets in responses", () => {
     await listen({
       sources: createSources(deps),
       reportsDir: deps.reportsDir,
-      projectsDir: deps.projectsDir,
-      exampleDir: deps.exampleDir,
       actionsFile: deps.state.actions,
     });
   });
@@ -738,7 +625,6 @@ describe("no secrets in responses", () => {
       "/fragments/inbox",
       "/fragments/nights",
       "/projects",
-      "/projects/new",
       "/projects/acme",
       "/fragments/project-checks?name=acme",
       "/reports/acme/nightshift-2026-10-01.html",

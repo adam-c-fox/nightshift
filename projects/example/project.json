@@ -2,13 +2,67 @@
   "repos": {
     "app": {
       "path": "/path/to/app",
-      "toolchain": "node",
-      "description": "Application code: TypeScript monorepo"
+      "description": "Application code: TypeScript monorepo",
+      "setup": [
+        {
+          "command": "npm ci --prefer-offline --no-audit"
+        }
+      ],
+      "checks": [
+        {
+          "name": "build",
+          "command": "npm run build"
+        },
+        {
+          "name": "typecheck",
+          "command": "npm run typecheck"
+        },
+        {
+          "name": "lint",
+          "command": "npm run lint"
+        },
+        {
+          "name": "format",
+          "command": "npm run format"
+        },
+        {
+          "name": "tests",
+          "command": "npm test",
+          "in": "packages/*/package.json"
+        }
+      ],
+      "network": [
+        "registry.npmjs.org",
+        "localhost",
+        "127.0.0.1"
+      ],
+      "allowLocalBinding": true,
+      "tools": [
+        "npm",
+        "npx",
+        "node"
+      ]
     },
     "infra": {
       "path": "/path/to/infra",
-      "toolchain": "terraform",
-      "description": "Infrastructure as code: Terraform, .tf, azurerm, resource group, module, storage account, Key Vault, networking"
+      "description": "Infrastructure as code: Terraform, .tf, azurerm, resource group, module, storage account, Key Vault, networking",
+      "checks": [
+        {
+          "name": "terraform validate",
+          "command": "terraform init -backend=false -input=false && terraform validate",
+          "in": "environments/*/main.tf"
+        },
+        {
+          "name": "terraform fmt",
+          "command": "terraform fmt -check -recursive"
+        }
+      ],
+      "network": [
+        "registry.terraform.io"
+      ],
+      "tools": [
+        "terraform"
+      ]
     }
   },
   "defaultRepo": "app",

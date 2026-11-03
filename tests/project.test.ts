@@ -12,9 +12,27 @@ import {
 
 const everything = () => true;
 const repos = {
-  main: { path: "/r/app", toolchain: "node", description: "app" },
-  infra: { path: "/r/tf", toolchain: "terraform", description: "infra" },
+  main: { path: "/r/app", description: "app", checks: [{ name: "tests", command: "npm test" }] },
+  infra: {
+    path: "/r/tf",
+    description: "infra",
+    setup: [{ command: "make init", in: "env/*/main.tf" }],
+    checks: [{ name: "validate", command: "make validate", in: ["env/*/main.tf", "mod/*/main.tf"] }],
+    network: ["registry.example.com"],
+    allowLocalBinding: true,
+    tools: ["make"],
+  },
 };
+const parsedRepos = {
+  main: { ...repos.main, setup: [], network: [], allowLocalBinding: false, tools: [] },
+  infra: {
+    ...repos.infra,
+    setup: [{ command: "make init", in: ["env/*/main.tf"] }],
+    checks: [{ name: "validate", command: "make validate", in: ["env/*/main.tf", "mod/*/main.tf"] }],
+  },
+};
+const withRepo = (patch: object) => ({ repos: { app: { ...repos.main, ...patch } } });
+const parse = (raw: unknown) => parseProjectConfig("a", "/p/a", raw, everything);
 
 describe("parseProjectConfig", () => {
   it("resolves paths against the project dir and applies defaults", () => {
@@ -27,7 +45,7 @@ describe("parseProjectConfig", () => {
     expect(project).toEqual({
       name: "acme",
       dir: "/p/acme",
-      repos,
+      repos: parsedRepos,
       defaultRepo: "main",
       testDbScript: "/p/acme/test-db.sh",
       allowancePercent: 15,
@@ -81,11 +99,43 @@ describe("parseProjectConfig", () => {
     ).toThrow(/defaultRepo "web"/);
   });
 
-  it("rejects an unknown toolchain", () => {
-    const bad = { repos: { app: { ...repos.main, toolchain: "python" } } };
-    expect(() => parseProjectConfig("a", "/p/a", bad, everything)).toThrow(
-      /app.*toolchain "python"/,
+  it("tells the user to migrate a leftover toolchain key", () => {
+    expect(() => parse(withRepo({ toolchain: "node" }))).toThrow(
+      /repo app: "toolchain" was removed; list setup, checks, network and tools instead \(see docs\/setup\.md\)/,
     );
+  });
+
+  it("rejects unknown keys on a repo and on a check", () => {
+    expect(() => parse(withRepo({ check: [] }))).toThrow(/repo app has unknown key "check"/);
+    expect(() => parse(withRepo({ checks: [{ name: "t", command: "x", cmd: "y" }] }))).toThrow(
+      /checks\[0\] has unknown key "cmd"/,
+    );
+    expect(() => parse(withRepo({ setup: [{ command: "x", name: "n" }] }))).toThrow(/setup\[0\] has unknown key "name"/);
+  });
+
+  it.each([
+    [{ checks: undefined }, /checks must be a list/],
+    [{ checks: [] }, /at least one check/],
+    [{ checks: [{ command: "x" }] }, /needs a name/],
+    [{ checks: [{ name: "t" }] }, /needs a command/],
+    [{ checks: [{ name: "t", command: "x" }, { name: "t", command: "y" }] }, /two checks named "t"/],
+    [{ checks: [{ name: "t", command: "x", in: [] }] }, /"in" must be a glob or a list of globs/],
+    [{ checks: [{ name: "t", command: "x", in: 3 }] }, /"in" must be a glob or a list of globs/],
+    [{ setup: "make" }, /setup must be a list/],
+    [{ network: "a.com" }, /network must be a list/],
+    [{ tools: [""] }, /tools must be a list/],
+    [{ allowLocalBinding: "yes" }, /allowLocalBinding must be true or false/],
+  ])("rejects an invalid repo %j", (patch, message) => {
+    expect(() => parse(withRepo(patch))).toThrow(message);
+  });
+
+  it("defaults setup, network, tools and allowLocalBinding", () => {
+    expect(parse(withRepo({})).repos.app).toEqual(parsedRepos.main);
+  });
+
+  it("accepts a single glob string for in", () => {
+    const { repos: parsed } = parse(withRepo({ checks: [{ name: "t", command: "x", in: "a/*/b" }] }));
+    expect(parsed.app.checks[0].in).toEqual(["a/*/b"]);
   });
 
   it("rejects a repo path that doesn't exist", () => {
@@ -213,7 +263,7 @@ describe("loadProject", () => {
     writeFileSync(
       join(root, "acme", "project.json"),
       JSON.stringify({
-        repos: { app: { path: repo, toolchain: "node", description: "app" } },
+        repos: { app: { path: repo, description: "app", checks: [{ name: "t", command: "x" }] } },
       }),
     );
     writeFileSync(join(root, "acme", "AGENTS.md"), "# Acme\n");

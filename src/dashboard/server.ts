@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import { pathToFileURL } from "node:url";
-import { readRawProjectConfig } from "../project.js";
 import { ROOT } from "../state.js";
 import {
   parseActionsBody,
@@ -12,11 +11,6 @@ import {
 import { DASHBOARD_HOST, DASHBOARD_PORT } from "./address.js";
 import { firstLine, parseRefreshTarget } from "./cache.js";
 import { parseLaunchRequest } from "./launch.js";
-import {
-  createProject,
-  parseProjectInput,
-  saveProjectConfig,
-} from "./project-edit.js";
 import { resolveReportFile } from "./reports.js";
 import { checkRequest, preflightHeaders, type Verdict } from "./security.js";
 import { createSources, defaultDeps, type Sources } from "./sources.js";
@@ -28,7 +22,6 @@ import {
 import { errorBox, page } from "./views/layout.js";
 import { inboxHTML, nightsHTML, runBannerHTML } from "./views/morning.js";
 import {
-  newProjectHTML,
   projectChecksHTML,
   projectPageHTML,
   projectsListHTML,
@@ -37,8 +30,6 @@ import {
 export interface ServerContext {
   sources: Sources;
   reportsDir: string;
-  projectsDir: string;
-  exampleDir: string;
   actionsFile: string;
 }
 
@@ -146,12 +137,6 @@ function decodeName(segment: string): string | null {
   }
 }
 
-function clearProjectCaches(sources: Sources): void {
-  for (const target of ["linear", "teams", "prs"] as const) {
-    sources.refresh(target);
-  }
-}
-
 function routes(ctx: ServerContext): Route[] {
   const { sources } = ctx;
   const knownProject = (name: string | null): name is string =>
@@ -210,33 +195,10 @@ function routes(ctx: ServerContext): Route[] {
     },
     {
       method: "GET",
-      pattern: /^\/projects\/new$/,
-      handler: async () => {
-        const base = sources.defaultProject();
-        const teams = base
-          ? await sources.linearTeams(base)
-          : {
-              ok: false as const,
-              error: "no existing project to read Linear teams from",
-            };
-        return html(newProjectHTML(teams));
-      },
-    },
-    {
-      method: "GET",
       pattern: /^\/projects\/([^/]+)$/,
-      handler: async ({ match }) => {
+      handler: ({ match }) => {
         const name = decodeName(match[1]);
-        if (!knownProject(name)) return notFoundPage();
-        let raw: unknown;
-        let rawError: string | undefined;
-        try {
-          raw = readRawProjectConfig(name, ctx.projectsDir).raw;
-        } catch (error) {
-          rawError = firstLine(error);
-        }
-        const teams = await sources.linearTeams(name);
-        return html(projectPageHTML(name, raw, rawError, teams));
+        return knownProject(name) ? html(projectPageHTML(name)) : notFoundPage();
       },
     },
     {
@@ -310,48 +272,6 @@ function routes(ctx: ServerContext): Route[] {
         const body = await readJson();
         const target = badRequest(() => parseRefreshTarget(body));
         sources.refresh(target);
-        return json({ ok: true });
-      },
-    },
-    {
-      method: "POST",
-      pattern: /^\/api\/projects$/,
-      handler: async ({ readJson }) => {
-        const body = await readJson();
-        const created = badRequest(() => {
-          const input = parseProjectInput(body);
-          const name = (body as { name?: unknown }).name;
-          if (typeof name !== "string") throw new Error("name is required");
-          const { envKeys } = createProject(
-            name,
-            input,
-            ctx.projectsDir,
-            ctx.exampleDir,
-          );
-          return { name, envKeys };
-        });
-        clearProjectCaches(sources);
-        return json(
-          {
-            ok: true,
-            dir: `projects/${created.name}`,
-            envKeys: created.envKeys,
-          },
-          201,
-        );
-      },
-    },
-    {
-      method: "POST",
-      pattern: /^\/api\/projects\/([^/]+)$/,
-      handler: async ({ match, readJson }) => {
-        const name = decodeName(match[1]);
-        if (!knownProject(name)) return json({ error: "not found" }, 404);
-        const body = await readJson();
-        badRequest(() =>
-          saveProjectConfig(name, parseProjectInput(body), ctx.projectsDir),
-        );
-        clearProjectCaches(sources);
         return json({ ok: true });
       },
     },
@@ -458,8 +378,6 @@ function main(): void {
   const server = createDashboardServer({
     sources: createSources(deps),
     reportsDir: deps.reportsDir,
-    projectsDir: deps.projectsDir,
-    exampleDir: deps.exampleDir,
     actionsFile: deps.state.actions,
   });
   server.requestTimeout = 30_000;
