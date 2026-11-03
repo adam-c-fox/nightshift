@@ -19,9 +19,12 @@ const issue = (identifier: string, description: string): TodoIssue => ({
   priorityLabel: "High",
   estimate: 3,
   teamKey: "ENG",
+  projectName: "Acme Work",
   description,
   commentCreatedAt: [],
 });
+
+const projects = [{ name: "acme", linearProjects: ["Acme Work"] }];
 
 const recFor = (description: string): PrepRecord => ({
   project: "acme",
@@ -144,10 +147,12 @@ describe("prepStatusLines", () => {
     const lines = prepStatusLines(
       [issue("ENG-1", "D"), issue("ENG-2", "## Decisions")],
       { "ENG-1": recFor("D") },
+      projects,
     );
     expect(lines).toEqual([
       {
         id: "ENG-1",
+        project: "acme",
         title: "Title ENG-1",
         team: "ENG",
         priority: "High",
@@ -158,6 +163,7 @@ describe("prepStatusLines", () => {
       },
       {
         id: "ENG-2",
+        project: "acme",
         title: "Title ENG-2",
         team: "ENG",
         priority: "High",
@@ -168,10 +174,25 @@ describe("prepStatusLines", () => {
     ]);
   });
 
+  it("tags each ticket with its project and drops tickets no project claims", () => {
+    const two = [...projects, { name: "memosum", linearProjects: ["Memo"] }];
+    const lines = prepStatusLines(
+      [
+        issue("ENG-1", "D"),
+        { ...issue("ENG-2", "D"), projectName: "Memo" },
+        { ...issue("ENG-3", "D"), projectName: "Elsewhere" },
+        { ...issue("ENG-4", "D"), projectName: null },
+      ],
+      {},
+      two,
+    );
+    expect(lines.map((l) => [l.id, l.project])).toEqual([["ENG-1", "acme"], ["ENG-2", "memosum"]]);
+  });
+
   it("includes blockers for a not-ready record", () => {
     const [line] = prepStatusLines([issue("ENG-1", "D")], {
       "ENG-1": { ...recFor("D"), outcome: "not_ready", blockers: "x" },
-    });
+    }, projects);
     expect(line).toMatchObject({ prep: "not_ready", blockers: "x" });
   });
 });

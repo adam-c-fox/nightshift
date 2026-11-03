@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
-import { getEnv, requireEnv, useProjectEnv } from "./env.js";
+import { requireEnv } from "./env.js";
 import { fetchTodoIssues, type TodoIssue } from "./linear.js";
 import {
   prepState,
@@ -8,11 +8,12 @@ import {
   type PrepStateName,
   type PrepStore,
 } from "./prep.js";
-import { loadProject } from "./project.js";
+import { loadAllProjects, projectForLinearProject, type Project } from "./project.js";
 import { statePaths } from "./state.js";
 
 export interface PrepStatusLine {
   id: string;
+  project: string;
   title: string;
   team: string;
   priority: string;
@@ -26,14 +27,18 @@ export interface PrepStatusLine {
 export function prepStatusLines(
   issues: TodoIssue[],
   store: PrepStore,
+  projects: Pick<Project, "name" | "linearProjects">[],
 ): PrepStatusLine[] {
-  return issues.map((issue) => {
+  return issues.flatMap((issue) => {
+    const project = projectForLinearProject(projects, issue.projectName);
+    if (project === undefined) return [];
     const { state, preppedAt, blockers } = prepState(
       store[issue.identifier],
       issue,
     );
-    return {
+    return [{
       id: issue.identifier,
+      project,
       title: issue.title,
       team: issue.teamKey,
       priority: issue.priorityLabel,
@@ -42,7 +47,7 @@ export function prepStatusLines(
       prep: state,
       ...(preppedAt !== undefined ? { preppedAt } : {}),
       ...(blockers !== undefined ? { blockers } : {}),
-    };
+    }];
   });
 }
 
@@ -52,16 +57,14 @@ async function main(): Promise<void> {
       process.argv.slice(2),
       "--project",
     );
-    const name = flagProject ?? getEnv("NIGHTSHIFT_PROJECT");
-    if (!name) throw new Error("no project selected (use --project <name>)");
-    const project = loadProject(name);
-    useProjectEnv(project.envFile);
-    const issues = await fetchTodoIssues(
-      { apiKey: requireEnv("LINEAR_API_KEY") },
-      project.linearTeams,
-    );
+    const projects = loadAllProjects();
+    if (flagProject !== undefined && !projects.some((p) => p.name === flagProject)) {
+      throw new Error(`unknown project "${flagProject}"`);
+    }
+    const issues = await fetchTodoIssues({ apiKey: requireEnv("LINEAR_API_KEY") });
     const store = readPrepStore(statePaths().prep);
-    for (const line of prepStatusLines(issues, store)) {
+    const lines = prepStatusLines(issues, store, projects);
+    for (const line of lines.filter((l) => flagProject === undefined || l.project === flagProject)) {
       console.log(JSON.stringify(line));
     }
   } catch (e) {

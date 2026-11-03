@@ -197,7 +197,7 @@ export function createSources(deps: DashboardDeps): Sources {
     if (!client.ok) return Promise.resolve(client);
     return settle(
       cache.get(cacheKeys.todo(project.name), TTL_MS.todo, () =>
-        fetchTodoIssues(client.value, project.linearTeams),
+        fetchTodoIssues(client.value),
       ),
       SLOW_MS.linear,
       LINEAR_SLOW,

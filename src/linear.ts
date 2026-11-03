@@ -170,6 +170,7 @@ export interface TodoIssue {
   priorityLabel: string;
   estimate: number | null;
   teamKey: string;
+  projectName: string | null;
   description: string;
   commentCreatedAt: string[];
 }
@@ -193,18 +194,16 @@ interface CommentNodes {
   nodes: { createdAt: string }[];
 }
 
-export function todoFilter(teamKeys: string[] = []): Record<string, unknown> {
-  const filter: Record<string, unknown> = { state: { name: { eq: TODO_STATE } } };
-  if (teamKeys.length > 0) filter.team = { key: { in: teamKeys } };
-  return filter;
+export function todoFilter(): Record<string, unknown> {
+  return { state: { name: { eq: TODO_STATE } } };
 }
 
-export async function fetchTodoIssues(client: LinearClient, teamKeys?: string[]): Promise<TodoIssue[]> {
+export async function fetchTodoIssues(client: LinearClient): Promise<TodoIssue[]> {
   const query = `
     query TodoIssues($filter: IssueFilter) {
       viewer { assignedIssues(first: 100, filter: $filter) { nodes {
         id identifier title url priority priorityLabel estimate description
-        team { key } comments(first: 100) { nodes { createdAt } }
+        team { key } project { name } comments(first: 100) { nodes { createdAt } }
       } } }
     }
   `;
@@ -212,10 +211,10 @@ export async function fetchTodoIssues(client: LinearClient, teamKeys?: string[])
     data?: { viewer: { assignedIssues: { nodes: {
       id: string; identifier: string; title: string; url: string;
       priority: number; priorityLabel: string; estimate: number | null;
-      description: string | null; team: { key: string }; comments: CommentNodes;
+      description: string | null; team: { key: string }; project: { name: string } | null; comments: CommentNodes;
     }[] } } };
     errors?: { message: string }[];
-  }>(query, { filter: todoFilter(teamKeys) }, client);
+  }>(query, { filter: todoFilter() }, client);
 
   return (json.data?.viewer.assignedIssues.nodes ?? []).map(node => ({
     id: node.id,
@@ -226,6 +225,7 @@ export async function fetchTodoIssues(client: LinearClient, teamKeys?: string[])
     priorityLabel: node.priorityLabel,
     estimate: node.estimate,
     teamKey: node.team.key,
+    projectName: node.project?.name ?? null,
     description: node.description ?? "",
     commentCreatedAt: node.comments.nodes.map(c => c.createdAt),
   }));

@@ -284,7 +284,7 @@ describe("clockOff", () => {
     });
 
     const todoCall = fetchCalls.find((c) => c.query.includes("TodoIssues"))!;
-    expect(todoCall.variables.filter.team).toEqual({ key: { in: ["DEMO"] } });
+    expect(todoCall.variables.filter.team).toBeUndefined();
     expect(todoCall.headers.Authorization).toBe("k");
   });
 

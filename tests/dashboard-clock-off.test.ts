@@ -28,6 +28,7 @@ function issue(
     priorityLabel: PRIORITY_LABELS[priority],
     estimate: 2,
     teamKey: id.split("-")[0],
+    projectName: null,
     description: opts.description ?? "plain description",
     commentCreatedAt: opts.comments ?? [],
   };

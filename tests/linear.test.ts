@@ -157,11 +157,8 @@ describe("fetchTicket with missing issue", () => {
 });
 
 describe("todoFilter", () => {
-  it("filters on the Todo state and optionally on team keys", () => {
-    const todo = { state: { name: { eq: "Todo" } } };
-    expect(todoFilter()).toEqual(todo);
-    expect(todoFilter([])).toEqual(todo);
-    expect(todoFilter(["DEMO"])).toEqual({ ...todo, team: { key: { in: ["DEMO"] } } });
+  it("filters on the Todo state only", () => {
+    expect(todoFilter()).toEqual({ state: { name: { eq: "Todo" } } });
   });
 });
 
@@ -169,23 +166,30 @@ describe("fetchTodoIssues", () => {
   const node = {
     id: "u1", identifier: "DEMO-1", title: "T", url: "https://l/1", priority: 2,
     priorityLabel: "High", estimate: null, description: null, team: { key: "DEMO" },
+    project: { name: "Large Group Memo Summarization" },
     comments: { nodes: [{ createdAt: "2026-10-01T00:00:00Z" }] },
   };
   const response = { data: { viewer: { assignedIssues: { nodes: [node] } } } };
 
-  it("sends the team filter with the client's key and maps the nodes", async () => {
+  it("sends the Todo filter with the client's key and maps the nodes", async () => {
     const fetch = fakeFetch(response);
-    const issues = await fetchTodoIssues({ apiKey: "lin_api_x", fetch }, ["DEMO"]);
+    const issues = await fetchTodoIssues({ apiKey: "lin_api_x", fetch });
 
-    expect(sentBody(fetch).variables.filter).toEqual(todoFilter(["DEMO"]));
+    expect(sentBody(fetch).variables.filter).toEqual(todoFilter());
     expect(sentAuthorization(fetch)).toBe("lin_api_x");
     expect(issues).toEqual([
       {
         id: "u1", identifier: "DEMO-1", title: "T", url: "https://l/1", priority: 2,
-        priorityLabel: "High", estimate: null, teamKey: "DEMO", description: "",
+        priorityLabel: "High", estimate: null, teamKey: "DEMO", projectName: "Large Group Memo Summarization", description: "",
         commentCreatedAt: ["2026-10-01T00:00:00Z"],
       },
     ]);
+  });
+
+  it("gives a null projectName for a ticket with no Linear project", async () => {
+    const fetch = fakeFetch({ data: { viewer: { assignedIssues: { nodes: [{ ...node, project: null }] } } } });
+    const [issue] = await fetchTodoIssues({ apiKey: "k", fetch });
+    expect(issue.projectName).toBeNull();
   });
 
   it("sends OAuth tokens as bearer", async () => {
