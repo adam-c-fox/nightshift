@@ -40,7 +40,7 @@ export function createProjectSwitcher(deps: ProjectSwitcherDeps): { enter(name: 
   let current: ProjectContext | undefined;
   let db: TestDb | undefined;
   let dbStarted = false;
-  let tokenSet = false;
+  const originalToken = process.env[CLAUDE_TOKEN];
 
   const stopDb = () => {
     db?.stop();
@@ -69,14 +69,10 @@ export function createProjectSwitcher(deps: ProjectSwitcherDeps): { enter(name: 
         stopDb();
         const ctx = contextFor(name);
         deps.useEnv(ctx.project.envFile);
+        if (originalToken === undefined) delete process.env[CLAUDE_TOKEN];
+        else process.env[CLAUDE_TOKEN] = originalToken;
         const token = deps.getEnv(CLAUDE_TOKEN);
-        if (token) {
-          process.env[CLAUDE_TOKEN] = token;
-          tokenSet = true;
-        } else if (tokenSet) {
-          delete process.env[CLAUDE_TOKEN];
-          tokenSet = false;
-        }
+        if (token) process.env[CLAUDE_TOKEN] = token;
         ctx.branchPrefix = deps.getEnv("BRANCH_PREFIX");
         current = ctx;
       }

@@ -32,7 +32,11 @@ describe("nightOrder", () => {
 });
 
 describe("createProjectSwitcher", () => {
-  afterEach(() => { delete process.env[CLAUDE_TOKEN]; });
+  const originalToken = process.env[CLAUDE_TOKEN];
+  afterEach(() => {
+    if (originalToken === undefined) delete process.env[CLAUDE_TOKEN];
+    else process.env[CLAUDE_TOKEN] = originalToken;
+  });
 
   const projects: Record<string, Project> = {
     eoe: { name: "eoe", envFile: "/eoe.env", instructions: "eoe rules", testDbScript: "/eoe-db" } as Project,
@@ -83,5 +87,43 @@ describe("createProjectSwitcher", () => {
     expect(events.some(e => e.startsWith("start"))).toBe(false);
     switcher.enter("eoe");
     expect(events).toContain("start /eoe-db");
+  });
+
+  function tokenSwitcher(tokens: Record<string, string | undefined>) {
+    let envFile = "";
+    return createProjectSwitcher({
+      load: name => projects[name],
+      useEnv: file => { envFile = file; },
+      getEnv: name => process.env[name] ?? (name === CLAUDE_TOKEN ? tokens[envFile] : undefined),
+      startDb: () => undefined,
+      loadPrState: name => ({ state: {}, file: `/state/${name}.json` }),
+      genericInstructions: "generic",
+    });
+  }
+
+  it("does not leak one project's Claude token into the next", () => {
+    delete process.env[CLAUDE_TOKEN];
+    const switcher = tokenSwitcher({ "/eoe.env": "token-a", "/memo.env": "token-b" });
+    switcher.enter("eoe");
+    expect(process.env[CLAUDE_TOKEN]).toBe("token-a");
+    switcher.enter("memosum");
+    expect(process.env[CLAUDE_TOKEN]).toBe("token-b");
+  });
+
+  it("restores an unset token when the next project has none", () => {
+    delete process.env[CLAUDE_TOKEN];
+    const switcher = tokenSwitcher({ "/eoe.env": "token-a" });
+    switcher.enter("eoe");
+    expect(process.env[CLAUDE_TOKEN]).toBe("token-a");
+    switcher.enter("memosum");
+    expect(process.env[CLAUDE_TOKEN]).toBeUndefined();
+  });
+
+  it("restores the original token captured when the switcher was created", () => {
+    process.env[CLAUDE_TOKEN] = "original";
+    const switcher = tokenSwitcher({});
+    process.env[CLAUDE_TOKEN] = "stale";
+    switcher.enter("eoe");
+    expect(process.env[CLAUDE_TOKEN]).toBe("original");
   });
 });
