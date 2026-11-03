@@ -50,7 +50,7 @@ Configure a project below and [preview a night](#each-evening) before scheduling
 
 ## Projects
 
-A project is the set of repos nightshift works in, plus the instructions and tickets for them. Each lives in `projects/<name>/`, which is gitignored apart from `projects/example/`:
+A project is the set of repos nightshift works in, plus the instructions and tickets for them. Each lives in `projects/<name>/`, which is gitignored. Templates for each file are in [`templates/project/`](../templates/project):
 
 | File | What it's for |
 | --- | --- |
@@ -100,7 +100,7 @@ Each repo lists its own commands. Nothing is built in:
 
 `linearTeams` is a list of Linear team keys such as `["ENG"]`. When it's set, `prep-status` and the [dashboard](dashboard.md) only list your Todo tickets from those teams. `/tonight` still lists every Todo ticket assigned to you, and tickets outside `linearTeams` show "—" in its prep column. Leave it out to see all of them. `/prep` and `/tonight` also use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](dashboard.md#prep-memory).
 
-Start a new project by running `/nightshift-setup` from the root of its repo, after installing the skill above. It writes `projects/<name>/`, reads the repo's CI config for `setup` and `checks`, runs them against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`projects/example`](../projects/example) to `projects/<name>`, create its `.env` from `.env.example`, and replace the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
+Start a new project by running `/nightshift-setup` from the root of its repo, after installing the skill above. It writes `projects/<name>/`, reads the repo's CI config for `setup` and `checks`, runs them against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`templates/project`](../templates/project) to `projects/<name>`, create its `.env` from `.env.example`, and replace the placeholder paths in `project.json`; it won't load until they exist. Select a project with `--project <name>` or `NIGHTSHIFT_PROJECT`. For example, `npm run run -- --project <name>` runs it, and `--allowance <pct>` overrides its budget for one run.
 
 ## Each evening
 
@@ -108,7 +108,7 @@ Prep tickets one at a time with `/prep <ID> [project]` in Claude Code. It checks
 
 A ticket that needs the unmerged code of another ticket in tonight's file can name it with `base: <ID>` (an earlier ticket in the same repo). It branches from that ticket's branch and opens its PR into it, and is skipped if the base wasn't pushed.
 
-Draft `projects/<name>/tonight.md` from your Linear Todo list by running `/tonight [project]` in Claude Code, or write it by hand following [`projects/example/tonight.md`](../projects/example/tonight.md):
+Draft `projects/<name>/tonight.md` from your Linear Todo list by running `/tonight [project]` in Claude Code, or write it by hand following [`templates/project/tonight.md`](../templates/project/tonight.md):
 
 ```md
 ## ENG-142 – export: add CSV download to the runs table

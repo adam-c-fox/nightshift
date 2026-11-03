@@ -106,7 +106,7 @@ export function defaultDeps(root: string): DashboardDeps {
     projectsDir: path.join(root, "projects"),
     reportsDir: path.join(root, "reports"),
     logsDir: path.join(root, "logs"),
-    exampleDir: path.join(root, "projects", "example"),
+    exampleDir: path.join(ROOT, "templates", "project"),
     state: statePaths(root),
     exec: execAsync,
     fetch: globalThis.fetch,
@@ -506,7 +506,7 @@ export function createSources(deps: DashboardDeps): Sources {
       const listed = projects();
       const configured = configuredDefaultProject();
       if (configured && listed.includes(configured)) return configured;
-      return listed.find((name) => name !== "example");
+      return listed[0];
     },
     clockOff,
     morning,

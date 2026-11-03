@@ -6,9 +6,9 @@ disable-model-invocation: true
 
 Plan tonight's nightshift run with the user: fetch their Linear Todo tickets, draft `projects/<project>/tonight.md` together, and write it.
 
-The runner works tickets in file order, so order is priority. `projects/<project>/tonight.md` is gitignored. The file format is in the header comment of `projects/example/tonight.md` and in `parseTickets` in `src/tickets.ts`.
+The runner works tickets in file order, so order is priority. `projects/<project>/tonight.md` is gitignored. The file format is in the header comment of `templates/project/tonight.md` and in `parseTickets` in `src/tickets.ts`.
 
-Run the nightshift commands below from its checkout root, where `package.json` names `nightshift` and `projects/example/` exists. If invoked elsewhere, resolve this skill's directory through any symlink and use its great-grandparent as the checkout root. If the skill is a standalone copy, ask the user for the checkout path.
+Run the nightshift commands below from its checkout root, where `package.json` names `nightshift` and `templates/project/` exists. If invoked elsewhere, resolve this skill's directory through any symlink and use its great-grandparent as the checkout root. If the skill is a standalone copy, ask the user for the checkout path.
 
 Discover the connected Linear tools for listing the current user's issues, fetching an issue, and listing its comments. Tool names and schemas vary by connector; load deferred tools with the host's discovery tool and use their actual schemas. The operation names below describe intent. If no connected tool supports an operation, ask the user to connect Linear and stop before writing tonight's file.
 
@@ -17,7 +17,7 @@ Discover the connected Linear tools for listing the current user's issues, fetch
 1. Pick the project: the first argument (`/tonight [project]`), else the output of `npm run -s project`. If that prints nothing, list `projects/*/project.json` and ask the user which one. Repos, their paths and descriptions live in `projects/<project>/project.json`.
    Done when you have a project name.
 
-2. Read `projects/<project>/tonight.md`; if it doesn't exist, copy `projects/example/tonight.md` to it and delete the example tickets. If `## <ID> – …` headings exist outside the HTML comment, show them and ask the user: replace, append, or stop. An existing `allowance:` header line is part of the header: keep it or replace it according to the answer in step 11.
+2. Read `projects/<project>/tonight.md`; if it doesn't exist, copy `templates/project/tonight.md` to it and delete the example tickets. If `## <ID> – …` headings exist outside the HTML comment, show them and ask the user: replace, append, or stop. An existing `allowance:` header line is part of the header: keep it or replace it according to the answer in step 11.
    Done when the user has chosen, or the file has no tickets.
 
 3. Fetch candidates with the issue-listing tool, assigned to the authenticated user and in state `Todo` only. If there are none, tell the user and stop.

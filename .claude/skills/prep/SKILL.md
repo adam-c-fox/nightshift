@@ -8,7 +8,7 @@ Prep one Linear ticket with the user so a nightshift agent can finish it without
 
 The agent sees the ticket's description and comments, plus the title and bullets in `projects/<project>/tonight.md`. Comments reach it as a raw thread, oldest first, with no sign of which points were settled, so every decision goes into the description.
 
-Run the nightshift commands below from its checkout root, where `package.json` names `nightshift` and `projects/example/` exists. If invoked elsewhere, resolve this skill's directory through any symlink and use its great-grandparent as the checkout root. If the skill is a standalone copy, ask the user for the checkout path.
+Run the nightshift commands below from its checkout root, where `package.json` names `nightshift` and `templates/project/` exists. If invoked elsewhere, resolve this skill's directory through any symlink and use its great-grandparent as the checkout root. If the skill is a standalone copy, ask the user for the checkout path.
 
 Discover the connected Linear tools for fetching an issue, listing its comments, and updating its description, assignee and state. Tool names and schemas vary by connector; load deferred tools with the host's discovery tool and use their actual schemas. The operation names below describe intent. If no connected tool supports an operation, ask the user to connect Linear and stop before changing the ticket.
 

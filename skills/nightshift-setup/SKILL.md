@@ -8,10 +8,10 @@ disable-model-invocation: true
 
 Run from the root of a repo that should become a nightshift project. You're done when `projects/<name>/` loads, validation meets step 6, and the user has a report of each **gap** (a way this repo doesn't fit what nightshift can run).
 
-Resolve this skill's directory through any symlink, then set `$NS` to its grandparent, the nightshift checkout. Verify that `$NS/package.json` names `nightshift` and `$NS/projects/example/` exists. If the installed skill is a standalone copy, ask the user for the checkout path. Keep the target repo path separately; all project files go under `$NS`, and all nightshift commands run from `$NS`. The checkout is the source of truth for the project format:
+Resolve this skill's directory through any symlink, then set `$NS` to its grandparent, the nightshift checkout. Verify that `$NS/package.json` names `nightshift` and `$NS/templates/project/` exists. If the installed skill is a standalone copy, ask the user for the checkout path. Keep the target repo path separately; all project files go under `$NS`, and all nightshift commands run from `$NS`. The checkout is the source of truth for the project format:
 
 - `$NS/docs/setup.md`, section "Projects", says what each file in a project folder does.
-- `$NS/projects/example/` holds the templates.
+- `$NS/templates/project/` holds the templates.
 - `$NS/AGENTS.md` holds the generic agent instructions. A project's `AGENTS.md` is appended after it, so it should only add to it or override it.
 
 ## 1. Gather
@@ -36,7 +36,7 @@ A repo on another PR host is a **blocker**. Stop before writing files and tell t
 
 The night exports exactly one service URL, `TEST_DATABASE_URL`, which the project's `testDb` script prints when called with `up`. Find out how the repo's tests get a database: env var names, compose services, test setup files.
 
-- If tests need Postgres, copy `$NS/projects/example/test-db.sh`. Give it a container `NAME` and host port that no other project uses (`grep -h "127.0.0.1:" $NS/projects/*/test-db.sh`). Take the Postgres version, user and database name from the repo's own compose or test config.
+- If tests need Postgres, copy `$NS/templates/project/test-db.sh`. Give it a container `NAME` and host port that no other project uses (`grep -h "127.0.0.1:" $NS/projects/*/test-db.sh`). Take the Postgres version, user and database name from the repo's own compose or test config.
 - It's a gap if tests read a variable other than `TEST_DATABASE_URL`, or need another service (Redis, a queue, cloud emulators).
 
 ## 4. Baseline
@@ -85,7 +85,7 @@ The baseline runs unsandboxed, but night agents run sandboxed. Their network all
 ## 6. Validate
 
 ```sh
-cd "$NS" && npx tsx -e "import {fileChecks} from './src/dashboard/project-checks.ts'; console.log(JSON.stringify(fileChecks('<name>', {projectsDir: 'projects', exampleDir: 'projects/example'}), null, 1))"
+cd "$NS" && npx tsx -e "import {fileChecks} from './src/dashboard/project-checks.ts'; console.log(JSON.stringify(fileChecks('<name>', {projectsDir: 'projects', exampleDir: 'templates/project'}), null, 1))"
 ```
 
 Fix and re-run until every check is `pass`. If the user chose an empty `BRANCH_PREFIX`, accept a `.env` warning only when its `keys.missing` contains that key alone, and record it in the report. The checker treats the example's branch-prefix key as required even though the runner permits an empty prefix. Resolve every other missing key or failed check before finishing.

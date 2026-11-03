@@ -9,8 +9,6 @@ export const LEVEL_COLORS: Record<CheckLevel, string> = {
   fail: "#ef4444",
 };
 
-const TEMPLATE_COLOR = "#6b7280";
-const TEMPLATE_PROJECT = "example";
 const ALL_PASS = "All checks pass";
 
 const PROJECTS_CSS = `
@@ -28,17 +26,13 @@ export function projectsListHTML(
   projects: { name: string; level: CheckLevel; reason: string }[],
 ): string {
   const rows = projects
-    .map((project) => {
-      const tag =
-        project.name === TEMPLATE_PROJECT
-          ? ` ${badge("template", TEMPLATE_COLOR)}`
-          : "";
-      return `<tr>
-  <td data-label="Name"><a href="/projects/${encodeURIComponent(project.name)}">${esc(project.name)}</a>${tag}</td>
+    .map(
+      (project) => `<tr>
+  <td data-label="Name"><a href="/projects/${encodeURIComponent(project.name)}">${esc(project.name)}</a></td>
   <td data-label="Status">${badge(project.level, LEVEL_COLORS[project.level])}</td>
   <td data-label="Reason">${esc(project.reason || ALL_PASS)}</td>
-</tr>`;
-    })
+</tr>`,
+    )
     .join("\n");
   const table = projects.length
     ? `<table class="tickets"><thead><tr><th>Name</th><th>Status</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table>`

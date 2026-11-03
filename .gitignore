@@ -7,4 +7,3 @@ state/
 *.log
 .DS_Store
 projects/*
-!projects/example/

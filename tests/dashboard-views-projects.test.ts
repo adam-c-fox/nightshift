@@ -34,10 +34,8 @@ describe("projectsListHTML", () => {
     expect(html).toContain("#22c55e");
   });
 
-  it("shows the reason and tags the example project as a template", () => {
+  it("shows the reason", () => {
     expect(html).toContain(".env: missing CLAUDE_CODE_OAUTH_TOKEN");
-    expect(html).toContain("template");
-    expect(html.match(/>template</g)).toHaveLength(1);
   });
 
   it("shows an empty state", () => {

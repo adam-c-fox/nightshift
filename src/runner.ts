@@ -594,7 +594,7 @@ function selectProject(): { args: RunArgs; project: Project } {
 
 const claimedByEarlierProjects = (projectName: string): Set<string> => {
   const claimed = new Set<string>();
-  for (const name of listProjects().filter(n => n !== "example" && n < projectName)) {
+  for (const name of listProjects().filter(n => n < projectName)) {
     try {
       for (const repo of Object.values(loadProject(name).repos)) claimed.add(path.resolve(repo.path));
     } catch (e) {

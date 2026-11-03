@@ -19,6 +19,7 @@ import {
 } from "../src/dashboard/sources.js";
 import { openNightBudget } from "../src/budget.js";
 import { buildPrWebUrl } from "../src/pr.js";
+import { ROOT } from "../src/state.js";
 import type { NightRecord } from "../src/types.js";
 
 const PR_URL = "https://dev.azure.com/o/P/_git/app/pullrequest/7";
@@ -575,14 +576,15 @@ describe("projects", () => {
     expect(sources.defaultProject()).toBe("acme");
   });
 
-  it("defaults to the first project that is not example", () => {
+  it("defaults to the first project", () => {
     expect(sources.defaultProject()).toBe("acme");
     write(join(root, ".env"), "NIGHTSHIFT_PROJECT=gone\n");
     expect(sources.defaultProject()).toBe("acme");
   });
 
-  it("has no default when only example exists", () => {
+  it("has no default when there are no projects", () => {
     rmSync(join(root, "projects/acme"), { recursive: true });
+    rmSync(join(root, "projects/example"), { recursive: true });
     expect(sources.defaultProject()).toBeUndefined();
   });
 });
@@ -634,7 +636,7 @@ describe("defaultDeps", () => {
       projectsDir: "/data/projects",
       reportsDir: "/data/reports",
       logsDir: "/data/logs",
-      exampleDir: "/data/projects/example",
+      exampleDir: join(ROOT, "templates/project"),
       state: {
         prep: "/data/state/prep.json",
         actions: "/data/state/actions.json",
