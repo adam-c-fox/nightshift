@@ -17,7 +17,7 @@ import { parseRunArgs, RUN_USAGE, type RunArgs } from "./args.js";
 import { listProjects, loadAllProjects, loadProject, NIGHT_DIR_NAME, projectEnvFiles, type Project } from "./project.js";
 import { deriveOutcome } from "./status.js";
 import { az, createAndCheckPR, orgUrl, originUrl, prListArgs, repoNameFromRemote, type AzPullRequest, existingPrWebUrl, findOpenTicketPr, commitSubject, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
-import { applyThreadActions, listThreads, mergeSweep, planThreadActions, postReply, resolveThread, sweepPrComments, type SweepResult } from "./pr-comments.js";
+import { applyThreadActions, listThreads, planThreadActions, postReply, resolveThread, sweepPrComments, type SweepResult } from "./pr-comments.js";
 import { loadPrCommentState, prKey, pruneClosed, savePrCommentState, type PrCommentState } from "./pr-comment-state.js";
 import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";

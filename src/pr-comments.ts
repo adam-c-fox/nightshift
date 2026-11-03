@@ -189,17 +189,6 @@ export function sweepPrComments(repos: Project["repos"], state: PrCommentState, 
   return { items, held, prsScanned, active };
 }
 
-export function mergeSweep(tickets: Ticket[], items: Ticket[]): Ticket[] {
-  const absorbed = new Set<Ticket>();
-  const merged = tickets.map(t => {
-    const item = items.find(i => i.id === t.id && i.repo === t.repo);
-    if (!item) return t;
-    absorbed.add(item);
-    return { ...t, context: [...t.context, ...item.context], prComments: item.prComments };
-  });
-  return [...items.filter(i => !absorbed.has(i)), ...merged];
-}
-
 export interface SettleInput { threads: PendingThread[]; reports: ThreadReport[]; pushed: boolean; verified: boolean; changed: boolean }
 
 export interface PlannedAction {

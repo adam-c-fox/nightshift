@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  applyThreadActions, listThreads, mergeSweep, planThreadActions, sweepPrComments, pendingThreads, postReply, resolveThread, sweepTicketId, threadContextLines,
+  applyThreadActions, listThreads, planThreadActions, sweepPrComments, pendingThreads, postReply, resolveThread, sweepTicketId, threadContextLines,
   threadListArgs, threadReplyArgs, threadStatusArgs, ticketIdFromBranch,
   type AzComment, type AzThread, type PlannedAction, type SweepDeps, type ThreadTarget,
 } from "../src/pr-comments.js";
@@ -286,29 +286,6 @@ describe("sweepPrComments", () => {
   it("reports an error when listing PRs throws", () => {
     const result = sweepPrComments(repos, {}, sweepDeps([], {}, { listPrs: () => { throw new Error("boom"); } }));
     expect(result.error).toContain("couldn't list PRs for api: boom");
-  });
-});
-
-describe("mergeSweep", () => {
-  const ticket = (id: string, repo: string, context: string[]): Ticket => ({ id, name: id, repo, context });
-  const item = (id: string, repo: string): Ticket => ({
-    ...ticket(id, repo, ["thread lines"]),
-    prComments: { pr: { prId: 1, sourceBranch: "b", targetBranch: "main", autoComplete: false }, repoName: repo, title: "t", threads: [] },
-  });
-
-  it("puts sweep items first", () => {
-    expect(mergeSweep([ticket("ENG-1", "api", [])], [item("ENG-2", "api")]).map(t => t.id)).toEqual(["ENG-2", "ENG-1"]);
-  });
-
-  it("folds an item into the tonight ticket with the same id and repo", () => {
-    const merged = mergeSweep([ticket("ENG-1", "api", ["own"]), ticket("ENG-3", "api", [])], [item("ENG-1", "api")]);
-    expect(merged.map(t => t.id)).toEqual(["ENG-1", "ENG-3"]);
-    expect(merged[0].context).toEqual(["own", "thread lines"]);
-    expect(merged[0].prComments?.pr.prId).toBe(1);
-  });
-
-  it("does not merge across repos", () => {
-    expect(mergeSweep([ticket("ENG-1", "web", [])], [item("ENG-1", "api")])).toHaveLength(2);
   });
 });
 

@@ -25,6 +25,11 @@ describe("nightOrder", () => {
     expect(ordered[1]).toMatchObject({ context: ["thread"], prComments: comments });
   });
 
+  it("does not absorb a sweep item of the same project and id but another repo", () => {
+    const sweeps = [{ project: "eoe", items: [ticket("A-1", "", { repo: "web" })] }];
+    expect(nightOrder([ticket("A-1", "eoe", { repo: "api" })], sweeps).map(t => t.repo)).toEqual(["web", "api"]);
+  });
+
   it("does not absorb a sweep item of another project with the same id", () => {
     const sweeps = [{ project: "memosum", items: [ticket("A-1", "")] }];
     expect(nightOrder([ticket("A-1", "eoe")], sweeps).map(t => t.project)).toEqual(["memosum", "eoe"]);
