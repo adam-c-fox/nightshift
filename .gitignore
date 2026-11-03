@@ -7,3 +7,5 @@ state/
 *.log
 .DS_Store
 projects/*
+/tonight.md
+.superpowers/

@@ -6,6 +6,7 @@ export interface Ticket {
   name: string;          // e.g. "CSV export fix"
   context: string[];     // bullet lines from tonight.md
   repo: string;
+  project?: string;
   base?: string;         // ID of an earlier ticket this one is stacked on
   prComments?: PrCommentWork;
 }

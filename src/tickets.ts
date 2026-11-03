@@ -8,23 +8,28 @@ export interface TicketRepos {
   defaultRepo: string;
 }
 
-const COMMENT = /<!--[\s\S]*?-->/g;
-const REPO_LINE = new RegExp(`^repo:\\s*(${REPO_NAME_PATTERN})\\s*$`, "i");
+export const COMMENT = /<!--[\s\S]*?-->/g;
+export const REPO_LINE = new RegExp(`^repo:\\s*(${REPO_NAME_PATTERN})\\s*$`, "i");
 const ALLOWANCE_LINE = /^allowance:\s*(.*?)\s*$/i;
 export const TICKET_ID_PATTERN = "[A-Z]+-\\d+";
 export const TICKET_ID = new RegExp(`^${TICKET_ID_PATTERN}$`);
-const HEADING = new RegExp(`^##\\s+(${TICKET_ID_PATTERN})\\s*[–-]\\s*(.*)`);
+export const HEADING = new RegExp(`^##\\s+(${TICKET_ID_PATTERN})\\s*[–-]\\s*(.*)`);
 const BASE_LINE = new RegExp(`^base:\\s*(${TICKET_ID_PATTERN})\\s*$`, "i");
+const PROJECT_LINE = /^project:\s*(\S+)\s*$/i;
 
-export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
+export function loadFile<T>(file: string, parse: (raw: string) => T, whenMissing: T): T {
   let raw: string;
   try {
     raw = readFileSync(file, "utf-8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return whenMissing;
     throw e;
   }
-  return parseTickets(raw, repos);
+  return parse(raw);
+}
+
+export function loadTickets(file: string, repos: TicketRepos): Ticket[] {
+  return loadFile(file, (raw) => parseTickets(raw, repos), []);
 }
 
 export function loadAllowance(file: string): number | undefined {
@@ -47,10 +52,22 @@ export function parseAllowance(raw: string): number | undefined {
   return percent;
 }
 
+export type ParsedTicket = Omit<Ticket, "repo"> & { repo?: string };
+
 export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
+  const tickets = parseSections(raw).map(({ project: _project, ...ticket }) => ({
+    ...ticket,
+    repo: ticket.repo ?? repos.defaultRepo,
+  }));
+  validateRepos(tickets, repos.names);
+  validateBases(tickets);
+  return tickets;
+}
+
+export function parseSections(raw: string): ParsedTicket[] {
   const lines = raw.replace(COMMENT, "").split(/\r?\n/);
-  const tickets: Ticket[] = [];
-  let current: Omit<Ticket, "context"> | null = null;
+  const tickets: ParsedTicket[] = [];
+  let current: Omit<ParsedTicket, "context"> | null = null;
   let contextLines: string[] = [];
 
   const flush = () => {
@@ -70,7 +87,6 @@ export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
       current = {
         id: headingMatch[1],
         name: headingMatch[2].trim() || headingMatch[1],
-        repo: repos.defaultRepo,
       };
       continue;
     }
@@ -80,6 +96,12 @@ export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
     const repoMatch = trimmed.match(REPO_LINE);
     if (repoMatch && current) {
       current.repo = repoMatch[1].toLowerCase();
+      continue;
+    }
+
+    const projectMatch = trimmed.match(PROJECT_LINE);
+    if (projectMatch && current) {
+      current.project = projectMatch[1];
       continue;
     }
 
@@ -98,29 +120,27 @@ export function parseTickets(raw: string, repos: TicketRepos): Ticket[] {
   }
 
   flush();
-  validateRepos(tickets, repos.names);
-  validateBases(tickets);
   return tickets;
 }
 
-function validateRepos(tickets: Ticket[], names: string[]): void {
+export function validateRepos(tickets: Ticket[], names: string[]): void {
   for (const t of tickets) {
     if (!names.includes(t.repo)) throw new Error(`Ticket ${t.id}: unknown repo "${t.repo}" (known: ${names.join(", ")})`);
   }
 }
 
-function validateBases(tickets: Ticket[]): void {
+export function validateBases(tickets: Ticket[]): void {
   tickets.forEach((ticket, i) => {
     if (!ticket.base) return;
     const fail = (reason: string) => { throw new Error(`Ticket ${ticket.id}: base ${ticket.base} ${reason}`); };
     if (ticket.base === ticket.id) fail("cannot be the ticket itself");
     const parent = tickets.slice(0, i).find(t => t.id === ticket.base);
     if (!parent) fail("must be a ticket listed earlier in the file");
-    else if (parent.repo !== ticket.repo) fail("must be in the same repo");
+    else if (parent.repo !== ticket.repo || parent.project !== ticket.project) fail("must be in the same repo");
   });
 }
 
-function headerLines(raw: string): { lines: string[]; masked: string[]; hasTickets: boolean } {
+export function headerLines(raw: string): { lines: string[]; masked: string[]; hasTickets: boolean } {
   const lines = raw.split("\n");
   const masked = raw.replace(COMMENT, c => c.replace(/[^\n]/g, " ")).split("\n");
   const firstTicket = masked.findIndex(line => HEADING.test(line.trim()));
