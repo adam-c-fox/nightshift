@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { parseUsageSummary, type UsageSummary } from "../budget.js";
+import { nightlyAllowancePercent, parseUsageSummary, type UsageSummary } from "../budget.js";
 import { envLookup, parseEnv } from "../env.js";
 import {
   fetchIssueSnapshots,
@@ -382,7 +382,7 @@ export function createSources(deps: DashboardDeps): Sources {
     );
     return ok(
       buildClockOff({
-        project,
+        project: { ...project, allowancePercent: nightlyAllowancePercent() },
         todo,
         tonight,
         snapshots,

@@ -54,6 +54,7 @@ function goodConfig(overrides: Record<string, unknown> = {}) {
     repos: { app: { path: repo, checks: [{ name: "t", command: "x" }], description: "d" } },
     testDb: "db.sh",
     linearTeams: ["DEMO"],
+    linearProjects: ["Demo"],
     ...overrides,
   };
 }

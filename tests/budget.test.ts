@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   apiUsageSource, budgetUsedPct, sessionAbortReason, sessionWaitMs, waitForSessionCapacity, cliUsageSource, closedBudget, formatUsageAttempts, openNightBudget,
-  parseRateLimitHeaders, parseUsageOutput, parseUsageSummary, snapshotUsage, UsageUnavailableError, usageSummary, withCurrentUsage,
+  nightlyAllowancePercent, resolveAllowance, parseRateLimitHeaders, parseUsageOutput, parseUsageSummary, snapshotUsage, UsageUnavailableError, usageSummary, withCurrentUsage,
   type UsageCommandResult,
 } from "../src/budget.js";
 
@@ -286,5 +286,33 @@ describe("5-hour session guard", () => {
   it("remembers the latest session reading on the night budget", () => {
     const start = openNightBudget({ weeklyPercent: 3, resetInfo: "" }, 15);
     expect(withCurrentUsage(start, { weeklyPercent: 4, resetInfo: "", sessionPercent: 42 }).sessionPercent).toBe(42);
+  });
+});
+
+describe("nightlyAllowancePercent", () => {
+  it("defaults to 15", () => {
+    expect(nightlyAllowancePercent(() => undefined)).toBe(15);
+  });
+
+  it("reads NIGHTLY_ALLOWANCE_PERCENT", () => {
+    expect(nightlyAllowancePercent(name => (name === "NIGHTLY_ALLOWANCE_PERCENT" ? "30" : undefined))).toBe(30);
+  });
+
+  it.each(["0", "101", "abc", "12.5"])("rejects %s", value => {
+    expect(() => nightlyAllowancePercent(() => value)).toThrow(/NIGHTLY_ALLOWANCE_PERCENT must be a whole number from 1 to 100/);
+  });
+});
+
+describe("resolveAllowance", () => {
+  it("takes the header over the root default", () => {
+    expect(resolveAllowance(undefined, 40, 15)).toEqual({ percent: 40, source: "tonight.md" });
+  });
+
+  it("takes the flag over the header", () => {
+    expect(resolveAllowance(50, 40, 15)).toEqual({ percent: 50, source: "--allowance override" });
+  });
+
+  it("falls back to the root default", () => {
+    expect(resolveAllowance(undefined, undefined, 15)).toEqual({ percent: 15, source: "nightly default" });
   });
 });

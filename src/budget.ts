@@ -3,6 +3,8 @@ import path from "node:path";
 import type { NightBudget } from "./types.js";
 import { CLAUDE_TOKEN } from "./agent-env.js";
 import { TIME_ZONE } from "./time.js";
+import { getEnv } from "./env.js";
+import { isValidPercent } from "./project.js";
 
 const USAGE_ATTEMPTS = 3;
 const USAGE_RETRY_DELAY_MS = 15_000;
@@ -294,4 +296,26 @@ export function budgetGateMessage(b: NightBudget): string {
            `Remaining tickets will be skipped. Reset: ${b.resetInfo}.`;
   }
   return `Budget OK – weekly usage at ${b.currentPct}% (night started at ${b.startPct}%, cap ${b.capPct}%).`;
+}
+
+const DEFAULT_NIGHTLY_ALLOWANCE_PERCENT = 15;
+
+export function nightlyAllowancePercent(lookup: (name: string) => string | undefined = getEnv): number {
+  const raw = lookup("NIGHTLY_ALLOWANCE_PERCENT");
+  if (raw === undefined) return DEFAULT_NIGHTLY_ALLOWANCE_PERCENT;
+  const percent = Number(raw);
+  if (!/^\d+$/.test(raw) || !isValidPercent(percent)) {
+    throw new Error(`NIGHTLY_ALLOWANCE_PERCENT must be a whole number from 1 to 100, got "${raw}"`);
+  }
+  return percent;
+}
+
+export function resolveAllowance(
+  flag: number | undefined,
+  header: number | undefined,
+  root: number,
+): { percent: number; source: "--allowance override" | "tonight.md" | "nightly default" } {
+  if (flag !== undefined) return { percent: flag, source: "--allowance override" };
+  if (header !== undefined) return { percent: header, source: "tonight.md" };
+  return { percent: root, source: "nightly default" };
 }

@@ -5,7 +5,7 @@ export const PROJECTS_DIR = path.resolve(import.meta.dirname, "..", "projects");
 export const REPO_NAME_PATTERN = "[a-z0-9][a-z0-9_-]*";
 export const REPO_NAME = new RegExp(`^${REPO_NAME_PATTERN}$`);
 export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const DEFAULT_ALLOWANCE_PERCENT = 15;
+export const NIGHT_DIR_NAME = "night";
 export const LINEAR_TEAM_KEY = /^[A-Z][A-Z0-9]*$/;
 
 export interface RepoCommand {
@@ -34,7 +34,7 @@ export interface Project {
   defaultRepo: string;
   instructions: string;
   testDbScript?: string;
-  allowancePercent: number;
+  linearProjects: string[];
   linearTeams?: string[];
   ticketsFile: string;
   envFile: string;
@@ -45,6 +45,7 @@ type RawConfig = {
   defaultRepo?: unknown;
   testDb?: unknown;
   allowancePercent?: unknown;
+  linearProjects?: unknown;
   linearTeams?: unknown;
 };
 
@@ -182,9 +183,12 @@ export function parseProjectConfig(
     resolveTestDbPath(dir, config.testDb, exists),
   );
 
-  const allowancePercent = config.allowancePercent ?? DEFAULT_ALLOWANCE_PERCENT;
-  if (!isValidPercent(allowancePercent))
-    fail("allowancePercent must be a whole number from 1 to 100");
+  if (config.allowancePercent !== undefined)
+    fail("allowancePercent moved to NIGHTLY_ALLOWANCE_PERCENT in the root .env");
+
+  const linearProjects = config.linearProjects;
+  if (!isStringList(linearProjects) || linearProjects.length === 0)
+    fail("linearProjects must be a non-empty list of Linear project names");
 
   const linearTeams = config.linearTeams ?? [];
   if (
@@ -203,7 +207,7 @@ export function parseProjectConfig(
     repos,
     defaultRepo,
     testDbScript,
-    allowancePercent: allowancePercent as number,
+    linearProjects: linearProjects as string[],
     ...(teams.length > 0 ? { linearTeams: teams } : {}),
     ticketsFile: path.join(dir, "tonight.md"),
     envFile: path.join(dir, ".env"),
@@ -237,6 +241,9 @@ export function readRawProjectConfig(
   if (!PROJECT_NAME.test(name)) {
     throw new Error(`invalid project name "${name}"`);
   }
+  if (name === NIGHT_DIR_NAME) {
+    throw new Error(`"${NIGHT_DIR_NAME}" is reserved for night output`);
+  }
   const dir = path.join(projectsDir, name);
   const configFile = path.join(dir, "project.json");
   if (!existsSync(configFile)) {
@@ -265,4 +272,27 @@ export function loadProject(name: string, projectsDir = PROJECTS_DIR): Project {
       ? readFileSync(agentsFile, "utf-8")
       : "",
   };
+}
+
+export function loadAllProjects(projectsDir = PROJECTS_DIR): Project[] {
+  const projects = listProjects(projectsDir).map((name) => loadProject(name, projectsDir));
+  const owners = new Map<string, string>();
+  for (const project of projects) {
+    for (const linearProject of project.linearProjects) {
+      const owner = owners.get(linearProject);
+      if (owner !== undefined) {
+        throw new Error(`Linear project "${linearProject}" is claimed by both ${owner} and ${project.name}`);
+      }
+      owners.set(linearProject, project.name);
+    }
+  }
+  return projects;
+}
+
+export function projectForLinearProject(
+  projects: Pick<Project, "name" | "linearProjects">[],
+  linearProject: string | null,
+): string | undefined {
+  if (linearProject === null) return undefined;
+  return projects.find((p) => p.linearProjects.includes(linearProject))?.name;
 }

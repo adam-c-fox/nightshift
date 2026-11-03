@@ -19,10 +19,10 @@ Resolve this skill's directory through any symlink, then set `$NS` to its grandp
 1. Find each repo. Run `git rev-parse --show-toplevel` here, then read the repo's own `CLAUDE.md`/`AGENTS.md`, its package manifests and lockfiles, and its CI pipeline files (`.github/workflows`, `azure-pipelines.yml` and the like) to learn its layout and how its tests run. The CI files are the source for `setup` and `checks`: lift the exact commands CI runs, prefer check-only variants (e.g. `--check`), and drop deploy and pack steps.
 2. Ask the user everything in one `AskUserQuestion`, with your inferred default as the first option:
    - Other repos in the project, as absolute paths. A Terraform repo beside an app repo is common.
-   - The project name. It must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`, can't be `new`, and can't already exist in `$NS/projects/`.
+   - The project name. It must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`, can't be `new` or `night`, and can't already exist in `$NS/projects/`.
    - Each repo's key, matching `^[a-z0-9][a-z0-9_-]*$` (e.g. `app`, `infra`), and its `setup` and `checks` commands (from CI) with any `in` globs.
    - `linearTeams`, as team keys like `ENG`. Leave it out to list every team.
-   - `allowancePercent`, default 15.
+   - `linearProjects`, the Linear project name(s) whose tickets belong to this project. No Linear project may belong to two nightshift projects.
 
 ## 2. Fit check
 

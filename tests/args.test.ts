@@ -21,8 +21,8 @@ describe("extractFlag", () => {
 
 describe("parseRunArgs", () => {
   it("parses all flags in any order", () => {
-    expect(parseRunArgs(["--allowance", "100", "--dry-run", "--project", "acme"]))
-      .toEqual({ dryRun: true, project: "acme", allowancePercent: 100 });
+    expect(parseRunArgs(["--allowance", "100", "--dry-run"]))
+      .toEqual({ dryRun: true, allowancePercent: 100 });
   });
 
   it("leaves unset flags undefined", () => {
@@ -35,8 +35,8 @@ describe("parseRunArgs", () => {
     },
   );
 
-  it("rejects --project without a name", () => {
-    expect(() => parseRunArgs(["--project", "--dry-run"])).toThrow(/--project/);
+  it.each([[["--project", "x"]], [["--project", "--dry-run"]]])("rejects the removed --project in %j", (argv) => {
+    expect(() => parseRunArgs(argv)).toThrow(/--project was removed: a night runs every project/);
   });
 
   it("rejects unknown flags", () => {

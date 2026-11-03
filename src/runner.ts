@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } fr
 import path from "node:path";
 import { REVIEW_LENSES, lensStage, roundStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type LinearComment, type LinearTicket, type NightBudget, type RunUsage, type PrCommentWork, type ThreadReport } from "./types.js";
 import { archiveTickets, loadAllowance, loadTickets } from "./tickets.js";
-import { startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
+import { nightlyAllowancePercent, startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
 import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
 import { openCodexBudget, readCodexUsage, runCodexFinder, runCodexLens } from "./codex.js";
 import { runAgent, runConfirm, runDedupe, runFinder, runFix, runFixReview, type TicketBrief } from "./claude.js";
@@ -581,9 +581,9 @@ function selectProject(): { args: RunArgs; project: Project } {
     process.exit(2);
   }
   try {
-    const name = args.project ?? getEnv("NIGHTSHIFT_PROJECT");
+    const name = getEnv("NIGHTSHIFT_PROJECT");
     if (!name) {
-      throw new Error(`no project selected: pass --project <name> or set NIGHTSHIFT_PROJECT (available: ${listProjects().join(", ") || "none"})`);
+      throw new Error(`no project selected: set NIGHTSHIFT_PROJECT (available: ${listProjects().join(", ") || "none"})`);
     }
     return { args, project: loadProject(name) };
   } catch (e) {
@@ -682,8 +682,8 @@ async function main() {
       log(`ERROR loading tickets: ${ticketError}`);
     }
     try {
-      const allocationPct = args.allowancePercent ?? nightAllowance ?? project.allowancePercent;
-      const source = args.allowancePercent !== undefined ? "--allowance override" : nightAllowance !== undefined ? "tonight.md" : "project default";
+      const allocationPct = args.allowancePercent ?? nightAllowance ?? nightlyAllowancePercent();
+      const source = args.allowancePercent !== undefined ? "--allowance override" : nightAllowance !== undefined ? "tonight.md" : "nightly default";
       budget = startNightBudget(allocationPct);
       log(`Tonight's allocation: ${allocationPct}% (${source}). Started at ${budget.startPct}%, cap ${budget.capPct}%.`);
     } catch (e) {

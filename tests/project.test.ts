@@ -4,13 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   listProjects,
+  loadAllProjects,
   loadProject,
-  parseProjectConfig,
+  parseProjectConfig as parseConfigStrict,
+  projectForLinearProject,
   projectEnvFiles,
   readRawProjectConfig,
 } from "../src/project.js";
 
 const everything = () => true;
+const parseProjectConfig = (name: string, dir: string, raw: unknown, exists: (p: string) => boolean) =>
+  parseConfigStrict(name, dir, { linearProjects: ["Acme"], ...(raw as object) }, exists);
 const repos = {
   main: { path: "/r/app", description: "app", checks: [{ name: "tests", command: "npm test" }] },
   infra: {
@@ -48,7 +52,7 @@ describe("parseProjectConfig", () => {
       repos: parsedRepos,
       defaultRepo: "main",
       testDbScript: "/p/acme/test-db.sh",
-      allowancePercent: 15,
+      linearProjects: ["Acme"],
       ticketsFile: "/p/acme/tonight.md",
       envFile: "/p/acme/.env",
     });
@@ -167,15 +171,16 @@ describe("parseProjectConfig", () => {
     ).toThrow(/db\.sh/);
   });
 
-  it.each([0, 101, 12.5, "15"])("rejects allowancePercent %s", (pct) => {
+  it("rejects allowancePercent, which moved to the root .env", () => {
+    expect(() => parse({ repos: { app: repos.main }, allowancePercent: 15 })).toThrow(
+      /allowancePercent moved to NIGHTLY_ALLOWANCE_PERCENT in the root \.env/,
+    );
+  });
+
+  it.each([undefined, [], [""], "Acme"])("rejects linearProjects %j", (value) => {
     expect(() =>
-      parseProjectConfig(
-        "a",
-        "/p/a",
-        { repos: { app: repos.main }, allowancePercent: pct },
-        everything,
-      ),
-    ).toThrow(/allowancePercent/);
+      parseConfigStrict("a", "/p/a", { repos: { app: repos.main }, linearProjects: value }, everything),
+    ).toThrow(/linearProjects must be a non-empty list of Linear project names/);
   });
 
   it("rejects a project with no repos", () => {
@@ -264,6 +269,7 @@ describe("loadProject", () => {
       join(root, "acme", "project.json"),
       JSON.stringify({
         repos: { app: { path: repo, description: "app", checks: [{ name: "t", command: "x" }] } },
+        linearProjects: ["Acme"],
       }),
     );
     writeFileSync(join(root, "acme", "AGENTS.md"), "# Acme\n");
@@ -312,5 +318,51 @@ describe("loadProject", () => {
     expect(() => loadProject("acme", root)).toThrow(
       /project "acme": .*project\.json is not valid JSON: /,
     );
+  });
+
+  it("reserves the name night", () => {
+    expect(() => readRawProjectConfig("night", setup())).toThrow(/"night" is reserved/);
+  });
+});
+
+describe("loadAllProjects", () => {
+  const projectIn = (root: string, name: string, linearProjects: string[]) => {
+    const repo = mkdtempSync(join(tmpdir(), "repo-"));
+    mkdirSync(join(root, name));
+    writeFileSync(
+      join(root, name, "project.json"),
+      JSON.stringify({
+        repos: { app: { path: repo, description: "app", checks: [{ name: "t", command: "x" }] } },
+        linearProjects,
+      }),
+    );
+  };
+
+  it("loads every project", () => {
+    const root = mkdtempSync(join(tmpdir(), "projects-"));
+    projectIn(root, "a", ["One"]);
+    projectIn(root, "b", ["Two"]);
+    expect(loadAllProjects(root).map((p) => p.name)).toEqual(["a", "b"]);
+  });
+
+  it("rejects a Linear project claimed by two projects", () => {
+    const root = mkdtempSync(join(tmpdir(), "projects-"));
+    projectIn(root, "a", ["Shared"]);
+    projectIn(root, "b", ["Shared"]);
+    expect(() => loadAllProjects(root)).toThrow(
+      'Linear project "Shared" is claimed by both a and b',
+    );
+  });
+});
+
+describe("projectForLinearProject", () => {
+  const projects = [{ name: "eoe", linearProjects: ["Client Implementation Automation"] }];
+
+  it("finds the owning project", () => {
+    expect(projectForLinearProject(projects, "Client Implementation Automation")).toBe("eoe");
+  });
+
+  it.each([null, "Unknown"])("returns undefined for %j", (name) => {
+    expect(projectForLinearProject(projects, name)).toBeUndefined();
   });
 });

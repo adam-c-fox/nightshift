@@ -19,7 +19,7 @@ export interface TicketPr {
 export type PrLookup = TicketPr | null | "unknown";
 
 export interface ClockOffInput {
-  project: Pick<Project, "name" | "allowancePercent" | "linearTeams">;
+  project: Pick<Project, "name" | "linearTeams"> & { allowancePercent: number };
   todo: Loaded<TodoIssue[]>;
   tonight: Loaded<{ tickets: Ticket[]; allowance?: number }>;
   snapshots: Loaded<Record<string, IssueSnapshot | null>>;

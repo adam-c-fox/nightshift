@@ -187,6 +187,7 @@ function writeAcme() {
     JSON.stringify({
       repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } },
       linearTeams: ["DEMO"],
+      linearProjects: ["Demo"],
     }),
   );
   write(
@@ -225,7 +226,7 @@ beforeEach(() => {
   writeAcme();
   write(
     join(root, "projects/example/project.json"),
-    JSON.stringify({ repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } } }),
+    JSON.stringify({ repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } }, linearProjects: ["Example"] }),
   );
   write(join(root, "projects/example/.env.example"), "LINEAR_API_KEY=\n");
   write(join(root, "reports/acme/nightshift-2026-10-02.html"), "<html></html>");
@@ -396,6 +397,7 @@ describe("clockOff", () => {
         },
         defaultRepo: "app",
         linearTeams: ["DEMO"],
+        linearProjects: ["Demo"],
       }),
     );
     write(
