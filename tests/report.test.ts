@@ -832,3 +832,29 @@ describe("report PR comment sweep", () => {
     expect(generateHTML(session({}))).not.toContain("PRs scanned");
   });
 });
+
+describe("report project sections", () => {
+  const forProject = (id: string, project?: string) => ticketResult({ ticket: { id, name: id, context: [], repo: "main", ...(project ? { project } : {}) } });
+
+  it("groups tickets under one heading per project, in session order", () => {
+    const html = generateHTML(session({
+      projects: ["eoe", "memosum"],
+      tickets: [forProject("M-1", "memosum"), forProject("E-1", "eoe"), forProject("E-2", "eoe")],
+    }));
+    const eoe = html.indexOf('<h2 class="project-heading">eoe</h2>');
+    const memosum = html.indexOf('<h2 class="project-heading">memosum</h2>');
+    expect(eoe).toBeGreaterThan(-1);
+    expect(memosum).toBeGreaterThan(eoe);
+    const between = html.slice(eoe, memosum);
+    expect(between).toContain("E-1");
+    expect(between).toContain("E-2");
+    expect(between).not.toContain("M-1");
+    expect(html.slice(memosum)).toContain("M-1");
+  });
+
+  it("renders an old session without project headings", () => {
+    const html = generateHTML(session({ tickets: [forProject("E-1")] }));
+    expect(html).toContain("E-1");
+    expect(html).not.toContain("<h2 class=\"project-heading\"");
+  });
+});

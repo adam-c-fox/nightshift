@@ -82,6 +82,7 @@ function night(extra: Partial<NightRow> = {}): NightRow {
   return {
     reportId: REPORT_ID,
     project: "acme",
+    projects: ["acme"],
     date: "2026-10-02",
     href: REPORT_HREF,
     linkOnly: false,
@@ -275,6 +276,7 @@ describe("nightsHTML", () => {
     const html = nightsHTML([
       night({
         project: "legacy",
+        projects: ["legacy"],
         linkOnly: true,
         counts: undefined,
         budgetUsedPct: undefined,
@@ -287,6 +289,11 @@ describe("nightsHTML", () => {
     expect(html).toContain("—");
     expect(html).toContain(`href="${REPORT_HREF}"`);
     expect(html).not.toContain("%");
+  });
+
+  it("joins the projects of a combined night", () => {
+    const html = nightsHTML([night({ projects: ["eoe", "memosum"] })]);
+    expect(html).toContain('<td data-label="Project">eoe, memosum</td>');
   });
 
   it("shows the codex column", () => {

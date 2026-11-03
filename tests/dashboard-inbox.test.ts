@@ -264,6 +264,20 @@ describe("prRefs", () => {
     ]);
   });
 
+  it("uses the ticket's project over the report's", () => {
+    const nightFile = night(
+      "night/nightshift-2026-10-04",
+      record([ticket("ENG-9", "needs_review", {
+        ticket: { id: "ENG-9", name: "n", context: [], repo: "web", project: "memosum" },
+        prUrl: U1,
+        prId: 11,
+      })]),
+    );
+    expect(prRefs([nightFile])).toEqual([{ url: U1, prId: 11, repo: "web", project: "memosum" }]);
+    const [item] = buildInbox([nightFile], {}, prLive);
+    expect(item.project).toBe("memosum");
+  });
+
   it("skips link-only nights", () => {
     expect(prRefs([night("acme/nightshift-2026-10-03", null)])).toEqual([]);
   });
@@ -295,12 +309,20 @@ describe("nightRows", () => {
     expect(rows[1]).toMatchObject({ outstanding: 1, suggestions: 0 });
   });
 
+  it("lists every project of a night record, else the file's project", () => {
+    const multi = night("night/nightshift-2026-10-04", record([], { projects: ["eoe", "memosum"] }));
+    expect(nightRows([multi], [])[0].projects).toEqual(["eoe", "memosum"]);
+    expect(nightRows([n1()], [])[0].projects).toEqual(["acme"]);
+    expect(nightRows([legacy], [])[0].projects).toEqual(["legacy"]);
+  });
+
   it("marks nights without a record as link-only", () => {
     const nights = [legacy, broken];
     const rows = nightRows(nights, []);
     expect(rows[0]).toEqual({
       reportId: "nightshift-2026-09-01",
       project: "legacy",
+      projects: ["legacy"],
       date: "2026-09-01",
       href: "/reports/nightshift-2026-09-01.html",
       linkOnly: true,

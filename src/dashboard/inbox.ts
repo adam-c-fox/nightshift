@@ -98,7 +98,7 @@ export function prRefs(nights: NightData[]): PrRef[] {
       if (prUrl === undefined || prId === undefined || refs.has(prUrl))
         continue;
       refs.set(prUrl, {
-        project: file.project,
+        project: result.ticket.project ?? file.project,
         repo: result.ticket.repo,
         prId,
         url: prUrl,
@@ -108,10 +108,10 @@ export function prRefs(nights: NightData[]): PrRef[] {
   return [...refs.values()];
 }
 
-function itemBase(file: NightFile, key: string): ItemBase {
+function itemBase(file: NightFile, key: string, project = file.project): ItemBase {
   return {
     reportId: file.reportId,
-    project: file.project,
+    project,
     date: file.date,
     key,
     reportHref: file.href,
@@ -172,7 +172,7 @@ function ticketItem(
 ): InboxItem {
   const threads = threadsNeedingYou(result);
   return {
-    ...itemBase(file, key),
+    ...itemBase(file, key, result.ticket.project),
     kind: "ticket",
     ticketId: result.ticket.id,
     name: result.ticket.name,
@@ -188,6 +188,7 @@ function ticketItem(
 export interface NightRow {
   reportId: string;
   project: string;
+  projects: string[];
   date: string;
   href: string;
   linkOnly: boolean;
@@ -213,6 +214,7 @@ export function nightRows(nights: NightData[], inbox: InboxItem[]): NightRow[] {
     const row: NightRow = {
       reportId: file.reportId,
       project: file.project,
+      projects: record?.projects ?? [file.project],
       date: file.date,
       href: file.href,
       linkOnly: record === null,

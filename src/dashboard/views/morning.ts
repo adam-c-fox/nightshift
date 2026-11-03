@@ -191,7 +191,7 @@ function nightRowHTML(row: NightRow): string {
   const [tickets, budget, codex, duration, suggestions, outstanding] = stats;
   return `<tr${titleAttr}>
 ${cell("Date", `${esc(row.date)}${dryRun}`)}
-${cell("Project", esc(row.project))}
+${cell("Project", esc(row.projects.join(", ")))}
 ${cell("Tickets", tickets)}
 ${cell("Budget used", budget)}
 ${cell("Codex used", codex)}

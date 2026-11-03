@@ -491,6 +491,16 @@ function budgetBarHTML(label: string, b: NightBudget, gateBanner = ""): string {
     </div>`;
 }
 
+function ticketSectionsHTML(session: SessionResult): string {
+  if (!session.projects?.length) return session.tickets.map(ticketCardHTML).join("\n");
+  const sections = session.projects.map(project => {
+    const cards = session.tickets.filter(t => t.ticket.project === project).map(ticketCardHTML).join("\n");
+    return cards && `<section class="project"><h2 class="project-heading">${esc(project)}</h2>\n${cards}</section>`;
+  });
+  const unassigned = session.tickets.filter(t => !t.ticket.project || !session.projects!.includes(t.ticket.project));
+  return [...sections, unassigned.map(ticketCardHTML).join("\n")].filter(Boolean).join("\n");
+}
+
 export function generateHTML(session: SessionResult): string {
   const counts = countTickets(session.tickets);
   const pmProblem = session.postmortem && postmortemProblem(session.postmortem);
@@ -515,9 +525,9 @@ export function generateHTML(session: SessionResult): string {
     ? `<div class="no-tasks">
          <div class="no-tasks-icon">🌙</div>
          <p>No tickets in <code>tonight.md</code>. Nothing to process.</p>
-         <p class="hint">Add tickets to <code>projects/&lt;project&gt;/tonight.md</code> before tonight's 23:00 run.</p>
+         <p class="hint">Add tickets to <code>tonight.md</code> before tonight's 23:00 run.</p>
        </div>`
-    : session.tickets.map(ticketCardHTML).join("\n");
+    : ticketSectionsHTML(session);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -547,6 +557,7 @@ export function generateHTML(session: SessionResult): string {
   .budget-fill { position: relative; height: 100%; border-radius: 5px; transition: width 0.3s; }
   .budget-marker { position: absolute; top: -3px; width: 2px; height: 16px; background: #ef4444; border-radius: 1px; }
   .gate-hit { color: #ef4444; font-weight: 600; margin-top: 0.5rem; }
+  .project-heading { font-size: 1.1rem; margin: 1.5rem 0 0.6rem; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
           margin-bottom: 0.6rem; overflow: hidden; transition: opacity 0.15s; }
   .card-header { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; cursor: pointer; list-style: none; }
