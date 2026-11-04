@@ -187,7 +187,7 @@ describe("prCreateArgs", () => {
       "repos", "pr", "create",
       "--org", "https://dev.azure.com/acme", "--project", "Proj", "--repository", "Repo",
       "--source-branch", "night/ENG-1", "--target-branch", "main",
-      "--title", "t", "--description", "d",
+      "--title", "t", "--description", "d", "--draft", "true",
     ]);
   });
 });

@@ -454,7 +454,7 @@ export function prCreateArgs(pr: PrCreateInput): string[] {
     "repos", "pr", "create",
     "--org", pr.org, "--project", pr.project, "--repository", pr.repository,
     "--source-branch", pr.sourceBranch, "--target-branch", pr.targetBranch,
-    "--title", pr.title, "--description", pr.description,
+    "--title", pr.title, "--description", pr.description, "--draft", "true",
   ];
 }
 
