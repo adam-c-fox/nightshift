@@ -30,7 +30,7 @@ describe("loadSettings", () => {
     expect(
       loadSettings(
         from({
-          CLAUDE_EFFORT: "max",
+          NIGHTSHIFT_CLAUDE_EFFORT: "max",
           REVIEW_MODEL: "review-x",
           DEDUPE_MODEL: "dedupe-x",
           IMPLEMENTATION_MODEL: "claude-opus-4-1[1m]",
@@ -55,7 +55,7 @@ describe("loadSettings", () => {
   });
 
   it.each([
-    ["CLAUDE_EFFORT", "x", 'CLAUDE_EFFORT must be one of low, medium, high, xhigh, max, got "x"'],
+    ["NIGHTSHIFT_CLAUDE_EFFORT", "x", 'NIGHTSHIFT_CLAUDE_EFFORT must be one of low, medium, high, xhigh, max, got "x"'],
     ["CODEX_EFFORT", "max", 'CODEX_EFFORT must be one of minimal, low, medium, high, xhigh, got "max"'],
     ["REVIEW_MODEL", "claude opus", 'REVIEW_MODEL must be a model name like "claude-opus-5-5", got "claude opus"'],
     ["DEDUPE_MODEL", "a b", 'DEDUPE_MODEL must be a model name like "claude-sonnet-5-5", got "a b"'],

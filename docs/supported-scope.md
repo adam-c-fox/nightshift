@@ -31,7 +31,7 @@ Model defaults are set in the root `.env`; the values below apply when a key is 
 | Run | Default | Key |
 | --- | --- | --- |
 | Claude implementation and fixes | The installed CLI's default model | `IMPLEMENTATION_MODEL` |
-| Claude effort (all runs except deduplication) | `high` | `CLAUDE_EFFORT` |
+| Claude effort (all runs except deduplication) | `high` | `NIGHTSHIFT_CLAUDE_EFFORT` |
 | Claude review and confirmation | `claude-opus-5-5` | `REVIEW_MODEL` |
 | Candidate deduplication | `claude-sonnet-5-5`, always at low effort | `DEDUPE_MODEL` |
 | OAuth usage probe | `claude-haiku-4-5-20251001`, with a one-token request | `USAGE_PROBE_MODEL` |

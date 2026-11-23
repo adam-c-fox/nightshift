@@ -68,7 +68,7 @@ function timeZone(lookup: Lookup, fallback: string): string {
 export function loadSettings(lookup: Lookup): RuntimeSettings {
   const d = DEFAULT_SETTINGS;
   const settings: RuntimeSettings = {
-    claudeEffort: oneOf(lookup, "CLAUDE_EFFORT", CLAUDE_EFFORTS, d.claudeEffort),
+    claudeEffort: oneOf(lookup, "NIGHTSHIFT_CLAUDE_EFFORT", CLAUDE_EFFORTS, d.claudeEffort),
     reviewModel: modelName(lookup, "REVIEW_MODEL", d.reviewModel) ?? d.reviewModel,
     dedupeModel: modelName(lookup, "DEDUPE_MODEL", d.dedupeModel) ?? d.dedupeModel,
     usageProbeModel: modelName(lookup, "USAGE_PROBE_MODEL", d.usageProbeModel) ?? d.usageProbeModel,

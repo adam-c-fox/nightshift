@@ -18,7 +18,7 @@ Fill in the root `.env`:
 | `CLAUDE_CODE_OAUTH_TOKEN` | From `claude setup-token`. Cron can't read the login keychain. |
 | `NIGHTLY_ALLOWANCE_PERCENT` | Share of the weekly Claude usage one night may use. Default 15. |
 | `IMPLEMENTATION_MODEL` | Claude model for implementation and fix runs. Default: the CLI's default. |
-| `CLAUDE_EFFORT` | Effort for Claude runs except deduplication: low, medium, high, xhigh or max. Default high. |
+| `NIGHTSHIFT_CLAUDE_EFFORT` | Effort for Claude runs except deduplication: low, medium, high, xhigh or max. Default high. |
 | `REVIEW_MODEL` | Claude review and confirmation model. Default `claude-opus-5-5`. |
 | `DEDUPE_MODEL` | Candidate deduplication model. Default `claude-sonnet-5-5`. |
 | `USAGE_PROBE_MODEL` | Model for the OAuth usage probe. Default `claude-haiku-4-5-20251001`. |
