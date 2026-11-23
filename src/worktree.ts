@@ -206,10 +206,11 @@ export function createWorktree(spec: WorktreeSpec, log: Log, run?: (wtPath: stri
   const baseBranch = startedFromPr ? startFrom!.baseBranch : freshBaseRef.replace(/^origin\//, "");
   git(["worktree", "add", "-b", branch, wtPath, baseRef], repoPath);
   log(`Worktree created: ${wtPath} (branch: ${branch} from ${baseRef})`);
+  const baseCommit = git(["rev-parse", "HEAD"], wtPath).trim();
 
   runSetup(wtPath, repo, log, run);
 
-  return { wtPath, branch, baseRef, baseBranch, startedFromPr };
+  return { wtPath, branch, baseRef: baseCommit, baseBranch, startedFromPr };
 }
 
 export const EXCLUDED_PATHS = ["node_modules", "tfplan", "*.tfplan"];

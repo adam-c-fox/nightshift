@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { pushBranch } from "../src/pr.js";
-import { chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, ticketBranchName, treeDiff, worktreeSnapshot, worktreeTree, worktreePath, type WorktreeSpec } from "../src/worktree.js";
+import { branchDiff, chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, ticketBranchName, treeDiff, worktreeSnapshot, worktreeTree, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -26,6 +26,7 @@ export function makeRepo(): { root: string; repoPath: string } {
 }
 
 const noop = () => {};
+const commitOf = (repoPath: string, ref: string) => run(repoPath, "rev-parse", ref);
 const noInstall = () => {};
 
 describe("naming", () => {
@@ -69,7 +70,7 @@ describe("createWorktree", () => {
     const ran: string[] = [];
     const setup = [{ command: "first" }, { command: "second" }];
     const wt = createWorktree({ ...spec, repo: { setup } }, noop, (p, step) => ran.push(`${step.command}@${p}`));
-    expect(wt).toMatchObject({ branch: "adamfox/eng-1-fix", baseRef: "origin/main", baseBranch: "main" });
+    expect(wt).toMatchObject({ branch: "adamfox/eng-1-fix", baseRef: commitOf(env.repoPath, "origin/main"), baseBranch: "main" });
     expect(run(wt.wtPath, "rev-parse", "--abbrev-ref", "HEAD")).toBe("adamfox/eng-1-fix");
     expect(ran).toEqual([`first@${wt.wtPath}`, `second@${wt.wtPath}`]);
     expect(existsSync(join(wt.wtPath, "node_modules"))).toBe(false);
@@ -273,8 +274,22 @@ describe("createWorktree stackedOn", () => {
     pushParent();
     const wt = createWorktree({ ...spec, stackedOn: parent }, noop, noInstall);
     expect(existsSync(join(wt.wtPath, "parent.ts"))).toBe(true);
-    expect(wt).toMatchObject({ baseRef: `origin/${parent}`, baseBranch: parent, startedFromPr: false, branch: "adamfox/eng-2-child" });
+    expect(wt).toMatchObject({ baseRef: commitOf(env.repoPath, `origin/${parent}`), baseBranch: parent, startedFromPr: false, branch: "adamfox/eng-2-child" });
     expect(commitWorktree(wt, "nothing", noop)).toBe("no_changes");
+  });
+
+  it("diffs against the commit it branched from after the parent branch moves on", () => {
+    pushParent();
+    const wt = createWorktree({ ...spec, stackedOn: parent }, noop, noInstall);
+    run(env.repoPath, "checkout", "-q", parent);
+    writeFileSync(join(env.repoPath, "later.ts"), "export {};\n");
+    run(env.repoPath, "add", "later.ts");
+    run(env.repoPath, "commit", "-q", "-m", "later parent work");
+    run(env.repoPath, "push", "-q", "origin", parent);
+    run(env.repoPath, "checkout", "-q", "main");
+    writeFileSync(join(wt.wtPath, "child.ts"), "export {};\n");
+    commitWorktree(wt, "child work", noop);
+    expect(branchDiff(wt)).not.toContain("later.ts");
   });
 
   it("throws instead of falling back to main when the parent branch is missing", () => {
@@ -285,7 +300,7 @@ describe("createWorktree stackedOn", () => {
     pushParent();
     run(env.repoPath, "push", "-q", "origin", `main:refs/heads/${spec.branchBase}`);
     const wt = createWorktree({ ...spec, stackedOn: parent, startFrom: { branch: spec.branchBase, baseBranch: parent } }, noop, noInstall);
-    expect(wt).toMatchObject({ baseRef: `origin/${spec.branchBase}`, baseBranch: parent, startedFromPr: true });
+    expect(wt).toMatchObject({ baseRef: commitOf(env.repoPath, `origin/${spec.branchBase}`), baseBranch: parent, startedFromPr: true });
   });
 });
 
@@ -311,14 +326,14 @@ describe("createWorktree startFrom", () => {
     pushPrBranch();
     const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, noop, noInstall);
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(true);
-    expect(wt).toMatchObject({ baseRef: `origin/${prBranch}`, baseBranch: "main", startedFromPr: true, branch: `${prBranch}-2` });
+    expect(wt).toMatchObject({ baseRef: commitOf(env.repoPath, `origin/${prBranch}`), baseBranch: "main", startedFromPr: true, branch: `${prBranch}-2` });
     expect(commitWorktree(wt, "nothing", noop)).toBe("no_changes");
   });
 
   it("falls back to origin/main when the PR branch is gone", () => {
     const logs: string[] = [];
     const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m), noInstall);
-    expect(wt).toMatchObject({ baseRef: "origin/main", baseBranch: "main", startedFromPr: false });
+    expect(wt).toMatchObject({ baseRef: commitOf(env.repoPath, "origin/main"), baseBranch: "main", startedFromPr: false });
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(false);
     expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main (not available locally (fetch failed?))`))).toBe(true);
   });
@@ -330,7 +345,7 @@ describe("createWorktree startFrom", () => {
     expect(run(env.repoPath, "rev-parse", "--verify", `origin/${prBranch}`)).not.toBe("");
     const logs: string[] = [];
     const wt = createWorktree({ ...spec, startFrom: { branch: prBranch, baseBranch: "main" } }, m => logs.push(m), noInstall);
-    expect(wt).toMatchObject({ baseRef: "origin/main", startedFromPr: false });
+    expect(wt).toMatchObject({ baseRef: commitOf(env.repoPath, "origin/main"), startedFromPr: false });
     expect(existsSync(join(wt.wtPath, "prev.ts"))).toBe(false);
     expect(logs.some(l => l.includes(`PR branch ${prBranch} no longer on origin; starting fresh from origin/main (deleted on origin)`))).toBe(true);
   });
