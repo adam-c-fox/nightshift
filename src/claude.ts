@@ -4,6 +4,7 @@ import path from "node:path";
 import { runWithWatchdog, type WatchdogResult } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
 import type { RepoConfig } from "./project.js";
+import { runtimeSettings } from "./settings.js";
 import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, ThreadReport, ThreadVerdict, Verdict, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -521,9 +522,6 @@ export interface ClaudeResult {
 
 export const MAX_TURNS = 80;
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
-export const EFFORT: Effort = "high";
-export const REVIEW_MODEL = "claude-opus-5-5";
-export const DEDUPE_MODEL = "claude-sonnet-5-5";
 const SAFETY_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const USAGE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -545,6 +543,7 @@ export const editProfile = (repo?: Pick<RepoConfig, "tools">): ToolProfile => ({
   permissionMode: "acceptEdits",
   allowedTools: ["Bash(git *)", ...(repo?.tools ?? []).flatMap(tool => [`Bash(${tool} *)`, `Bash(${tool})`]), ...READ_ONLY_SHELL],
   disallowedTools: NEVER_PUBLISH,
+  model: runtimeSettings().implementationModel,
 });
 
 export const reviewProfile = (repo?: Pick<RepoConfig, "checks">): ToolProfile => ({
@@ -561,18 +560,18 @@ export const reviewProfile = (repo?: Pick<RepoConfig, "checks">): ToolProfile =>
     ...NEVER_PUBLISH,
   ],
   enforceAllowList: true,
-  model: REVIEW_MODEL,
+  model: runtimeSettings().reviewModel,
 });
 
-export const DEDUPE_PROFILE: ToolProfile = {
+export const dedupeProfile = (): ToolProfile => ({
   permissionMode: "default",
   allowedTools: [],
   disallowedTools: ["Edit", "Write", "NotebookEdit", ...NEVER_PUBLISH],
   enforceAllowList: true,
   tools: [],
-  model: DEDUPE_MODEL,
+  model: runtimeSettings().dedupeModel,
   effort: "low",
-};
+});
 
 export const POSTMORTEM_PROFILE: ToolProfile = {
   permissionMode: "default",
@@ -591,7 +590,7 @@ export function buildClaudeArgs(operatingInstructions: string, profile: ToolProf
     "--output-format", "json",
     "--max-turns", String(MAX_TURNS),
     ...(profile.model ? ["--model", profile.model] : []),
-    "--effort", profile.effort ?? EFFORT,
+    "--effort", profile.effort ?? runtimeSettings().claudeEffort,
     ...(profile.tools ? ["--tools", profile.tools.join(",")] : []),
     "--permission-mode", profile.permissionMode,
     ...(profile.allowedTools.length > 0 ? ["--allowedTools", profile.allowedTools.join(",")] : []),
@@ -875,7 +874,7 @@ export interface DedupeRunResult {
 }
 
 export async function runDedupe(worktreePath: string, candidates: ReviewCandidate[], options: RunAgentOptions): Promise<DedupeRunResult> {
-  const run = await execClaude(worktreePath, buildDedupePrompt(candidates), dedupeSystemPrompt(), DEDUPE_PROFILE, options);
+  const run = await execClaude(worktreePath, buildDedupePrompt(candidates), dedupeSystemPrompt(), dedupeProfile(), options);
   const { value: groups, error: parseError } = parseOrError(run.stdout, run.failure, parseDedupeBlock);
   return { success: run.failure === undefined, rawOutput: run.rawOutput, groups, parseError, failure: run.failure, abortReason: run.abortReason, usage: run.usage };
 }

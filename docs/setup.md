@@ -17,6 +17,15 @@ Fill in the root `.env`:
 | `LINEAR_API_KEY` | Fetching tickets and moving them to In Progress and In Review |
 | `CLAUDE_CODE_OAUTH_TOKEN` | From `claude setup-token`. Cron can't read the login keychain. |
 | `NIGHTLY_ALLOWANCE_PERCENT` | Share of the weekly Claude usage one night may use. Default 15. |
+| `IMPLEMENTATION_MODEL` | Claude model for implementation and fix runs. Default: the CLI's default. |
+| `CLAUDE_EFFORT` | Effort for Claude runs except deduplication: low, medium, high, xhigh or max. Default high. |
+| `REVIEW_MODEL` | Claude review and confirmation model. Default `claude-opus-5-5`. |
+| `DEDUPE_MODEL` | Candidate deduplication model. Default `claude-sonnet-5-5`. |
+| `USAGE_PROBE_MODEL` | Model for the OAuth usage probe. Default `claude-haiku-4-5-20251001`. |
+| `CODEX_MODEL` | Codex review model. Default `gpt-6.1-sol`. |
+| `CODEX_EFFORT` | Codex reasoning effort: minimal, low, medium, high or xhigh. Default high. |
+| `CODEX_ALLOWANCE_PERCENT` | Share of Codex weekly usage one night may use. Default 20. |
+| `NIGHTSHIFT_TIME_ZONE` | IANA time zone for report dates and reset displays. Default `America/Vancouver`. |
 | `NIGHTSHIFT_PROJECT` | Project used by `prep-mark`, `usage` and `open-prs` when `--project` isn't passed |
 
 Fill in the project's `.env` (see [Projects](#projects)). An empty value there falls through to the root `.env`:

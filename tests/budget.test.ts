@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runtimeSettings } from "../src/settings.js";
 import {
   apiUsageSource, budgetUsedPct, sessionAbortReason, sessionWaitMs, waitForSessionCapacity, cliUsageSource, closedBudget, formatUsageAttempts, openNightBudget,
   nightlyAllowancePercent, resolveAllowance, parseRateLimitHeaders, parseUsageOutput, parseUsageSummary, snapshotUsage, UsageUnavailableError, usageSummary, withCurrentUsage,
@@ -161,7 +162,9 @@ describe("parseRateLimitHeaders", () => {
   it("reads the weekly utilization and reset, not the 5h window", () => {
     const snapshot = parseRateLimitHeaders(probeHeaders);
     expect(snapshot.weeklyPercent).toBe(23.4);
-    expect(snapshot.resetInfo).toMatch(/^Oct 7, 10:00\sAM \(America\/Vancouver\)$/);
+    const { timeZone } = runtimeSettings();
+    const reset = new Date(1791392400000).toLocaleString("en-US", { timeZone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    expect(snapshot.resetInfo).toBe(`${reset} (${timeZone})`);
   });
 
   it("reads the 5-hour session utilization and reset time", () => {

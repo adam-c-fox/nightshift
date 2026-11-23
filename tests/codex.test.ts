@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 import { buildCodexArgs, codexEnv, codexUsageLimited, openCodexBudget, parseCodexEvents, parseCodexRateLimits, runCodexLens, type CodexLensDeps } from "../src/codex.js";
 import { buildFinderPrompt, type AgentReport, type ReviewRunResult, type TicketBrief } from "../src/claude.js";
 import { closedBudget, openNightBudget, type UsageSnapshot } from "../src/budget.js";
-import { TIME_ZONE } from "../src/time.js";
+import { runtimeSettings } from "../src/settings.js";
 import fixture from "./fixtures/codex-rate-limits.json" with { type: "json" };
 
 const weeklyReset = new Date(1793300095000).toLocaleString("en-US", {
-  timeZone: TIME_ZONE, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  timeZone: runtimeSettings().timeZone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
 });
 
 describe("parseCodexRateLimits", () => {
-  const expected = { weeklyPercent: 0, sessionPercent: 0, sessionResetAt: 1792713295000, weeklyResetAt: 1793300095000, resetInfo: `${weeklyReset} (${TIME_ZONE})` };
+  const expected = { weeklyPercent: 0, sessionPercent: 0, sessionResetAt: 1792713295000, weeklyResetAt: 1793300095000, resetInfo: `${weeklyReset} (${runtimeSettings().timeZone})` };
 
   it("maps the 5-hour and weekly windows onto a usage snapshot", () => {
     expect(parseCodexRateLimits(fixture)).toEqual(expected);
@@ -29,7 +29,7 @@ describe("parseCodexRateLimits", () => {
 
 describe("buildCodexArgs", () => {
   it("runs read-only and ephemeral with the prompt on stdin", () => {
-    expect(buildCodexArgs("/wt")).toEqual([
+    expect(buildCodexArgs("/wt", "gpt-6.1-sol", "high")).toEqual([
       "exec", "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"', "-s", "read-only", "--ephemeral", "--ignore-user-config", "--json", "-C", "/wt", "-",
     ]);
   });
@@ -148,8 +148,8 @@ describe("runCodexLens", () => {
 });
 
 describe("openCodexBudget", () => {
-  it("opens a 20% budget from the weekly reading", async () => {
-    expect(await openCodexBudget(async () => usage(10))).toMatchObject({ startPct: 10, capPct: 30, allocationPct: 20, unavailable: false });
+  it("opens a budget of the configured allowance from the weekly reading", async () => {
+    expect(await openCodexBudget(async () => usage(10))).toMatchObject({ startPct: 10, capPct: 10 + runtimeSettings().codexAllowancePercent, allocationPct: runtimeSettings().codexAllowancePercent, unavailable: false });
   });
 
   it("closes the budget with the reason when the read fails", async () => {

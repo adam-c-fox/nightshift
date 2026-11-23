@@ -37,7 +37,7 @@ The home page has a "Before clocking off" section. It opens with a global summar
   - `not ready`: `/prep` recorded blockers. Hover the badge to read them.
   - `inferred`: there's no `/prep` record, but the description already has a Decisions, Acceptance criteria or Pointers section.
   - `none`: no record and no such section.
-- **Allowance and usage.** Tonight's allowance and where it comes from (`tonight.md` or `NIGHTLY_ALLOWANCE_PERCENT`), and the weekly usage with its reset time, with the Codex weekly usage and its 20% nightly allowance next to it.
+- **Allowance and usage.** Tonight's allowance and where it comes from (`tonight.md` or `NIGHTLY_ALLOWANCE_PERCENT`), and the weekly usage with its reset time, with the Codex weekly usage and its nightly allowance (`CODEX_ALLOWANCE_PERCENT`) next to it.
 - **Warnings.** A queued ticket that Linear can't find, that isn't in Todo or isn't assigned to you; one that is unprepped, stale or not ready; a PR with auto-complete set, which the runner won't push to; and a weekly reset within 24 hours, when `allowance: 100` may be worth setting. If Linear is unavailable or `tonight.md` has a parse error, the page says so and still lists what it can.
 - **Prep and Plan tonight.** Each row has a Prep button and the section has a Plan tonight button. They open a herdr workspace running `/prep <ID> <project>` or `/tonight`, with no project. If herdr isn't installed or isn't running, the dashboard copies the equivalent `claude` command to your clipboard instead.
 - **Refresh.** Clears the caches and reloads. Linear tickets are cached for 5 minutes, PRs and their CI results for 5 minutes, usage for 10 minutes and the Linear team list for 1 hour.

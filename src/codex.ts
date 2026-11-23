@@ -7,11 +7,7 @@ import {
 import { CLAUDE_TOKEN, agentEnv } from "./agent-env.js";
 import { runWithWatchdog } from "./process.js";
 import type { NightBudget, RunUsage } from "./types.js";
-import { TIME_ZONE } from "./time.js";
-
-export const CODEX_MODEL = "gpt-6.1-sol";
-export const CODEX_EFFORT = "high";
-export const CODEX_ALLOWANCE_PCT = 20;
+import { runtimeSettings } from "./settings.js";
 
 const SESSION_WINDOW_MINS = 300;
 const WEEKLY_WINDOW_MINS = 10080;
@@ -31,11 +27,11 @@ export function parseCodexRateLimits(result: unknown): UsageSnapshot {
   if (!weekly) throw new Error("Codex rate limits have no weekly window");
   const session = windows.find((w) => w.windowDurationMins === SESSION_WINDOW_MINS);
   const resetInfo = new Date(weekly.resetsAt * 1000).toLocaleString("en-US", {
-    timeZone: TIME_ZONE, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    timeZone: runtimeSettings().timeZone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   });
   return {
     weeklyPercent: weekly.usedPercent,
-    resetInfo: `${resetInfo} (${TIME_ZONE})`,
+    resetInfo: `${resetInfo} (${runtimeSettings().timeZone})`,
     weeklyResetAt: weekly.resetsAt * 1000,
     ...(session ? { sessionPercent: session.usedPercent, sessionResetAt: session.resetsAt * 1000 } : {}),
   };
@@ -83,8 +79,10 @@ export function readCodexUsage(): Promise<UsageSnapshot> {
   });
 }
 
-export const buildCodexArgs = (worktreePath: string, model = CODEX_MODEL): string[] => [
-  "exec", "-m", model, "-c", `model_reasoning_effort="${CODEX_EFFORT}"`, "-s", "read-only", "--ephemeral", "--ignore-user-config", "--json", "-C", worktreePath, "-",
+export const buildCodexArgs = (
+  worktreePath: string, model = runtimeSettings().codexModel, effort = runtimeSettings().codexEffort,
+): string[] => [
+  "exec", "-m", model, "-c", `model_reasoning_effort="${effort}"`, "-s", "read-only", "--ephemeral", "--ignore-user-config", "--json", "-C", worktreePath, "-",
 ];
 
 export function parseCodexEvents(stdout: string, model: string): { text: string; usage?: RunUsage } {
@@ -123,7 +121,7 @@ export function codexEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export async function runCodexFinder(
-  worktreePath: string, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, extras: ReviewPromptExtras, model = CODEX_MODEL,
+  worktreePath: string, brief: TicketBrief, report: AgentReport | undefined, baseRef: string, extras: ReviewPromptExtras, model = runtimeSettings().codexModel,
 ): Promise<ReviewRunResult> {
   const started = Date.now();
   const proc = await runWithWatchdog("codex", buildCodexArgs(worktreePath, model), {
@@ -170,7 +168,7 @@ export interface CodexLensDeps {
 
 export async function openCodexBudget(read = readCodexUsage): Promise<NightBudget> {
   try {
-    return openNightBudget(await read(), CODEX_ALLOWANCE_PCT);
+    return openNightBudget(await read(), runtimeSettings().codexAllowancePercent);
   } catch (e) {
     return closedBudget(`Codex usage unavailable: ${(e as Error).message}`);
   }

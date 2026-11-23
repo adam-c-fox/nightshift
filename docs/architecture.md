@@ -38,7 +38,7 @@ The runner commits and opens or updates the PR. If remote CI fails, it retrieves
 
 ## Budgets follow account usage windows
 
-Claude receives 15% of weekly usage per night by default, configurable through `NIGHTLY_ALLOWANCE_PERCENT` in the root `.env`. One allowance covers the whole night. A header `allowance: <pct>` in `tonight.md` overrides it for one night; `--allowance <pct>` overrides both. The cap is the starting weekly usage plus the allocation, limited to 100%. The one-night header override is removed when tickets are archived.
+Claude receives 15% of weekly usage per night by default, configurable through `NIGHTLY_ALLOWANCE_PERCENT` in the root `.env`. One allowance covers the whole night. A header `allowance: <pct>` in `tonight.md` overrides it for one night; `--allowance <pct>` overrides both. The cap is the starting weekly usage plus the allocation, limited to 100%. The one-night header override is removed when tickets are archived. Codex has its own nightly allowance, `CODEX_ALLOWANCE_PERCENT` in the root `.env` (default 20%).
 
 The runner checks usage before starting more work. If five-hour session usage reaches 80%, it waits for the reset. A Claude run interrupted by a session limit can resume after the reset, up to twice, while the weekly cap remains open. The usage reader uses the OAuth probe when a Claude OAuth token is configured and otherwise invokes the CLI's usage command.
 

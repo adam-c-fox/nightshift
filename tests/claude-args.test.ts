@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, DEDUPE_PROFILE, dedupeSystemPrompt, finderSystemPrompt, fixReviewSystemPrompt, editProfile, POSTMORTEM_PROFILE, reviewProfile } from "../src/claude.js";
+import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, dedupeProfile, dedupeSystemPrompt, finderSystemPrompt, fixReviewSystemPrompt, editProfile, POSTMORTEM_PROFILE, reviewProfile } from "../src/claude.js";
+import { runtimeSettings } from "../src/settings.js";
 
 describe("agent instructions", () => {
   const agentsMd = readFileSync(new URL("../AGENTS.md", import.meta.url), "utf-8");
@@ -23,7 +24,7 @@ describe("agent instructions", () => {
 
 describe("output format", () => {
   it("asks for JSON output in every profile", () => {
-    for (const profile of [undefined, reviewProfile(), DEDUPE_PROFILE, POSTMORTEM_PROFILE]) {
+    for (const profile of [undefined, reviewProfile(), dedupeProfile(), POSTMORTEM_PROFILE]) {
       const args = buildClaudeArgs("x", profile);
       expect(args[args.indexOf("--output-format") + 1]).toBe("json");
     }
@@ -31,10 +32,10 @@ describe("output format", () => {
 });
 
 describe("effort", () => {
-  it("pins high effort in every profile", () => {
+  it("uses the configured effort in every profile", () => {
     for (const profile of [undefined, reviewProfile(), POSTMORTEM_PROFILE]) {
       const args = buildClaudeArgs("x", profile);
-      expect(args[args.indexOf("--effort") + 1]).toBe("high");
+      expect(args[args.indexOf("--effort") + 1]).toBe(runtimeSettings().claudeEffort);
     }
   });
 
@@ -45,13 +46,19 @@ describe("effort", () => {
 });
 
 describe("model", () => {
-  it("pins the Opus model for review runs", () => {
+  it("pins the configured model for review runs", () => {
     const args = buildClaudeArgs("x", reviewProfile());
-    expect(args[args.indexOf("--model") + 1]).toBe("claude-opus-5-5");
+    expect(args[args.indexOf("--model") + 1]).toBe(runtimeSettings().reviewModel);
   });
 
-  it("passes no --model for the implementer or the postmortem", () => {
-    expect(buildClaudeArgs("x")).not.toContain("--model");
+  it("passes the implementation model to the implementer only when one is configured", () => {
+    const args = buildClaudeArgs("x");
+    const { implementationModel } = runtimeSettings();
+    if (implementationModel) expect(args[args.indexOf("--model") + 1]).toBe(implementationModel);
+    else expect(args).not.toContain("--model");
+  });
+
+  it("passes no --model for the postmortem", () => {
     expect(buildClaudeArgs("x", POSTMORTEM_PROFILE)).not.toContain("--model");
   });
 });
@@ -155,12 +162,12 @@ describe("review run args", () => {
 });
 
 describe("dedupe run args", () => {
-  const args = buildClaudeArgs("x", DEDUPE_PROFILE);
+  const args = buildClaudeArgs("x", dedupeProfile());
   const value = (flag: string) => args[args.indexOf(flag) + 1];
 
   it("runs dedupe on Sonnet at low effort with every tool disabled", () => {
     expect(value("--tools")).toBe("");
-    expect(value("--model")).toBe("claude-sonnet-5-5");
+    expect(value("--model")).toBe(runtimeSettings().dedupeModel);
     expect(value("--effort")).toBe("low");
     expect(args).not.toContain("--allowedTools");
   });

@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import type { ClassifiedCheck } from "./checks.js";
-import { CODEX_MODEL, runCodexFinder } from "./codex.js";
+import { runCodexFinder } from "./codex.js";
 import { parseReportBlock, runConfirm, runDedupe, runFinder, type AgentReport, type ReviewPromptExtras, type TicketBrief } from "./claude.js";
 import { readCited, ticketText } from "./confirm.js";
 import { getEnv, useProjectEnv } from "./env.js";
@@ -13,6 +13,7 @@ import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
 import { fetchTicket } from "./linear.js";
 import { parseGolden, scoreSummary, scoreTicket, type TicketScore } from "./golden.js";
 import { loadProject, projectEnvFiles, PROJECTS_DIR, type RepoConfig } from "./project.js";
+import { runtimeSettings } from "./settings.js";
 import { findAndConfirm, type FindAndConfirmResult } from "./review.js";
 import { TICKET_ID } from "./tickets.js";
 import { localDate } from "./time.js";
@@ -200,7 +201,7 @@ async function runReview(args: ReplayArgs, scratch: string, inputs: ReviewInputs
     lenses: REVIEW_LENSES,
     decisions: report.decisions,
     find: async (lens, pass) => record(lensStage(lens, pass), lens === "codex"
-      ? await runCodexFinder(scratch, brief, report, args.base, extras, args.codexModel ?? CODEX_MODEL)
+      ? await runCodexFinder(scratch, brief, report, args.base, extras, args.codexModel ?? runtimeSettings().codexModel)
       : await runFinder(scratch, lens, brief, report, args.base, options, extras)),
     dedupe: async candidates => record("review-dedupe", await runDedupe(scratch, candidates, options)),
     confirm: async batch => record(`review-confirm-${batch.n}`, await runConfirm(scratch, brief, report, args.base, batch, options, extras)),

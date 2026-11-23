@@ -26,17 +26,18 @@ An unattended run needs authenticated access to Linear, Azure DevOps and Claude 
 
 The budget logic assumes accounts that expose weekly and five-hour usage windows. It does not provide a dollar-denominated API spending cap. CLI flags, event formats and usage responses are integration dependencies, so a passing unit suite does not establish compatibility with every CLI release or account type.
 
-Model defaults are currently source constants:
+Model defaults are set in the root `.env`; the values below apply when a key is unset:
 
-| Run | Default | Location |
+| Run | Default | Key |
 | --- | --- | --- |
-| Claude implementation and fixes | The installed CLI's default model, at high effort | [`claude.ts`](../src/claude.ts) |
-| Claude review and confirmation | `claude-opus-5-5`, at high effort | [`claude.ts`](../src/claude.ts) |
-| Candidate deduplication | `claude-sonnet-5-5`, at low effort | [`claude.ts`](../src/claude.ts) |
-| OAuth usage probe | `claude-haiku-4-5-20251001`, with a one-token request | [`budget.ts`](../src/budget.ts) |
-| Codex review | `gpt-6.1-sol`, at high effort | [`codex.ts`](../src/codex.ts) |
+| Claude implementation and fixes | The installed CLI's default model | `IMPLEMENTATION_MODEL` |
+| Claude effort (all runs except deduplication) | `high` | `CLAUDE_EFFORT` |
+| Claude review and confirmation | `claude-opus-5-5` | `REVIEW_MODEL` |
+| Candidate deduplication | `claude-sonnet-5-5`, always at low effort | `DEDUPE_MODEL` |
+| OAuth usage probe | `claude-haiku-4-5-20251001`, with a one-token request | `USAGE_PROBE_MODEL` |
+| Codex review | `gpt-6.1-sol`, at high effort | `CODEX_MODEL` / `CODEX_EFFORT` |
 
-These names must be available to the installed CLI/account. The normal runner does not expose model selection in `project.json`; `replay-review --codex-model` can override the Codex model for a replay. Codex's nightly allowance is a fixed 20%. Report dates and reset displays use `America/Vancouver` in [`time.ts`](../src/time.ts), independently of the machine's cron timezone.
+These names must be available to the installed CLI/account. They are machine-wide root `.env` settings, not per project. `replay-review --codex-model` can override the Codex model for a replay. Codex's nightly allowance is `CODEX_ALLOWANCE_PERCENT` (default 20). Report dates and reset displays use `NIGHTSHIFT_TIME_ZONE` (default `America/Vancouver`), independently of the machine's cron timezone. An invalid value stops the run at startup with a message naming the key.
 
 Agents receive restricted credentials and tool permissions. The network allowlist is the repo's `network` list. Tests that need additional service variables need explicit accommodation. See [`agent-env.ts`](../src/agent-env.ts) and the tool profiles in [`claude.ts`](../src/claude.ts).
 

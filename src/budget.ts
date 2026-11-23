@@ -2,13 +2,12 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import type { NightBudget } from "./types.js";
 import { CLAUDE_TOKEN } from "./agent-env.js";
-import { TIME_ZONE } from "./time.js";
+import { runtimeSettings } from "./settings.js";
 import { getEnv } from "./env.js";
 import { isValidPercent } from "./project.js";
 
 const USAGE_ATTEMPTS = 3;
 const USAGE_RETRY_DELAY_MS = 15_000;
-const PROBE_MODEL = "claude-haiku-4-5-20251001";
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 export interface UsageSnapshot {
@@ -109,8 +108,8 @@ export function parseRateLimitHeaders(response: string): UsageSnapshot {
   const reset = header("7d-reset");
   const resetInfo = reset
     ? `${new Date(Number(reset) * 1000).toLocaleString("en-US", {
-        timeZone: TIME_ZONE, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-      })} (${TIME_ZONE})`
+        timeZone: runtimeSettings().timeZone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+      })} (${runtimeSettings().timeZone})`
     : "unknown";
   const toPercent = (fraction: string) => Math.round(parseFloat(fraction) * 1000) / 10;
   const sessionUtilization = header("5h-utilization");
@@ -126,7 +125,7 @@ export function parseRateLimitHeaders(response: string): UsageSnapshot {
 
 function runUsageProbe(token: string): UsageCommandResult {
   const body = JSON.stringify({
-    model: PROBE_MODEL,
+    model: runtimeSettings().usageProbeModel,
     max_tokens: 1,
     system: "You are Claude Code, Anthropic's official CLI for Claude.",
     messages: [{ role: "user", content: "hi" }],
@@ -272,7 +271,7 @@ export async function waitForSessionCapacity(deps: SessionWaitDeps): Promise<voi
     }
     const wait = sessionWaitMs(snapshot, deps.now());
     if (wait === 0) return;
-    const until = new Date(deps.now() + wait).toLocaleTimeString("en-US", { timeZone: TIME_ZONE, hour: "numeric", minute: "2-digit" });
+    const until = new Date(deps.now() + wait).toLocaleTimeString("en-US", { timeZone: runtimeSettings().timeZone, hour: "numeric", minute: "2-digit" });
     deps.log(`  5-hour session at ${snapshot.sessionPercent}%; waiting until ${until} for it to reset`);
     await deps.sleep(wait);
   }
@@ -300,14 +299,18 @@ export function budgetGateMessage(b: NightBudget): string {
 
 const DEFAULT_NIGHTLY_ALLOWANCE_PERCENT = 15;
 
-export function nightlyAllowancePercent(lookup: (name: string) => string | undefined = getEnv): number {
-  const raw = lookup("NIGHTLY_ALLOWANCE_PERCENT");
-  if (raw === undefined) return DEFAULT_NIGHTLY_ALLOWANCE_PERCENT;
+export function wholePercent(lookup: (name: string) => string | undefined, name: string, fallback: number): number {
+  const raw = lookup(name);
+  if (raw === undefined) return fallback;
   const percent = Number(raw);
   if (!/^\d+$/.test(raw) || !isValidPercent(percent)) {
-    throw new Error(`NIGHTLY_ALLOWANCE_PERCENT must be a whole number from 1 to 100, got "${raw}"`);
+    throw new Error(`${name} must be a whole number from 1 to 100, got "${raw}"`);
   }
   return percent;
+}
+
+export function nightlyAllowancePercent(lookup: (name: string) => string | undefined = getEnv): number {
+  return wholePercent(lookup, "NIGHTLY_ALLOWANCE_PERCENT", DEFAULT_NIGHTLY_ALLOWANCE_PERCENT);
 }
 
 export function resolveAllowance(

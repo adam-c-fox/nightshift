@@ -32,7 +32,7 @@ function view(extra: Partial<EveningView> = {}): EveningView {
     allowance: { percent: 40, source: "tonight.md" },
     usage: {
       ok: true,
-      value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false },
+      value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codexAllowancePercent: 20 },
     },
     queue: [
       queueRow("DEMO-1", 1, "acme", ["api", "web"], {
@@ -197,12 +197,12 @@ describe("eveningHTML", () => {
   });
 
   it("shows codex weekly usage with its nightly allowance", () => {
-    const out = eveningHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codex: { weeklyPercent: 7.4, resetInfo: "Oct 10" } } } }));
-    expect(out).toContain("Codex weekly: <strong>7%</strong> used · resets Oct 10 · 20% a night");
+    const out = eveningHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codex: { weeklyPercent: 7.4, resetInfo: "Oct 10" }, codexAllowancePercent: 35 } } }));
+    expect(out).toContain("Codex weekly: <strong>7%</strong> used · resets Oct 10 · 35% a night");
   });
 
   it("shows codex usage unavailable and nothing without codex", () => {
-    const out = eveningHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codexError: "not logged in" } } }));
+    const out = eveningHTML(view({ usage: { ok: true, value: { weeklyPercent: 70, resetInfo: "Oct 8", resetSoon: false, codexAllowancePercent: 20, codexError: "not logged in" } } }));
     expect(out).toContain('<span class="dim">Codex usage unavailable: not logged in</span>');
     expect(html).not.toContain("Codex");
   });

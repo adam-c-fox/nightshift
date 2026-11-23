@@ -33,6 +33,7 @@ import {
   setQueueRepo,
   type QueueRepos,
 } from "../queue.js";
+import { loadSettings } from "../settings.js";
 import { ROOT, statePaths, writeTextAtomic, type StatePaths } from "../state.js";
 import { loadAllowance } from "../tickets.js";
 import type { Ticket } from "../types.js";
@@ -414,10 +415,12 @@ export function createSources(deps: DashboardDeps): Sources {
     let projects: Project[];
     let prep;
     let rootAllowance: number;
+    let codexAllowancePercent: number;
     try {
       projects = loadAllProjects(deps.projectsDir);
       prep = readPrepStore(deps.state.prep);
       rootAllowance = nightlyAllowancePercent(rootLookup);
+      ({ codexAllowancePercent } = loadSettings(rootLookup));
     } catch (error) {
       return fail(firstLine(error));
     }
@@ -477,6 +480,7 @@ export function createSources(deps: DashboardDeps): Sources {
         todo,
         queue,
         rootAllowance,
+        codexAllowancePercent,
         snapshots,
         prep,
         prs,

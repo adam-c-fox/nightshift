@@ -85,6 +85,7 @@ function input(overrides: Partial<EveningInput> = {}): EveningInput {
     todo: ok([]),
     queue: ok({ tickets: [] }),
     rootAllowance: 15,
+    codexAllowancePercent: 20,
     snapshots: ok({}),
     prep: {},
     prs: ok({}),
@@ -353,6 +354,7 @@ describe("buildEvening usage reset", () => {
         resetInfo: "Oct 8",
         resetAt: "2026-10-08T10:00:00.000Z",
         resetSoon: true,
+        codexAllowancePercent: 20,
       },
     });
     expect(view.warnings).toEqual([
@@ -384,6 +386,10 @@ describe("buildEvening usage reset", () => {
     const codex = { weeklyPercent: 7, resetInfo: "Oct 10" };
     expect(buildEvening(input({ usage: ok({ ...usage, codex }) })).usage).toMatchObject({ ok: true, value: { codex } });
     expect(buildEvening(input({ usage: ok({ ...usage, codexError: "no login" }) })).usage).toMatchObject({ ok: true, value: { codexError: "no login" } });
+  });
+
+  it("carries the codex allowance into the usage view", () => {
+    expect(buildEvening(input({ codexAllowancePercent: 35 })).usage).toMatchObject({ ok: true, value: { codexAllowancePercent: 35 } });
   });
 
   it("leaves codex out when the usage has none", () => {

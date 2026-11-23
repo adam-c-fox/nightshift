@@ -23,6 +23,7 @@ export interface EveningInput {
   todo: Loaded<TodoIssue[]>;
   queue: Loaded<{ tickets: Ticket[]; allowance?: number }>;
   rootAllowance: number;
+  codexAllowancePercent: number;
   snapshots: Loaded<Record<string, IssueSnapshot | null>>;
   prep: PrepStore;
   prs: Loaded<Record<string, PrLookup>>;
@@ -79,6 +80,7 @@ export interface EveningView {
     resetInfo: string;
     resetAt?: string;
     resetSoon: boolean;
+    codexAllowancePercent: number;
     codex?: UsageSummary;
     codexError?: string;
   }>;
@@ -161,6 +163,7 @@ function prepWarning(
 
 function usageView(
   usage: EveningInput["usage"],
+  codexAllowancePercent: number,
   now: Date,
 ): { view: EveningView["usage"]; warning?: ClockOffWarning } {
   if (!usage.ok) return { view: usage };
@@ -175,6 +178,7 @@ function usageView(
       resetInfo,
       ...(resetAtIso !== undefined ? { resetAt: resetAtIso } : {}),
       resetSoon,
+      codexAllowancePercent,
       ...(codex ? { codex } : {}),
       ...(codexError !== undefined ? { codexError } : {}),
     },
@@ -304,7 +308,7 @@ export function buildEvening(input: EveningInput): EveningView {
       ),
     );
   }
-  const usageResult = usageView(usage, now);
+  const usageResult = usageView(usage, input.codexAllowancePercent, now);
   if (usageResult.warning) warnings.push(usageResult.warning);
 
   const linearError = !todo.ok

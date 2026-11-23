@@ -1,5 +1,4 @@
 import { esc, STATUS_COLORS } from "../../report.js";
-import { CODEX_ALLOWANCE_PCT } from "../../codex.js";
 import type { UsageSummary } from "../../budget.js";
 import {
   PREP_STATE_LABELS,
@@ -184,8 +183,8 @@ ${[sweepRowHTML(view, tag), ...rows].join("\n")}
 ${empty}`;
 }
 
-function codexUsageHTML({ codex, codexError }: { codex?: UsageSummary; codexError?: string }): string {
-  if (codex) return `\n<span>Codex weekly: <strong>${Math.round(codex.weeklyPercent)}%</strong> used · resets ${esc(codex.resetInfo)} · ${CODEX_ALLOWANCE_PCT}% a night</span>`;
+function codexUsageHTML({ codex, codexError, codexAllowancePercent }: { codex?: UsageSummary; codexError?: string; codexAllowancePercent: number }): string {
+  if (codex) return `\n<span>Codex weekly: <strong>${Math.round(codex.weeklyPercent)}%</strong> used · resets ${esc(codex.resetInfo)} · ${codexAllowancePercent}% a night</span>`;
   return codexError === undefined ? "" : `\n<span class="dim">Codex usage unavailable: ${esc(codexError)}</span>`;
 }
 

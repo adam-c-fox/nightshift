@@ -31,7 +31,8 @@ import { classifyChecks, regressionFindings, repoCheckCommands, runChecks, type 
 import { relatedTickets, type ProcessedTicket, type PushedBranch } from "./related.js";
 import { stackDecision, stackedContext } from "./stack.js";
 import { startTestDb } from "./test-db.js";
-import { localDate, TIME_ZONE } from "./time.js";
+import { localDate } from "./time.js";
+import { runtimeSettings } from "./settings.js";
 import { createWorktree, ticketBranchName, branchDiff, commitWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, treeDiff, worktreePath, worktreeSnapshot, worktreeTree, type Worktree } from "./worktree.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -662,7 +663,7 @@ async function main() {
   };
   const date = localDate();
   const startedAtDate = new Date();
-  const startedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
+  const startedAt = new Date().toLocaleString("en-US", { timeZone: runtimeSettings().timeZone });
   log(`═══ Nightshift session ${date} started ${dryRun ? "(DRY RUN)" : ""} ═══`);
   log(`Projects: ${projects.map(p => p.name).join(", ")}`);
 
@@ -798,7 +799,7 @@ async function main() {
     const session: SessionResult = {
       date,
       startedAt,
-      endedAt: new Date().toLocaleString("en-US", { timeZone: TIME_ZONE }),
+      endedAt: new Date().toLocaleString("en-US", { timeZone: runtimeSettings().timeZone }),
       tickets: results,
       budget: budgetRef.current,
       codexBudget: codexBudgetRef.current,
@@ -820,7 +821,7 @@ async function main() {
     }
     session.budget = budgetRef.current;
     heartbeat.phase("report");
-    session.endedAt = new Date().toLocaleString("en-US", { timeZone: TIME_ZONE });
+    session.endedAt = new Date().toLocaleString("en-US", { timeZone: runtimeSettings().timeZone });
     try {
       log(`Night record: ${writeNightRecord(reportsDir, base, nightRecord(session, startedAtDate, new Date(), dryRun))}`);
     } catch (e) {

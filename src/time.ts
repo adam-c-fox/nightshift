@@ -1,4 +1,4 @@
-export const TIME_ZONE = "America/Vancouver";
+import { runtimeSettings } from "./settings.js";
 
 function parts(d: Date, timeZone: string): Record<string, string> {
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -9,12 +9,12 @@ function parts(d: Date, timeZone: string): Record<string, string> {
   return Object.fromEntries(fmt.formatToParts(d).map(p => [p.type, p.value]));
 }
 
-export function localDate(d = new Date(), timeZone = TIME_ZONE): string {
+export function localDate(d = new Date(), timeZone = runtimeSettings().timeZone): string {
   const p = parts(d, timeZone);
   return `${p.year}-${p.month}-${p.day}`;
 }
 
-export function runStamp(d = new Date(), timeZone = TIME_ZONE): string {
+export function runStamp(d = new Date(), timeZone = runtimeSettings().timeZone): string {
   const p = parts(d, timeZone);
   return `${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
 }

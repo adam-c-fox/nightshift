@@ -340,6 +340,17 @@ describe("evening", () => {
     expect((await eveningView()).allowance).toEqual({ percent: 60, source: "tonight.md" });
   });
 
+  it("takes the codex allowance from the root .env", async () => {
+    write(join(root, ".env"), "CODEX_ALLOWANCE_PERCENT=35\n");
+    expect((await eveningView()).usage).toMatchObject({ ok: true, value: { codexAllowancePercent: 35 } });
+  });
+
+  it("fails the evening view on a bad runtime setting", async () => {
+    vi.stubEnv("REVIEW_MODEL", "");
+    write(join(root, ".env"), "REVIEW_MODEL=claude opus\n");
+    expect(await sources.evening()).toMatchObject({ ok: false, error: expect.stringMatching(/REVIEW_MODEL/) });
+  });
+
   it("still renders queue rows when LINEAR_API_KEY is missing", async () => {
     write(
       join(root, "projects/acme/.env"),
