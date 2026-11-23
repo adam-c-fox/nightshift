@@ -11,7 +11,7 @@ import { openCodexBudget, readCodexUsage, runCodexFinder, runCodexLens } from ".
 import { runAgent, runConfirm, runDedupe, runFinder, runFix, runFixReview, type TicketBrief } from "./claude.js";
 import { readCited, ticketText } from "./confirm.js";
 import { GENERIC_AGENTS_MD } from "./instructions.js";
-import { agentEnv, buildAgentSettings } from "./agent-env.js";
+import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
 import { getEnv, requireEnv, useProjectEnv } from "./env.js";
 import { parseRunArgs, RUN_USAGE, type RunArgs } from "./args.js";
 import { listProjects, loadAllProjects, loadProject, NIGHT_DIR_NAME, projectEnvFiles, type Project } from "./project.js";
@@ -637,6 +637,8 @@ async function main() {
   const dryRun = args.dryRun;
   const reportsDir = path.join(REPORTS_DIR, NIGHT_DIR_NAME);
   logsDir = path.join(ROOT, "logs", NIGHT_DIR_NAME);
+  const rootToken = getEnv(CLAUDE_TOKEN);
+  if (rootToken) process.env[CLAUDE_TOKEN] = rootToken;
   const switcher = createProjectSwitcher({
     load: name => projects.find(p => p.name === name)!,
     useEnv: useProjectEnv,
