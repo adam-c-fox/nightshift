@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCache } from "../src/dashboard/cache.js";
-import { ExecError, type Exec } from "../src/dashboard/exec.js";
+import { ExecError, type Exec } from "../src/exec.js";
 import {
   createSources,
   defaultDeps,
@@ -18,7 +18,6 @@ import {
   type Sources,
 } from "../src/dashboard/sources.js";
 import { openNightBudget } from "../src/budget.js";
-import { buildPrWebUrl } from "../src/pr.js";
 import { ROOT } from "../src/state.js";
 import type { NightRecord } from "../src/types.js";
 
@@ -192,6 +191,7 @@ function writeAcme() {
       repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } },
       linearTeams: ["DEMO"],
       linearProjects: ["Demo"],
+      prHost: "azure-devops",
     }),
   );
   write(
@@ -227,7 +227,7 @@ beforeEach(() => {
   writeAcme();
   write(
     join(root, "projects/example/project.json"),
-    JSON.stringify({ repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } }, linearProjects: ["Example"] }),
+    JSON.stringify({ repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } }, linearProjects: ["Example"], prHost: "azure-devops" }),
   );
   write(join(root, "projects/example/.env.example"), "LINEAR_API_KEY=\n");
   write(join(root, "reports/acme/nightshift-2026-10-02.html"), "<html></html>");
@@ -274,7 +274,7 @@ describe("evening", () => {
       pr: {
         prId: 8,
         autoComplete: true,
-        url: buildPrWebUrl("o", "P", "app", 8),
+        url: "https://dev.azure.com/o/P/_git/app/pullrequest/8",
       },
     });
     expect(view.tabs.map((t) => [t.project, t.rows.map((r) => r.id)])).toEqual([
@@ -317,7 +317,7 @@ describe("evening", () => {
     const view = await eveningView();
     expect(view.sweep[0].openPrs).toEqual({
       ok: false,
-      error: "couldn't identify the az user: not logged in",
+      error: "couldn't identify the PR host user: not logged in",
     });
   });
 
@@ -442,6 +442,7 @@ describe("evening", () => {
         },
         defaultRepo: "app",
         linearProjects: ["Demo"],
+        prHost: "azure-devops",
       }),
     );
     write(
@@ -687,14 +688,54 @@ describe("linearTeams", () => {
 });
 
 describe("projectChecks", () => {
-  it("includes the Linear team and az login checks", async () => {
+  it("includes the Linear team and PR host login checks", async () => {
     const checks = await sources.projectChecks("acme");
     expect(checks.find((c) => c.name === "linearTeams")).toMatchObject({
       level: "pass",
     });
-    expect(checks.find((c) => c.name === "az login")).toMatchObject({
+    expect(checks.find((c) => c.name === "PR host login")).toMatchObject({
       level: "pass",
     });
+  });
+
+  const loginCheck = async (exec: Exec = fakeExec) => {
+    sources = createSources(deps({ exec }));
+    const checks = await sources.projectChecks("acme");
+    return checks.find((c) => c.name === "PR host login");
+  };
+
+  it("passes PR host login as the configured user after listing PRs", async () => {
+    expect(await loginCheck()).toMatchObject({ level: "pass", reason: "logged in as me@acme.com" });
+    expect(prListCalls()).toBe(1);
+  });
+
+  it("fails PR host login when listing PRs fails despite a configured user", async () => {
+    allPrsFail = true;
+    expect(await loginCheck()).toMatchObject({ level: "fail", reason: "az exploded" });
+  });
+
+  it("fails PR host login when the user cannot be identified", async () => {
+    write(
+      join(root, "projects/acme/.env"),
+      "LINEAR_API_KEY=k\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nBRANCH_PREFIX=ns\n",
+    );
+    const failing: Exec = (cmd, args, opts) =>
+      cmd === "az" && args[0] === "account"
+        ? Promise.reject(new ExecError("not logged in", "", "", 1))
+        : fakeExec(cmd, args, opts);
+    expect(await loginCheck(failing)).toMatchObject({ level: "fail", reason: "not logged in" });
+  });
+});
+
+describe("identity cache", () => {
+  it("picks up a changed AZURE_DEVOPS_USER on the next request without a refresh", async () => {
+    const mine = async () => (await eveningView()).sweep[0].openPrs;
+    expect(await mine()).toEqual({ ok: true, value: 1 });
+    write(
+      join(root, "projects/acme/.env"),
+      `LINEAR_API_KEY=k\nAZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nAZURE_DEVOPS_PAT=${PAT}\nBRANCH_PREFIX=ns\nAZURE_DEVOPS_USER=other@acme.com\n`,
+    );
+    expect(await mine()).toEqual({ ok: true, value: 0 });
   });
 });
 

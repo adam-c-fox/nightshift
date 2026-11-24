@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { PR_HOST_KINDS, type PrHostKind } from "./pr-host.js";
 
 export const PROJECTS_DIR = path.resolve(import.meta.dirname, "..", "projects");
 export const REPO_NAME_PATTERN = "[a-z0-9][a-z0-9_-]*";
@@ -36,6 +37,7 @@ export interface Project {
   testDbScript?: string;
   linearProjects: string[];
   linearTeams?: string[];
+  prHost: PrHostKind;
   envFile: string;
 }
 
@@ -46,6 +48,7 @@ type RawConfig = {
   allowancePercent?: unknown;
   linearProjects?: unknown;
   linearTeams?: unknown;
+  prHost?: unknown;
 };
 
 export function isValidPercent(value: unknown): value is number {
@@ -200,6 +203,9 @@ export function parseProjectConfig(
   }
   const teams = linearTeams as string[];
 
+  if (!PR_HOST_KINDS.includes(config.prHost as PrHostKind))
+    fail(`prHost must be one of: ${PR_HOST_KINDS.join(", ")}`);
+
   return {
     name,
     dir,
@@ -208,6 +214,7 @@ export function parseProjectConfig(
     testDbScript,
     linearProjects: linearProjects as string[],
     ...(teams.length > 0 ? { linearTeams: teams } : {}),
+    prHost: config.prHost as PrHostKind,
     envFile: path.join(dir, ".env"),
   };
 }

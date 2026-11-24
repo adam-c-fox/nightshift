@@ -1,5 +1,6 @@
 import { CLAUDE_TOKEN } from "./agent-env.js";
 import { composeInstructions } from "./instructions.js";
+import type { PrHost } from "./pr-host.js";
 import type { PrCommentState } from "./pr-comment-state.js";
 import type { Project } from "./project.js";
 import type { TestDb } from "./test-db.js";
@@ -10,6 +11,7 @@ export interface PrWrites { state: PrCommentState; file: string; blocked: { reas
 export interface ProjectContext {
   project: Project;
   branchPrefix?: string;
+  prHost: PrHost;
   instructions: string;
   prWrites: PrWrites;
 }
@@ -30,13 +32,14 @@ export interface ProjectSwitcherDeps {
   load: (name: string) => Project;
   useEnv: (file: string) => void;
   getEnv: (name: string) => string | undefined;
+  prHost: (project: Project) => PrHost;
   startDb: (script: string) => TestDb | undefined;
   loadPrState: (name: string) => { state: PrCommentState; file: string };
   genericInstructions: string;
 }
 
 export function createProjectSwitcher(deps: ProjectSwitcherDeps): { enter(name: string, options?: { db?: boolean }): ProjectContext; stop(): void } {
-  const contexts = new Map<string, ProjectContext>();
+  const contexts = new Map<string, Omit<ProjectContext, "prHost">>();
   let current: ProjectContext | undefined;
   let db: TestDb | undefined;
   let dbStarted = false;
@@ -48,7 +51,7 @@ export function createProjectSwitcher(deps: ProjectSwitcherDeps): { enter(name: 
     dbStarted = false;
   };
 
-  const contextFor = (name: string): ProjectContext => {
+  const contextFor = (name: string): Omit<ProjectContext, "prHost"> => {
     let ctx = contexts.get(name);
     if (!ctx) {
       const project = deps.load(name);
@@ -74,7 +77,7 @@ export function createProjectSwitcher(deps: ProjectSwitcherDeps): { enter(name: 
         const token = deps.getEnv(CLAUDE_TOKEN);
         if (token) process.env[CLAUDE_TOKEN] = token;
         ctx.branchPrefix = deps.getEnv("BRANCH_PREFIX");
-        current = ctx;
+        current = Object.assign(ctx, { prHost: deps.prHost(ctx.project) });
       }
       const script = current!.project.testDbScript;
       if (wantDb && script && !dbStarted) {

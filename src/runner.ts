@@ -12,16 +12,16 @@ import { runAgent, runConfirm, runDedupe, runFinder, runFix, runFixReview, type 
 import { readCited, ticketText } from "./confirm.js";
 import { GENERIC_AGENTS_MD } from "./instructions.js";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
-import { getEnv, requireEnv, useProjectEnv } from "./env.js";
+import { getEnv, useProjectEnv } from "./env.js";
+import { createPrHost, type PrHost } from "./pr-host.js";
 import { parseRunArgs, RUN_USAGE, type RunArgs } from "./args.js";
 import { listProjects, loadAllProjects, loadProject, NIGHT_DIR_NAME, projectEnvFiles, type Project } from "./project.js";
 import { deriveOutcome } from "./status.js";
-import { az, createAndCheckPR, orgUrl, originUrl, prListArgs, repoNameFromRemote, type AzPullRequest, existingPrWebUrl, findOpenTicketPr, commitSubject, prContent, prAction, updateAndCheckPR, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
-import { applyThreadActions, listThreads, planThreadActions, postReply, resolveThread, sweepPrComments, type SweepResult } from "./pr-comments.js";
+import { findOpenTicketPr, commitSubject, prContent, prAction, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
+import { applyThreadActions, planThreadActions, sweepPrComments, type SweepResult } from "./pr-comments.js";
 import { loadPrCommentState, prKey, pruneClosed, savePrCommentState, type PrCommentState } from "./pr-comment-state.js";
 import { fixFailingChecks, type CiFixOutcome } from "./ci-fix.js";
 import { mergeFixReport, reviewAndFix, type ReviewStageOutcome } from "./review.js";
-import { azCiSource, fetchCiFailures } from "./ci-logs.js";
 import { reportBase, REPORTS_DIR, writeReport } from "./report.js";
 import { heartbeatFile, startHeartbeat } from "./heartbeat.js";
 import { statePaths, writeJsonAtomic } from "./state.js";
@@ -90,20 +90,20 @@ function applyPipelineStatus(result: TicketResult, pr: PRResult): void {
   }
 }
 
-async function openPullRequest(result: TicketResult, baseBranch: string, stackedOn?: PrContent["stackedOn"]): Promise<PRResult> {
+async function openPullRequest(prHost: PrHost, result: TicketResult, baseBranch: string, stackedOn?: PrContent["stackedOn"]): Promise<PRResult> {
   const { branch, worktreePath } = result;
   log(`  Pushing ${branch} and opening PR into ${baseBranch}`);
-  const pr = await createAndCheckPR({ ...prContent(result), stackedOn }, branch, baseBranch, worktreePath, { log });
+  const pr = await prHost.openPr({ ...prContent(result), stackedOn }, branch, baseBranch, worktreePath, { log });
   applyPipelineStatus(result, pr);
   return pr;
 }
 
-async function updatePullRequest(result: TicketResult, existing: ExistingPr): Promise<PRResult> {
+async function updatePullRequest(prHost: PrHost, result: TicketResult, existing: ExistingPr): Promise<PRResult> {
   const { branch, worktreePath } = result;
   log(`  Pushing ${branch} to existing PR #${existing.prId} branch ${existing.sourceBranch}`);
   let pr: PRResult;
   try {
-    pr = await updateAndCheckPR(existing, branch, worktreePath, { log });
+    pr = await prHost.updatePr(existing, branch, worktreePath, { log });
   } catch (e) {
     result.notes = [result.notes, `Updating PR #${existing.prId} failed before or during push to ${existing.sourceBranch}: ${errorMessage(e).split("\n")[0]}; this run's work is on local ${branch}.`].filter(Boolean).join(" | ");
     throw e;
@@ -177,9 +177,9 @@ function applyReviewStage(result: TicketResult, stage: ReviewStageOutcome): void
   for (const report of stage.fixReports) Object.assign(result, mergeFixReport({ ...result, title: result.title ?? "" }, report));
 }
 
-function lookUpExistingPr(expectedBranch: string, repoPath: string): ExistingPr | null {
+async function lookUpExistingPr(prHost: PrHost, expectedBranch: string, repoPath: string): Promise<ExistingPr | null> {
   try {
-    const existing = findOpenTicketPr(expectedBranch, repoPath);
+    const existing = await findOpenTicketPr(prHost, expectedBranch, repoPath);
     if (existing) log(`  Continuing PR #${existing.prId} (${existing.sourceBranch} → ${existing.targetBranch})`);
     return existing;
   } catch (e) {
@@ -216,21 +216,20 @@ const shortHead = (cwd: string): string | undefined => {
 
 const LOWERING_END_STATES = ["needs_person", "retry", "gave_up"];
 
-function settlePrThreads(
-  ticketResult: TicketResult, work: PrCommentWork, input: { reports: ThreadReport[]; pushed: boolean; verified: boolean; changed: boolean },
+async function settlePrThreads(
+  prHost: PrHost, ticketResult: TicketResult, work: PrCommentWork, input: { reports: ThreadReport[]; pushed: boolean; verified: boolean; changed: boolean },
   writes: PrWrites, dryRun: boolean,
-): void {
+): Promise<void> {
   try {
     const known = new Set(work.threads.map(t => t.id));
     for (const r of input.reports.filter(r => !known.has(r.id))) log(`  Ignoring a verdict for unknown thread ${r.id}`);
-    const target = { org: orgUrl(requireEnv("AZURE_DEVOPS_ORG")), project: requireEnv("AZURE_DEVOPS_PROJECT"), repoName: work.repoName, prId: work.pr.prId };
-    const outcomes = applyThreadActions(planThreadActions({ threads: work.threads, ...input }), {
-      target,
+    const outcomes = await applyThreadActions(planThreadActions({ threads: work.threads, ...input }), {
+      prId: work.pr.prId,
       shortSha: input.pushed && !dryRun ? shortHead(ticketResult.worktreePath) : undefined,
       records: (writes.state[prKey(work.repoName, work.pr.prId)] ??= {}),
       save: () => savePrCommentState(writes.file, writes.state),
-      postReply: (threadId, parentCommentId, content) => postReply(target, threadId, parentCommentId, content),
-      resolve: threadId => resolveThread(target, threadId),
+      postReply: (threadId, parentCommentId, content) => prHost.replyToThread(work.repoName, work.pr.prId, threadId, parentCommentId, content),
+      resolve: threadId => prHost.resolveThread(work.repoName, work.pr.prId, threadId),
       writesBlocked: writes.blocked,
       now: () => new Date().toISOString(),
       dryRun,
@@ -247,7 +246,7 @@ function settlePrThreads(
 }
 
 async function processTicket(
-  ticket: Ticket, project: Project, branchPrefix: string | undefined, instructions: string, dryRun: boolean,
+  ticket: Ticket, project: Project, prHost: PrHost, branchPrefix: string | undefined, instructions: string, dryRun: boolean,
   budgetRef: { current: NightBudget }, codexBudgetRef: { current: NightBudget }, processed: Map<string, ProcessedTicket>,
   prWrites: PrWrites,
 ): Promise<TicketResult> {
@@ -289,7 +288,7 @@ async function processTicket(
 
   const branchBase = ticketBranchName(branchPrefix, ticketId, linear?.name ?? ticketName);
   wt.branch = branchBase;
-  const existing = ticket.prComments?.pr ?? lookUpExistingPr(branchBase, repoPath);
+  const existing = ticket.prComments?.pr ?? await lookUpExistingPr(prHost, branchBase, repoPath);
   if (dryRun) {
     log(`  [dry-run] Would create worktree at ${wt.wtPath} on ${wt.branch}`);
     if (parent) log(`  [dry-run] Would branch from origin/${parent.branch}`);
@@ -301,7 +300,7 @@ async function processTicket(
       gone.linear = linear;
       gone.worktreePath = wt.wtPath;
       gone.notes = gone.summary;
-      settlePrThreads(gone, ticket.prComments, { reports: [], pushed: false, verified: false, changed: false }, prWrites, false);
+      await settlePrThreads(prHost, gone, ticket.prComments, { reports: [], pushed: false, verified: false, changed: false }, prWrites, false);
       gone.durationSec = Math.round((Date.now() - startTime) / 1000);
       return gone;
     }
@@ -352,11 +351,7 @@ async function processTicket(
   };
   if (existing && wt.startedFromPr) {
     ticketResult.prId = existing.prId;
-    try {
-      ticketResult.prUrl = existingPrWebUrl(existing, repoPath);
-    } catch (e) {
-      log(`  Could not build URL for PR #${existing.prId}: ${errorMessage(e)}`);
-    }
+    ticketResult.prUrl = existing.url;
   }
   const outcome = deriveOutcome(result);
   ticketResult.status = outcome.status;
@@ -372,7 +367,7 @@ async function processTicket(
       ? `  [dry-run] Would push to existing PR #${existing!.prId} branch ${existing!.sourceBranch}`
       : action === "hold"
         ? `  [dry-run] Would commit on ${wt.branch} but not push: PR #${existing!.prId} has auto-complete set`
-        : `  [dry-run] Would commit, push ${wt.branch} and open a new Azure DevOps PR into ${wt.baseBranch}`);
+        : `  [dry-run] Would commit, push ${wt.branch} and open a new PR into ${wt.baseBranch}`);
     if (ticket.prComments) log(`  [dry-run] Would address ${ticket.prComments.threads.length} review thread(s) on PR #${ticket.prComments.pr.prId}`);
   } else {
     saveLog(`${ticketId}-output.txt`, result.rawOutput);
@@ -467,17 +462,16 @@ async function processTicket(
         let pushedTo: ExistingPr | undefined;
         if (action === "update") {
           pushedTo = existing!;
-          pr = await updatePullRequest(ticketResult, pushedTo);
+          pr = await updatePullRequest(prHost, ticketResult, pushedTo);
         } else if (action === "hold") {
           holdForAutoComplete(ticketResult, existing!);
         } else {
-          pr = await openPullRequest(ticketResult, wt.baseBranch, parent && { ticketId: parent.ticketId, prId: parent.prId });
-          pushedTo = { prId: pr.prId, sourceBranch: wt.branch, targetBranch: wt.baseBranch, autoComplete: false };
+          pr = await openPullRequest(prHost, ticketResult, wt.baseBranch, parent && { ticketId: parent.ticketId, prId: parent.prId });
+          pushedTo = { prId: pr.prId, sourceBranch: wt.branch, targetBranch: wt.baseBranch, autoComplete: false, url: pr.url };
         }
         if (pushedTo) pushed = { branch: pushedTo.sourceBranch, prId: pushedTo.prId };
         if (pr?.pipelineStatus === "failed" && pushedTo) {
           const target = pushedTo;
-          const logSource = azCiSource(orgUrl(requireEnv("AZURE_DEVOPS_ORG")), requireEnv("AZURE_DEVOPS_PROJECT"));
           const fix = await fixFailingChecks(pr, { ticketId, title: ticketResult.title ?? "" }, {
             runAgent: async context => {
               await waitForSession();
@@ -488,8 +482,8 @@ async function processTicket(
               if (outcome !== "no_changes" && excludedPathsInBranch(wt).length > 0) throw new Error("CI fix touched excluded files; not pushing.");
               return outcome;
             },
-            publish: () => updateAndCheckPR(target, wt.branch, wt.wtPath, { log }),
-            fetchLogs: checks => fetchCiFailures(checks, logSource),
+            publish: () => prHost.updatePr(target, wt.branch, wt.wtPath, { log }),
+            fetchLogs: checks => prHost.ciFailures(wt.wtPath, checks),
             gateOpen: () => weeklyGateReason() === undefined,
             log,
           });
@@ -510,7 +504,7 @@ async function processTicket(
     } else if (ticket.prComments) {
       const didPush = pushed !== undefined;
       const verified = didPush && !stage.needsReview && ticketResult.pipelineStatus === "succeeded";
-      settlePrThreads(ticketResult, ticket.prComments, { reports, pushed: didPush, verified, changed: committed !== undefined && committed !== "no_changes" }, prWrites, false);
+      await settlePrThreads(prHost, ticketResult, ticket.prComments, { reports, pushed: didPush, verified, changed: committed !== undefined && committed !== "no_changes" }, prWrites, false);
     }
     try {
       saveLog(`${ticketId}-diff.txt`, branchDiff(wt));
@@ -606,17 +600,9 @@ const claimedByEarlierProjects = (projectName: string): Set<string> => {
   return claimed;
 };
 
-function runPrSweep(project: Project, state: PrCommentState, stateFile: string, dryRun: boolean): SweepResult {
-  const org = orgUrl(requireEnv("AZURE_DEVOPS_ORG"));
-  const azProject = requireEnv("AZURE_DEVOPS_PROJECT");
-  const sweep = sweepPrComments(project.repos, state, {
-    me: () => getEnv("AZURE_DEVOPS_USER") ?? (az(["account", "show"]) as { user: { name: string } }).user.name,
-    listPrs: repoPath => {
-      const repoName = repoNameFromRemote(originUrl(repoPath));
-      return { repoName, prs: (az(prListArgs(org, azProject, repoName)) ?? []) as AzPullRequest[] };
-    },
-    listThreads: target => listThreads(target),
-    org, project: azProject, teams: project.linearTeams ?? [],
+async function runPrSweep(project: Project, prHost: PrHost, state: PrCommentState, stateFile: string, dryRun: boolean): Promise<SweepResult> {
+  const sweep = await sweepPrComments(project.repos, state, {
+    host: prHost, teams: project.linearTeams ?? [],
     claimedElsewhere: claimedByEarlierProjects(project.name),
     log,
   });
@@ -644,6 +630,7 @@ async function main() {
     load: name => projects.find(p => p.name === name)!,
     useEnv: useProjectEnv,
     getEnv,
+    prHost: p => createPrHost(p.prHost, getEnv),
     startDb: script => {
       if (dryRun) return undefined;
       const db = startTestDb(log, undefined, process.env, script);
@@ -737,10 +724,10 @@ async function main() {
     const held: SweepResult["held"] = [];
     for (const project of projects) {
       log(`\n── PR sweep: ${project.name} ──`);
-      const { prWrites } = enter(project.name, { db: false });
+      const { prWrites, prHost } = enter(project.name, { db: false });
       let sweep: SweepResult;
       try {
-        sweep = runPrSweep(project, prWrites.state, prWrites.file, dryRun);
+        sweep = await runPrSweep(project, prHost, prWrites.state, prWrites.file, dryRun);
       } catch (e) {
         const error = `PR sweep crashed: ${errorMessage(e)}`;
         log(error);
@@ -783,12 +770,12 @@ async function main() {
         const ctx = enter(ticket.project!);
         const { prWrites } = ctx;
         try {
-          const r = await processTicket(ticket, ctx.project, ctx.branchPrefix, ctx.instructions, dryRun, budgetRef, codexBudgetRef, processed, prWrites);
+          const r = await processTicket(ticket, ctx.project, ctx.prHost, ctx.branchPrefix, ctx.instructions, dryRun, budgetRef, codexBudgetRef, processed, prWrites);
           results.push(r);
         } catch (e) {
           log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);
           const placeholder = placeholderResult(ticket, "error", (e as Error).message, ctx.branchPrefix);
-          if (ticket.prComments) settlePrThreads(placeholder, ticket.prComments, { reports: [], pushed: false, verified: false, changed: false }, prWrites, dryRun);
+          if (ticket.prComments) await settlePrThreads(ctx.prHost, placeholder, ticket.prComments, { reports: [], pushed: false, verified: false, changed: false }, prWrites, dryRun);
           results.push(placeholder);
         }
       }

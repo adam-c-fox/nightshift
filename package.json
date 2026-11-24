@@ -10,6 +10,7 @@
     "run": "tsx src/runner.ts",
     "run:dry": "tsx src/runner.ts --dry-run",
     "project": "tsx src/current-project.ts",
+    "pr-host": "tsx src/pr-host-cli.ts",
     "open-prs": "tsx src/open-prs.ts",
     "usage": "tsx src/usage.ts",
     "replay-review": "tsx src/replay-review.ts",

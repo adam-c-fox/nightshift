@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { nightlyAllowancePercent, parseUsageSummary, type UsageSummary } from "../budget.js";
@@ -14,7 +14,8 @@ import {
 } from "../linear.js";
 import { readProjectRuns, type ProjectRun } from "../heartbeat.js";
 import { readNightRecord } from "../night-record.js";
-import { buildPrWebUrl, pickTicketPr, voteSummary } from "../pr.js";
+import { pickTicketPr } from "../pr.js";
+import { createPrHost, type OpenPrList, type PrHost } from "../pr-host.js";
 import { readPrepStore } from "../prep.js";
 import {
   listProjects,
@@ -40,15 +41,6 @@ import type { Ticket } from "../types.js";
 import { ticketBranchName } from "../worktree.js";
 import { readActions } from "./actions.js";
 import {
-  azJson,
-  azLoginStatus,
-  azProjectFrom,
-  listActivePrs,
-  prCiVerdict,
-  type ActivePrList,
-  type AzProject,
-} from "./azure.js";
-import {
   cacheKeys,
   createCache,
   firstLine,
@@ -65,7 +57,7 @@ import {
   type PrLookup,
   type TicketPr,
 } from "./clock-off.js";
-import { ExecError, execAsync, type Exec } from "./exec.js";
+import { ExecError, execAsync, type Exec } from "../exec.js";
 import {
   buildInbox,
   nightRows,
@@ -96,7 +88,7 @@ export const SLOW_MS = { usage: 8_000, prs: 10_000, linear: 15_000 };
 const USAGE_TIMEOUT_MS = 120_000;
 const LINEAR_SLOW = "Linear is slow to answer; refresh in a moment";
 const USAGE_SLOW = "usage still loading; refresh in a moment";
-const PRS_SLOW = "Azure DevOps is slow to answer; refresh in a moment";
+const PRS_SLOW = "The PR host is slow to answer; refresh in a moment";
 
 export interface DashboardDeps {
   root: string;
@@ -151,8 +143,8 @@ interface ProjectContext {
 }
 
 interface RepoPrLists {
-  az: AzProject;
-  byRepoPath: Record<string, Loaded<ActivePrList>>;
+  host: PrHost;
+  byRepoPath: Record<string, Loaded<OpenPrList>>;
 }
 
 interface PrCandidate {
@@ -187,6 +179,20 @@ export function createSources(deps: DashboardDeps): Sources {
   const { cache, exec } = deps;
 
   const rootEnvFile = () => path.join(deps.root, ".env");
+
+  const readOrEmpty = (file: string) => {
+    try {
+      return readFileSync(file, "utf-8");
+    } catch {
+      return "";
+    }
+  };
+
+  const envFingerprint = (projectEnvFile: string) =>
+    createHash("sha1")
+      .update([projectEnvFile, rootEnvFile()].map(readOrEmpty).join("\n"))
+      .digest("hex")
+      .slice(0, 8);
 
   function openProject(name: string): ProjectContext {
     const project = loadProject(name, deps.projectsDir);
@@ -276,12 +282,12 @@ export function createSources(deps: DashboardDeps): Sources {
   }
 
   function loadPrList(
-    az: AzProject,
+    host: PrHost,
     repoPath: string,
-  ): Promise<Loaded<ActivePrList>> {
+  ): Promise<Loaded<OpenPrList>> {
     return settle(
       cache.get(cacheKeys.prs(repoPath), TTL_MS.prs, () =>
-        listActivePrs(exec, az, repoPath),
+        host.listOpenPrs(repoPath),
       ),
       SLOW_MS.prs,
       PRS_SLOW,
@@ -292,17 +298,15 @@ export function createSources(deps: DashboardDeps): Sources {
     project,
     lookup,
   }: ProjectContext): Promise<Loaded<RepoPrLists>> {
-    const azLoaded = attempt(() => azProjectFrom(lookup));
-    if (!azLoaded.ok) return azLoaded;
-    const az = azLoaded.value;
+    const host = createPrHost(project.prHost, lookup, exec);
     const paths = Object.values(project.repos).map((repo) => repo.path);
-    const lists = await Promise.all(paths.map((p) => loadPrList(az, p)));
+    const lists = await Promise.all(paths.map((p) => loadPrList(host, p)));
     const firstFailure = lists.find((list) => !list.ok);
     if (firstFailure && !firstFailure.ok && lists.every((list) => !list.ok)) {
       return fail(firstFailure.error);
     }
     return ok({
-      az,
+      host,
       byRepoPath: Object.fromEntries(paths.map((p, i) => [p, lists[i]])),
     });
   }
@@ -337,7 +341,7 @@ export function createSources(deps: DashboardDeps): Sources {
     candidates: PrCandidate[],
   ): Loaded<Record<string, PrLookup>> {
     if (!lists.ok) return lists;
-    const { az, byRepoPath } = lists.value;
+    const { byRepoPath } = lists.value;
     const prefix = lookup("BRANCH_PREFIX");
     const lookups: Record<string, PrLookup> = {};
     for (const { id, title, repo } of candidates) {
@@ -355,12 +359,7 @@ export function createSources(deps: DashboardDeps): Sources {
         if (match && !found) {
           found = {
             prId: match.prId,
-            url: buildPrWebUrl(
-              az.org,
-              az.project,
-              list.value.repoName,
-              match.prId,
-            ),
+            url: match.url,
             autoComplete: match.autoComplete,
           };
         }
@@ -371,39 +370,32 @@ export function createSources(deps: DashboardDeps): Sources {
   }
 
   async function resolveMe(
-    lookup: (name: string) => string | undefined,
-    az: AzProject,
+    { project }: ProjectContext,
+    host: PrHost,
   ): Promise<Loaded<string>> {
-    const configured = lookup("AZURE_DEVOPS_USER");
-    if (configured) return ok(configured.toLowerCase());
     return settle(
-      cache.get(cacheKeys.azUser(), TTL_MS.azUser, async () => {
-        const account = (await azJson(exec, az, ["account", "show"])) as {
-          user: { name: string };
-        };
-        return account.user.name.toLowerCase();
-      }),
+      cache.get(cacheKeys.hostUser(project.name, envFingerprint(project.envFile)), TTL_MS.hostUser, () =>
+        host.currentUser(),
+      ),
       SLOW_MS.prs,
       PRS_SLOW,
     ).then((me) =>
-      me.ok ? me : fail(`couldn't identify the az user: ${me.error}`),
+      me.ok ? me : fail(`couldn't identify the PR host user: ${me.error}`),
     );
   }
 
   async function countOpenPrs(
-    { lookup }: ProjectContext,
+    context: ProjectContext,
     lists: Loaded<RepoPrLists>,
   ): Promise<Loaded<number>> {
     if (!lists.ok) return lists;
-    const me = await resolveMe(lookup, lists.value.az);
+    const me = await resolveMe(context, lists.value.host);
     if (!me.ok) return me;
     const mine = Object.values(lists.value.byRepoPath).reduce(
       (count, list) =>
         list.ok
           ? count +
-            list.value.prs.filter(
-              (p) => p.createdBy?.uniqueName?.toLowerCase() === me.value,
-            ).length
+            list.value.prs.filter((p) => p.author === me.value).length
           : count,
       0,
     );
@@ -572,25 +564,27 @@ export function createSources(deps: DashboardDeps): Sources {
     if (!context.ok) return unknown(context.error);
     const repoPath = context.value.project.repos[ref.repo]?.path;
     if (!repoPath) return unknown(`repo ${ref.repo} is not configured`);
-    const azLoaded = attempt(() => azProjectFrom(context.value.lookup));
-    if (!azLoaded.ok) return unknown(azLoaded.error);
-    const az = azLoaded.value;
-    const list = await loadPrList(az, repoPath);
+    const host = createPrHost(
+      context.value.project.prHost,
+      context.value.lookup,
+      exec,
+    );
+    const list = await loadPrList(host, repoPath);
     if (!list.ok) return unknown(list.error);
-    const found = list.value.prs.find((p) => p.pullRequestId === ref.prId);
+    const found = list.value.prs.find((p) => p.prId === ref.prId);
     if (!found) return { state: "closed" };
     const ci = await settle(
-      cache.get(cacheKeys.ci(az.org, ref.prId), TTL_MS.prs, () =>
-        prCiVerdict(exec, az, ref.prId),
+      cache.get(cacheKeys.ci(repoPath, ref.prId), TTL_MS.prs, () =>
+        host.ciVerdict(repoPath, ref.prId),
       ),
       SLOW_MS.prs,
       PRS_SLOW,
     );
     return {
       state: "active",
-      autoComplete: Boolean(found.autoCompleteSetBy),
-      isDraft: Boolean(found.isDraft),
-      votes: voteSummary(found.reviewers),
+      autoComplete: found.autoComplete,
+      isDraft: found.isDraft,
+      votes: found.votes,
       ci: ci.ok ? ci.value : "unknown",
       ...(found.title !== undefined ? { title: found.title } : {}),
     };
@@ -657,9 +651,15 @@ export function createSources(deps: DashboardDeps): Sources {
         exampleDir: deps.exampleDir,
         rootDir: deps.root,
         teams: () => linearTeams(name),
-        azLogin: () =>
-          cache.get(cacheKeys.azLogin(), TTL_MS.azLogin, () =>
-            azLoginStatus(exec),
+        hostLogin: (kind, lookup, repoPath) =>
+          cache.get(
+            cacheKeys.hostLogin(name, envFingerprint(path.join(deps.projectsDir, name, ".env"))),
+            TTL_MS.hostLogin,
+            async () => {
+              const host = createPrHost(kind, lookup, exec);
+              await host.listOpenPrs(repoPath);
+              return host.currentUser();
+            },
           ),
       }),
     linearTeams,

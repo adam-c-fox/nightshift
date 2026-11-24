@@ -1,6 +1,6 @@
 # Nightshift
 
-Nightshift works through Linear tickets overnight with Claude Code. Pick the tickets before you log off. Each gets its own git worktree, baseline checks, implementation, independent review and an Azure DevOps PR. In the morning, an HTML report shows what passed and what needs a decision.
+Nightshift works through Linear tickets overnight with Claude Code. Pick the tickets before you log off. Each gets its own git worktree, baseline checks, implementation, independent review and a PR on the project's PR host. In the morning, an HTML report shows what passed and what needs a decision.
 
 This is a personal tool shared as-is. Support is best-effort, and changes still need human review before merging.
 
@@ -26,7 +26,7 @@ See [architecture and design decisions](docs/architecture.md) for the review pro
 | Area | Supported today |
 | --- | --- |
 | Ticket tracker | Linear |
-| PR host and CI | Azure DevOps |
+| PR host and CI | Azure DevOps, chosen per project with `prHost`. See [adding a provider](docs/providers.md) |
 | Coding agents | Claude Code, with an additional Codex review pass |
 | Target repos | Any repo whose setup and checks are shell commands |
 | Runtime | Node 22.12+ or Node 24 LTS, Git and a Unix shell |

@@ -3,11 +3,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { pushBranch } from "../src/pr.js";
 import { branchDiff, chooseBranchName, commitWorktree, createWorktree, excludedPathsInBranch, hasChangesVsBase, reviewDiff, ticketBranchName, treeDiff, worktreeSnapshot, worktreeTree, worktreePath, type WorktreeSpec } from "../src/worktree.js";
 
 const run = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+const pushBranch = (cwd: string, local: string, remote: string) =>
+  run(cwd, "-c", "core.hooksPath=/dev/null", "push", "origin", `${local}:refs/heads/${remote}`);
 
 export function makeRepo(): { root: string; repoPath: string } {
   const root = mkdtempSync(join(tmpdir(), "nightshift-wt-"));

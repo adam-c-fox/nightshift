@@ -1,5 +1,5 @@
 import { budgetUsedPct } from "../budget.js";
-import type { PolicyVerdict, VoteSummary } from "../pr.js";
+import type { CiVerdict, VoteSummary } from "../pr-host.js";
 import {
   countTickets,
   postmortemActionKey,
@@ -29,7 +29,7 @@ export type PrLive =
       autoComplete: boolean;
       isDraft: boolean;
       votes: VoteSummary;
-      ci: PolicyVerdict | "unknown";
+      ci: CiVerdict | "unknown";
       title?: string;
     }
   | { state: "closed" }

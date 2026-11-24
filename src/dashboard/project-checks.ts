@@ -9,6 +9,7 @@ import {
   resolveDefaultRepo,
   resolveTestDbPath,
 } from "../project.js";
+import { PR_HOST_KINDS, PR_HOST_SECRET_KEYS, PR_HOSTS, type PrHostKind } from "../pr-host.js";
 import type { Loaded } from "./cache.js";
 
 export type CheckLevel = "pass" | "warn" | "fail";
@@ -25,14 +26,16 @@ export interface CheckDeps {
   exampleDir: string;
   rootDir?: string;
   teams: () => Promise<Loaded<LinearTeam[]>>;
-  azLogin: () => Promise<{ ok: boolean; reason: string }>;
+  hostLogin: (
+    kind: PrHostKind,
+    lookup: (name: string) => string | undefined,
+    repoPath: string,
+  ) => Promise<string>;
 }
 
 type FileCheckDeps = Pick<CheckDeps, "projectsDir" | "exampleDir" | "rootDir">;
 
-const PAT_KEYS = ["AZURE_DEVOPS_EXT_PAT", "AZURE_DEVOPS_PAT"];
-
-export const IGNORED_ENV_KEYS = ["NIGHTSHIFT_PROJECT", ...PAT_KEYS];
+export const IGNORED_ENV_KEYS = ["NIGHTSHIFT_PROJECT", ...PR_HOST_SECRET_KEYS];
 
 const ENV_EXAMPLE = ".env.example";
 const LEVEL_ORDER: CheckLevel[] = ["pass", "warn", "fail"];
@@ -43,7 +46,11 @@ type RawProject = {
   defaultRepo?: unknown;
   testDb?: unknown;
   linearTeams?: unknown;
+  prHost?: unknown;
 };
+
+const prHostKind = (raw: RawProject): PrHostKind | undefined =>
+  PR_HOST_KINDS.find((kind) => kind === raw.prHost);
 
 function check(name: string, level: CheckLevel, reason: string): ConfigCheck {
   return { name, level, reason };
@@ -129,10 +136,16 @@ function envCheck(
   name: string,
   projectDir: string,
   deps: FileCheckDeps,
+  kind: PrHostKind | undefined,
 ): ConfigCheck {
   const rootDir = deps.rootDir ?? DEFAULT_ROOT_DIR;
   const lookup = projectLookup(projectDir, rootDir);
-  const required = requiredEnvKeys(projectDir, deps.exampleDir, rootDir);
+  const required = [
+    ...new Set([
+      ...requiredEnvKeys(projectDir, deps.exampleDir, rootDir),
+      ...(kind ? PR_HOSTS[kind].envKeys : []),
+    ]),
+  ];
   const keys = {
     present: required.filter((key) => lookup(key)),
     missing: required.filter((key) => !lookup(key)),
@@ -188,7 +201,7 @@ export function fileChecks(name: string, deps: FileCheckDeps): ConfigCheck[] {
           "warn",
           "missing; agents get no project instructions",
         ),
-    envCheck(name, projectDir, deps),
+    envCheck(name, projectDir, deps, prHostKind(raw)),
     testDbCheck(projectDir, raw),
   ];
 }
@@ -217,15 +230,17 @@ async function linearTeamsCheck(
     : check("linearTeams", "pass", `${configured.join(", ")} found in Linear`);
 }
 
-async function azLoginCheck(
+async function prHostLoginCheck(
+  kind: PrHostKind,
   lookup: (name: string) => string | undefined,
-  azLogin: CheckDeps["azLogin"],
+  repoPath: string,
+  hostLogin: CheckDeps["hostLogin"],
 ): Promise<ConfigCheck> {
-  if (PAT_KEYS.some((key) => lookup(key))) {
-    return check("az login", "pass", "using the PAT from .env");
+  try {
+    return check("PR host login", "pass", `logged in as ${await hostLogin(kind, lookup, repoPath)}`);
+  } catch (e) {
+    return check("PR host login", "fail", messageOf(e).split("\n")[0]);
   }
-  const status = await azLogin();
-  return check("az login", status.ok ? "pass" : "fail", status.reason);
 }
 
 export async function projectChecks(
@@ -239,10 +254,12 @@ export async function projectChecks(
     path.join(deps.projectsDir, name),
     deps.rootDir ?? DEFAULT_ROOT_DIR,
   );
+  const kind = prHostKind(raw);
+  const repoPath = Object.values(raw.repos ?? {}).find((repo) => typeof repo.path === "string")?.path as string | undefined;
   return [
     ...checks,
     await linearTeamsCheck(configuredTeams(raw), deps.teams),
-    await azLoginCheck(lookup, deps.azLogin),
+    ...(kind && repoPath ? [await prHostLoginCheck(kind, lookup, repoPath, deps.hostLogin)] : []),
   ];
 }
 

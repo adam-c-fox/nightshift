@@ -1,79 +1,7 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { TicketResult } from "../src/types.js";
-import { buildPrDescription, buildPrTitle, commitSubject, buildPrWebUrl, prContent, orgUrl, pickTicketPr, policyListArgs, prAction, prCreateArgs, repoNameFromRemote, failedChecks, summarizePolicies, waitForPolicies, waitForPrCommit, mainBuildDefinitions, pipelineRunArgs, pipelineRunShowArgs, repoShowArgs, mainPolicyListArgs, summarizeRuns, waitForBranchBuilds, DEFAULT_BASE_BRANCH, azEnvFrom, parseAzOutput, prListArgs, ORIGIN_URL_ARGS, voteSummary, type BuildDefinition, type PipelineRun, type PolicyConfiguration, type AzPullRequest, type ExistingPr, type PolicyEvaluation } from "../src/pr.js";
-
-const policy = (status: string, type = "Build", isBlocking = true): PolicyEvaluation => ({
-  status,
-  configuration: { isEnabled: true, isBlocking, type: { displayName: type } },
-});
-
-describe("summarizePolicies", () => {
-  it("succeeds only when every blocking CI policy is approved", () => {
-    expect(summarizePolicies([policy("approved"), policy("approved", "Status")])).toBe("succeeded");
-    expect(summarizePolicies([policy("approved"), policy("running")])).toBe("pending");
-    expect(summarizePolicies([policy("approved"), policy("queued", "Status")])).toBe("pending");
-  });
-
-  it("fails on any rejected or broken blocking policy", () => {
-    expect(summarizePolicies([policy("approved"), policy("rejected")])).toBe("failed");
-    expect(summarizePolicies([policy("broken")])).toBe("failed");
-  });
-
-  it("stays pending while any required check is unfinished, even after a rejection", () => {
-    expect(summarizePolicies([policy("rejected"), policy("running")])).toBe("pending");
-    expect(summarizePolicies([policy("broken"), policy("queued", "Status")])).toBe("pending");
-  });
-
-  it("ignores reviewer, non-blocking and not-applicable policies", () => {
-    expect(summarizePolicies([policy("queued", "Minimum number of reviewers"), policy("rejected", "Build", false)])).toBe("none");
-    expect(summarizePolicies([policy("approved"), policy("notApplicable")])).toBe("succeeded");
-  });
-});
-
-describe("failedChecks", () => {
-  const named = (status: string, displayName: string | undefined, buildId?: number, type = "Build"): PolicyEvaluation => ({
-    status,
-    context: buildId === undefined ? undefined : { buildId },
-    configuration: { isEnabled: true, isBlocking: true, type: { displayName: type }, settings: displayName ? { displayName } : undefined },
-  });
-
-  it("names the rejected and broken required checks with their build ids", () => {
-    expect(failedChecks([named("rejected", "lint-format", 1), named("approved", "typecheck", 2), named("broken", "unit-tests", 3)]))
-      .toEqual([{ name: "lint-format", buildId: 1 }, { name: "unit-tests", buildId: 3 }]);
-  });
-
-  it("falls back to the policy type name", () => {
-    expect(failedChecks([named("rejected", undefined, 9, "Status")])).toEqual([{ name: "Status", buildId: 9 }]);
-  });
-
-  it("omits the build id when the evaluation has none", () => {
-    expect(failedChecks([named("rejected", "lint-format")])).toEqual([{ name: "lint-format", buildId: undefined }]);
-  });
-
-  it("reads the real Azure DevOps policy list", () => {
-    const evaluations = JSON.parse(readFileSync(new URL("./fixtures/fixture-policies.json", import.meta.url), "utf-8"));
-    expect(summarizePolicies(evaluations)).toBe("failed");
-    expect(failedChecks(evaluations)).toEqual([{ name: "lint-format", buildId: 101 }]);
-  });
-
-  it("is not affected by non-blocking rejections", () => {
-    const optional = { ...named("rejected", "optional", 5), configuration: { isEnabled: true, isBlocking: false, type: { displayName: "Build" } } };
-    expect(failedChecks([optional])).toEqual([]);
-  });
-});
-
-describe("PR helpers", () => {
-  it("builds the web URL, not the API URL", () => {
-    expect(buildPrWebUrl("https://dev.azure.com/org/", "My Project", "repo", 42))
-      .toBe("https://dev.azure.com/org/My%20Project/_git/repo/pullrequest/42");
-  });
-
-  it("accepts a bare org name", () => {
-    expect(orgUrl("acme")).toBe("https://dev.azure.com/acme");
-  });
-
-});
+import { buildPrDescription, buildPrTitle, commitSubject, findOpenTicketPr, prContent, pickTicketPr, prAction, type ExistingPr } from "../src/pr.js";
+import type { PrHost, PullRequest } from "../src/pr-host.js";
 
 describe("buildPrTitle", () => {
   it("appends the ticket id to the agent's title", () => {
@@ -170,133 +98,11 @@ describe("buildPrDescription", () => {
   });
 });
 
-describe("policyListArgs", () => {
-  it("passes only flags the az command accepts", () => {
-    expect(policyListArgs(42, "https://dev.azure.com/acme"))
-      .toEqual(["repos", "pr", "policy", "list", "--id", "42", "--org", "https://dev.azure.com/acme"]);
-  });
-});
-
-describe("prCreateArgs", () => {
-  it("names the repository instead of relying on az detection", () => {
-    const args = prCreateArgs({
-      org: "https://dev.azure.com/acme", project: "Proj", repository: "Repo",
-      sourceBranch: "night/ENG-1", targetBranch: "main", title: "t", description: "d",
-    });
-    expect(args).toEqual([
-      "repos", "pr", "create",
-      "--org", "https://dev.azure.com/acme", "--project", "Proj", "--repository", "Repo",
-      "--source-branch", "night/ENG-1", "--target-branch", "main",
-      "--title", "t", "--description", "d", "--draft", "true",
-    ]);
-  });
-});
-
-describe("waitForPolicies", () => {
-  const fast = { timeoutMs: 1000, intervalMs: 1, noPolicyGraceMs: 0 };
-
-  it("recovers from transient az errors", async () => {
-    let calls = 0;
-    const fetchEvaluations = () => {
-      calls++;
-      if (calls < 3) throw new Error("az hiccup");
-      return [policy("approved")];
-    };
-    await expect(waitForPolicies(fetchEvaluations, fast)).resolves.toMatchObject({ status: "succeeded" });
-  });
-
-  it("gives up as unknown after repeated errors and logs them", async () => {
-    const logged: string[] = [];
-    const fetchEvaluations = () => { throw new Error("unrecognized arguments: --project"); };
-    const { status: verdict } = await waitForPolicies(fetchEvaluations, { ...fast, maxConsecutiveErrors: 3, log: m => logged.push(m) });
-    expect(verdict).toBe("unknown");
-    expect(logged.join("\n")).toMatch(/unrecognized arguments/);
-    expect(logged.length).toBeLessThanOrEqual(4);
-  });
-
-  it("reports failure as soon as a blocking policy is rejected", async () => {
-    await expect(waitForPolicies(() => [policy("rejected")], fast)).resolves.toMatchObject({ status: "failed" });
-  });
-});
-
-describe("waitForPolicies with requireFreshEvaluation", () => {
-  const opts = { timeoutMs: 1000, intervalMs: 1, noPolicyGraceMs: 0, requireFreshEvaluation: true, freshnessGraceMs: 60_000 };
-  const sequence = (...evaluations: PolicyEvaluation[][]) => {
-    let i = 0;
-    return () => evaluations[Math.min(i++, evaluations.length - 1)];
-  };
-
-  it("ignores a stale rejected verdict and waits for the verdict after a pending poll", async () => {
-    const fetch = sequence([policy("rejected")], [policy("rejected")], [policy("running")], [policy("approved")]);
-    await expect(waitForPolicies(fetch, opts)).resolves.toMatchObject({ status: "succeeded" });
-  });
-
-  it("does not count a failed poll as evidence that the evaluation is fresh", async () => {
-    let call = 0;
-    const steps: (PolicyEvaluation[] | Error)[] = [
-      [policy("rejected")], new Error("az hiccup"), [policy("rejected")], [policy("running")], [policy("approved")],
-    ];
-    const fetch = () => {
-      const step = steps[Math.min(call++, steps.length - 1)];
-      if (step instanceof Error) throw step;
-      return step;
-    };
-    await expect(waitForPolicies(fetch, opts)).resolves.toMatchObject({ status: "succeeded" });
-  });
-
-  it("does not trust a stale approved verdict either", async () => {
-    const fetch = sequence([policy("approved")], [policy("queued")], [policy("rejected")]);
-    await expect(waitForPolicies(fetch, opts)).resolves.toMatchObject({ status: "failed" });
-  });
-
-  it("accepts a terminal verdict once the freshness grace has passed", async () => {
-    await expect(waitForPolicies(() => [policy("rejected")], { ...opts, freshnessGraceMs: 0 })).resolves.toMatchObject({ status: "failed" });
-  });
-
-  it("times out as unknown when only stale terminal verdicts are ever seen", async () => {
-    await expect(waitForPolicies(() => [policy("rejected")], { ...opts, timeoutMs: 30 })).resolves.toMatchObject({ status: "unknown" });
-  });
-});
-
-describe("waitForPrCommit", () => {
-  const fast = { timeoutMs: 1000, intervalMs: 1 };
-
-  it("resolves true once the PR reports the pushed commit", async () => {
-    const seen = ["old", "old", "abc"];
-    let i = 0;
-    await expect(waitForPrCommit(() => seen[Math.min(i++, seen.length - 1)], "abc", fast)).resolves.toBe(true);
-  });
-
-  it("resolves false when the commit never shows up", async () => {
-    await expect(waitForPrCommit(() => "old", "abc", { ...fast, timeoutMs: 30 })).resolves.toBe(false);
-  });
-
-  it("tolerates transient fetch errors and logs them", async () => {
-    let calls = 0;
-    const logged: string[] = [];
-    const fetchCommit = () => {
-      if (++calls < 3) throw new Error("az hiccup");
-      return "abc";
-    };
-    await expect(waitForPrCommit(fetchCommit, "abc", { ...fast, log: m => logged.push(m) })).resolves.toBe(true);
-    expect(logged.join("\n")).toMatch(/az hiccup/);
-  });
-});
-
-describe("repoNameFromRemote", () => {
-  it("takes the last path segment of ssh, https and visualstudio remotes", () => {
-    expect(repoNameFromRemote("git@ssh.dev.azure.com:v3/org/project/REPO")).toBe("REPO");
-    expect(repoNameFromRemote("https://org@dev.azure.com/org/project/_git/REPO")).toBe("REPO");
-    expect(repoNameFromRemote("https://org.visualstudio.com/project/_git/REPO.git")).toBe("REPO");
-  });
-});
-
 describe("pickTicketPr", () => {
   const branch = "adamfox/eng-1-fix-export";
-  const pr = (id: number, source: string, target = "main"): AzPullRequest => ({
-    pullRequestId: id,
-    sourceRefName: `refs/heads/${source}`,
-    targetRefName: `refs/heads/${target}`,
+  const pr = (id: number, source: string, target = "main", extra: Partial<PullRequest> = {}): PullRequest => ({
+    prId: id, sourceBranch: source, targetBranch: target, autoComplete: false, url: `https://host/pr/${id}`,
+    isDraft: false, votes: { approved: 0, waiting: 0, rejected: 0 }, ...extra,
   });
 
   it("matches the exact branch and numbered variants", () => {
@@ -314,7 +120,7 @@ describe("pickTicketPr", () => {
   });
 
   it("flags a PR that has auto-complete set", () => {
-    const withAuto = { ...pr(5, branch), autoCompleteSetBy: { displayName: "Adam" } };
+    const withAuto = pr(5, branch, "main", { autoComplete: true });
     expect(pickTicketPr([withAuto], branch)?.autoComplete).toBe(true);
     expect(pickTicketPr([pr(5, branch)], branch)?.autoComplete).toBe(false);
   });
@@ -323,15 +129,30 @@ describe("pickTicketPr", () => {
     expect(pickTicketPr([], branch)).toBeNull();
   });
 
-  it("strips refs/heads/ from both branches", () => {
+  it("returns the branches and url of the match", () => {
     expect(pickTicketPr([pr(5, branch, "develop")], branch)).toEqual({
-      prId: 5, sourceBranch: branch, targetBranch: "develop", autoComplete: false,
+      prId: 5, sourceBranch: branch, targetBranch: "develop", autoComplete: false, url: "https://host/pr/5",
     });
   });
 });
 
+describe("findOpenTicketPr", () => {
+  it("lists the repo's open PRs through the host and picks the ticket's PR", async () => {
+    const listed: string[] = [];
+    const host = {
+      listOpenPrs: async (repoPath: string) => {
+        listed.push(repoPath);
+        return { repoName: "app", prs: [{ prId: 3, sourceBranch: "ns/eng-1-x", targetBranch: "main", autoComplete: false, url: "u", isDraft: false, votes: { approved: 0, waiting: 0, rejected: 0 } }] };
+      },
+    } as unknown as PrHost;
+    await expect(findOpenTicketPr(host, "ns/eng-1-x", "/r/app")).resolves.toMatchObject({ prId: 3, url: "u" });
+    await expect(findOpenTicketPr(host, "ns/eng-2-y", "/r/app")).resolves.toBeNull();
+    expect(listed).toEqual(["/r/app", "/r/app"]);
+  });
+});
+
 describe("prAction", () => {
-  const existing = (autoComplete: boolean): ExistingPr => ({ prId: 5, sourceBranch: "night/ENG-1", targetBranch: "main", autoComplete });
+  const existing = (autoComplete: boolean): ExistingPr => ({ prId: 5, sourceBranch: "night/ENG-1", targetBranch: "main", autoComplete, url: "" });
 
   it("opens a new PR when there is none or its branch was not started from", () => {
     expect(prAction(null, false)).toBe("open");
@@ -391,164 +212,6 @@ describe("PR content", () => {
     const content = prContent({ ...result, review: { ...result.review!, conflicts } });
     expect(content.conflicts).toEqual(conflicts);
     expect(prContent(result).conflicts).toEqual([]);
-  });
-});
-
-describe("mainBuildDefinitions", () => {
-  const config = (id: number | undefined, name: string, over: Partial<PolicyConfiguration> = {}): PolicyConfiguration => ({
-    isEnabled: true, isBlocking: true, type: { displayName: "Build" }, settings: { buildDefinitionId: id, displayName: name }, ...over,
-  });
-
-  it("keeps enabled blocking build policies with their definition id and name", () => {
-    expect(mainBuildDefinitions([config(7, "ci"), config(9, "lint")])).toEqual([{ id: 7, name: "ci" }, { id: 9, name: "lint" }]);
-  });
-
-  it("drops disabled, non-blocking, non-build and id-less policies", () => {
-    expect(mainBuildDefinitions([
-      config(1, "off", { isEnabled: false }),
-      config(2, "soft", { isBlocking: false }),
-      config(3, "reviewers", { type: { displayName: "Minimum number of reviewers" } }),
-      config(undefined, "no-id"),
-    ])).toEqual([]);
-  });
-
-  it("deduplicates definitions queued by several policies", () => {
-    expect(mainBuildDefinitions([config(7, "ci"), config(7, "ci")])).toEqual([{ id: 7, name: "ci" }]);
-  });
-
-  it("falls back to a generic name", () => {
-    expect(mainBuildDefinitions([config(4, "")])).toEqual([{ id: 4, name: "build 4" }]);
-  });
-});
-
-describe("az argument builders for branch builds", () => {
-  it("builds the repo, policy, run and run show commands", () => {
-    expect(repoShowArgs("o", "p", "repo")).toEqual(["repos", "show", "--org", "o", "--project", "p", "--repository", "repo"]);
-    expect(mainPolicyListArgs("o", "p", "rid")).toEqual(["repos", "policy", "list", "--org", "o", "--project", "p", "--repository-id", "rid", "--branch", DEFAULT_BASE_BRANCH]);
-    expect(pipelineRunArgs("o", "p", 7, "feat/x")).toEqual(["pipelines", "run", "--org", "o", "--project", "p", "--id", "7", "--branch", "feat/x"]);
-    expect(pipelineRunShowArgs("o", "p", 42)).toEqual(["pipelines", "runs", "show", "--org", "o", "--project", "p", "--id", "42"]);
-  });
-});
-
-describe("summarizeRuns", () => {
-  it("is pending until every run has completed", () => {
-    expect(summarizeRuns([{ status: "completed", result: "succeeded" }, { status: "inProgress" }])).toBe("pending");
-    expect(summarizeRuns([{ status: "notStarted" }])).toBe("pending");
-  });
-
-  it("succeeds only when every run succeeded", () => {
-    expect(summarizeRuns([{ status: "completed", result: "succeeded" }, { status: "completed", result: "succeeded" }])).toBe("succeeded");
-  });
-
-  it("treats partiallySucceeded, failed and canceled as failed", () => {
-    for (const result of ["partiallySucceeded", "failed", "canceled"]) {
-      expect(summarizeRuns([{ status: "completed", result: "succeeded" }, { status: "completed", result }])).toBe("failed");
-    }
-  });
-});
-
-describe("waitForBranchBuilds", () => {
-  const defs: BuildDefinition[] = [{ id: 7, name: "ci" }, { id: 9, name: "lint" }];
-  const base = { timeoutMs: 1000, intervalMs: 1 };
-  const done = (result: string): PipelineRun => ({ status: "completed", result });
-
-  it("queues each definition once and succeeds when all runs succeed", async () => {
-    const queued: number[] = [];
-    const queueRun = (d: BuildDefinition) => { queued.push(d.id); return d.id * 10; };
-    const fetchRun = () => done("succeeded");
-    await expect(waitForBranchBuilds(defs, { ...base, queueRun, fetchRun })).resolves.toEqual({ status: "succeeded", failedChecks: [] });
-    expect(queued).toEqual([7, 9]);
-  });
-
-  it("waits through pending polls", async () => {
-    let polls = 0;
-    const fetchRun = (): PipelineRun => (polls++ < 3 ? { status: "inProgress" } : done("succeeded"));
-    await expect(waitForBranchBuilds([defs[0]], { ...base, queueRun: () => 1, fetchRun })).resolves.toMatchObject({ status: "succeeded" });
-  });
-
-  it("carries the definition name and run id of failed runs", async () => {
-    const fetchRun = (id: number) => (id === 90 ? done("partiallySucceeded") : done("succeeded"));
-    await expect(waitForBranchBuilds(defs, { ...base, queueRun: d => d.id * 10, fetchRun }))
-      .resolves.toEqual({ status: "failed", failedChecks: [{ name: "lint", buildId: 90 }] });
-  });
-
-  it("is unknown when the runs do not finish in time", async () => {
-    const result = await waitForBranchBuilds(defs, { timeoutMs: 20, intervalMs: 1, queueRun: () => 1, fetchRun: () => ({ status: "inProgress" }) });
-    expect(result).toMatchObject({ status: "unknown", failedChecks: [] });
-    expect(result.unknownReason).toMatch(/branch build/);
-  });
-
-  it("is unknown when a run cannot be queued", async () => {
-    const logged: string[] = [];
-    const queueRun = () => { throw new Error("TF401019: no permission"); };
-    const result = await waitForBranchBuilds(defs, { ...base, queueRun, fetchRun: () => done("succeeded"), log: m => logged.push(m) });
-    expect(result.status).toBe("unknown");
-    expect(result.unknownReason).toMatch(/branch build/);
-    expect(logged.join("\n")).toMatch(/no permission/);
-  });
-
-  it("recovers from transient poll errors", async () => {
-    let calls = 0;
-    const fetchRun = (): PipelineRun => { if (calls++ < 2) throw new Error("hiccup"); return done("succeeded"); };
-    await expect(waitForBranchBuilds([defs[0]], { ...base, queueRun: () => 1, fetchRun })).resolves.toMatchObject({ status: "succeeded" });
-  });
-
-  it("gives up as unknown after repeated poll errors", async () => {
-    const fetchRun = (): PipelineRun => { throw new Error("az down"); };
-    const result = await waitForBranchBuilds(defs, { ...base, maxConsecutiveErrors: 3, queueRun: () => 1, fetchRun });
-    expect(result.status).toBe("unknown");
-    expect(result.unknownReason).toMatch(/branch build/);
-  });
-
-  it("is unknown with its own reason when main has no build policy", async () => {
-    const result = await waitForBranchBuilds([], { ...base, queueRun: () => 1, fetchRun: () => done("succeeded") });
-    expect(result.status).toBe("unknown");
-    expect(result.unknownReason).toMatch(/no build policy/);
-  });
-});
-
-describe("voteSummary", () => {
-  it("counts approvals, waiting and rejections", () => {
-    expect(voteSummary([{ vote: 10 }, { vote: 5 }, { vote: 0 }, { vote: -5 }, { vote: -10 }])).toEqual({ approved: 2, waiting: 1, rejected: 1 });
-  });
-
-  it("is all zeros without reviewers", () => {
-    expect(voteSummary(undefined)).toEqual({ approved: 0, waiting: 0, rejected: 0 });
-  });
-});
-
-describe("prListArgs", () => {
-  it("lists active PRs for a repository", () => {
-    expect(prListArgs("https://dev.azure.com/o", "P", "app")).toEqual([
-      "repos", "pr", "list", "--org", "https://dev.azure.com/o", "--project", "P", "--repository", "app", "--status", "active", "--top", "200",
-    ]);
-  });
-
-  it("exposes the origin url args", () => {
-    expect(ORIGIN_URL_ARGS).toEqual(["remote", "get-url", "origin"]);
-  });
-});
-
-describe("parseAzOutput", () => {
-  it("returns null for empty output and parses JSON otherwise", () => {
-    expect(parseAzOutput("")).toBeNull();
-    expect(parseAzOutput('[{"a":1}]')).toEqual([{ a: 1 }]);
-  });
-});
-
-describe("azEnvFrom", () => {
-  it("passes the PAT as AZURE_DEVOPS_EXT_PAT", () => {
-    expect(azEnvFrom(n => (n === "AZURE_DEVOPS_PAT" ? "pat" : undefined)).AZURE_DEVOPS_EXT_PAT).toBe("pat");
-  });
-
-  it("adds nothing without a PAT", () => {
-    const before = process.env.AZURE_DEVOPS_EXT_PAT;
-    delete process.env.AZURE_DEVOPS_EXT_PAT;
-    try {
-      expect(azEnvFrom(() => undefined).AZURE_DEVOPS_EXT_PAT).toBeUndefined();
-    } finally {
-      if (before !== undefined) process.env.AZURE_DEVOPS_EXT_PAT = before;
-    }
   });
 });
 

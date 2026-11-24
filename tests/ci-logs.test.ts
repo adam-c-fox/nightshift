@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import {
-  capFailures, ciLogArgs, ciTimelineArgs, failedTasks, fetchCiFailures, formatCiFailures, stripTimestamps, tailLines,
-  type CiFailure, type CiSource, type TimelineRecord,
-} from "../src/ci-logs.js";
+import { ExecError, type Exec } from "../src/exec.js";
+import { capFailures, formatCiFailures, stripTimestamps, tailLines, type CiFailure } from "../src/ci-logs.js";
+import { makeContext } from "../src/pr-hosts/azure-devops/az.js";
+import { ciFailures, ciLogArgs, ciTimelineArgs, failedTasks, type TimelineRecord } from "../src/pr-hosts/azure-devops/checks.js";
 
 const fixture = <T>(name: string): T => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf-8"));
 const timeline = fixture<{ records: TimelineRecord[] }>("fixture-timeline.json");
@@ -55,15 +55,23 @@ describe("az arguments", () => {
   });
 });
 
-describe("fetchCiFailures", () => {
-  const source = (overrides: Partial<CiSource> = {}): CiSource => ({
-    timeline: async () => timeline.records,
-    log: async () => log.value,
-    ...overrides,
-  });
+describe("ciFailures", () => {
+  type Handlers = { timeline?: () => unknown; log?: () => unknown };
+  const hostWith = (handlers: Handlers = {}) => {
+    const exec: Exec = async (_cmd, args) => {
+      const result = args.includes("timeline")
+        ? (handlers.timeline ?? (() => timeline))()
+        : (handlers.log ?? (() => log))();
+      return { stdout: JSON.stringify(result), stderr: "" };
+    };
+    const lookup = (name: string) => ({ AZURE_DEVOPS_ORG: "o", AZURE_DEVOPS_PROJECT: "P" })[name];
+    return makeContext(lookup, exec);
+  };
+  const fetch = (checks: { name: string; buildId: number | undefined }[], handlers?: Handlers) =>
+    ciFailures(hostWith(handlers), "/r", checks);
 
   it("returns the failed task with issues and a timestamp-free tail", async () => {
-    const [failure] = await fetchCiFailures([{ name: "lint-format", buildId: 101 }], source());
+    const [failure] = await fetch([{ name: "lint-format", buildId: 101 }]);
     expect(failure.check).toBe("lint-format");
     expect(failure.task).toBe("prettier --check");
     expect(failure.issues).toEqual(["Bash exited with code '1'."]);
@@ -74,38 +82,38 @@ describe("fetchCiFailures", () => {
 
   it("limits each tail to 150 lines", async () => {
     const long = Array.from({ length: 400 }, (_, i) => `2026-10-02T17:44:17.0000000Z line ${i}`);
-    const [failure] = await fetchCiFailures([{ name: "c", buildId: 1 }], source({ log: async () => long }));
+    const [failure] = await fetch([{ name: "c", buildId: 1 }], { log: () => ({ value: long }) });
     const lines = failure.tail.split("\n");
     expect(lines).toHaveLength(150);
     expect(lines.at(-1)).toBe("line 399");
   });
 
   it("still names the check when the timeline cannot be fetched", async () => {
-    const [failure] = await fetchCiFailures([{ name: "lint-format", buildId: 1 }], source({ timeline: async () => { throw new Error("boom"); } }));
+    const [failure] = await fetch([{ name: "lint-format", buildId: 1 }], { timeline: () => { throw new ExecError("boom", "", "boom", 1); } });
     expect(failure).toMatchObject({ check: "lint-format", task: "", tail: "" });
     expect(failure.error).toMatch(/boom/);
   });
 
   it("keeps the task and its issues when only the log fetch fails", async () => {
-    const [failure] = await fetchCiFailures([{ name: "lint-format", buildId: 1 }], source({ log: async () => { throw new Error("no log"); } }));
+    const [failure] = await fetch([{ name: "lint-format", buildId: 1 }], { log: () => { throw new ExecError("no log", "", "no log", 1); } });
     expect(failure).toMatchObject({ check: "lint-format", task: "prettier --check", issues: ["Bash exited with code '1'."], tail: "" });
     expect(failure.error).toMatch(/no log/);
   });
 
   it("names the check when the build id is unknown", async () => {
-    const [failure] = await fetchCiFailures([{ name: "mystery", buildId: undefined }], source());
+    const [failure] = await fetch([{ name: "mystery", buildId: undefined }]);
     expect(failure.check).toBe("mystery");
     expect(failure.error).toBeTruthy();
   });
 
   it("names the check when no failed task is found", async () => {
-    const [failure] = await fetchCiFailures([{ name: "c", buildId: 1 }], source({ timeline: async () => [] }));
+    const [failure] = await fetch([{ name: "c", buildId: 1 }], { timeline: () => ({ records: [] }) });
     expect(failure.check).toBe("c");
     expect(failure.error).toMatch(/no failed task/i);
   });
 
   it("covers every failed check", async () => {
-    const failures = await fetchCiFailures([{ name: "a", buildId: 1 }, { name: "b", buildId: 2 }], source());
+    const failures = await fetch([{ name: "a", buildId: 1 }, { name: "b", buildId: 2 }]);
     expect(failures.map(f => f.check)).toEqual(["a", "b"]);
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createProjectSwitcher, nightOrder } from "../src/night.js";
 import { CLAUDE_TOKEN } from "../src/agent-env.js";
+import type { PrHost } from "../src/pr-host.js";
 import type { Project } from "../src/project.js";
 import type { Ticket } from "../src/types.js";
 
@@ -52,15 +53,17 @@ describe("createProjectSwitcher", () => {
     const events: string[] = [];
     let envFile = "";
     const prefixes: Record<string, string> = { "/eoe.env": "eoe-prefix", "/memo.env": "memo-prefix" };
+    const hosts: Record<string, PrHost> = { eoe: {} as PrHost, memosum: {} as PrHost };
     const switcher = createProjectSwitcher({
       load: name => projects[name],
       useEnv: file => { envFile = file; events.push(`env ${file}`); },
       getEnv: name => (name === "BRANCH_PREFIX" ? prefixes[envFile] : undefined),
+      prHost: project => { events.push(`host ${project.name}`); return hosts[project.name]; },
       startDb: script => { events.push(`start ${script}`); return { url: "x", stop: () => events.push(`stop ${script}`) }; },
       loadPrState: name => ({ state: {}, file: `/state/${name}.json` }),
       genericInstructions: "generic",
     });
-    return { switcher, events };
+    return { switcher, events, hosts };
   }
 
   it("gives each project its own branch prefix, instructions and PR state", () => {
@@ -74,6 +77,14 @@ describe("createProjectSwitcher", () => {
     expect(memo.instructions).not.toContain("eoe rules");
     expect(memo.prWrites).not.toBe(eoe.prWrites);
     expect(switcher.enter("eoe").prWrites).toBe(eoe.prWrites);
+  });
+
+  it("creates the PR host after the env switch, once per switch, and exposes it on the context", () => {
+    const { switcher, events, hosts } = setup();
+    expect(switcher.enter("eoe").prHost).toBe(hosts.eoe);
+    expect(switcher.enter("eoe").prHost).toBe(hosts.eoe);
+    expect(switcher.enter("memosum").prHost).toBe(hosts.memosum);
+    expect(events.filter(e => /^(env|host)/.test(e))).toEqual(["env /eoe.env", "host eoe", "env /memo.env", "host memosum"]);
   });
 
   it("stops the previous test db before starting the next, and does not restart on re-entry", () => {
@@ -100,6 +111,7 @@ describe("createProjectSwitcher", () => {
       load: name => projects[name],
       useEnv: file => { envFile = file; },
       getEnv: name => process.env[name] ?? (name === CLAUDE_TOKEN ? tokens[envFile] : undefined),
+      prHost: () => ({}) as PrHost,
       startDb: () => undefined,
       loadPrState: name => ({ state: {}, file: `/state/${name}.json` }),
       genericInstructions: "generic",

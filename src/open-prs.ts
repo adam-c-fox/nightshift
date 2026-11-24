@@ -4,6 +4,7 @@ import { getEnv, useProjectEnv } from "./env.js";
 import { listProjects, type Project, loadProject, REPO_NAME_PATTERN } from "./project.js";
 import { fetchTicket } from "./linear.js";
 import { findOpenTicketPr } from "./pr.js";
+import { createPrHost } from "./pr-host.js";
 import { ticketBranchName } from "./worktree.js";
 
 const TARGET = new RegExp(`^(${REPO_NAME_PATTERN}):([A-Z]+-\\d+)$`, "i");
@@ -23,7 +24,8 @@ async function lookup(project: Project, repo: string, id: string): Promise<objec
     if (!repoPath) return { id, error: `unknown repo ${repo}` };
     const linear = await fetchTicket(id);
     if (!linear) return { id, error: `ticket ${id} not found in Linear` };
-    const pr = findOpenTicketPr(ticketBranchName(getEnv("BRANCH_PREFIX"), id, linear.name), repoPath);
+    const host = createPrHost(project.prHost, getEnv);
+    const pr = await findOpenTicketPr(host, ticketBranchName(getEnv("BRANCH_PREFIX"), id, linear.name), repoPath);
     return { id, repo, pr: pr?.prId ?? null, branch: pr?.sourceBranch ?? null, ...(pr?.autoComplete ? { autoComplete: true } : {}) };
   } catch (e) {
     const firstLine = ((e as Error).message ?? String(e)).split("\n")[0];

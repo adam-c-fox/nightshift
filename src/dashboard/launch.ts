@@ -1,6 +1,6 @@
 import { PROJECT_NAME } from "../project.js";
 import { TICKET_ID } from "../tickets.js";
-import { ExecError, type Exec } from "./exec.js";
+import { ExecError, type Exec } from "../exec.js";
 
 export type LaunchRequest =
   | { kind: "prep"; id: string; project: string }

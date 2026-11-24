@@ -1,5 +1,5 @@
 import { CI_BADGES, esc, STATUS_COLORS } from "../../report.js";
-import type { PolicyVerdict } from "../../pr.js";
+import type { CiVerdict } from "../../pr-host.js";
 import type { ProjectRun } from "../../heartbeat.js";
 import type { InboxItem, NightRow, PrLive } from "../inbox.js";
 import { badge } from "./clock-off.js";
@@ -48,7 +48,7 @@ function summaryLine(summary: string): string {
     : oneLine;
 }
 
-function ciBadge(ci: PolicyVerdict | "unknown"): string {
+function ciBadge(ci: CiVerdict | "unknown"): string {
   if (ci === "pending") return badge("CI pending", PENDING_COLOR);
   if (ci === "none") return badge("no CI", NEUTRAL_COLOR);
   const known = CI_BADGES[ci] ?? CI_BADGES.unknown;

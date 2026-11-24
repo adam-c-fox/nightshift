@@ -5,8 +5,8 @@ export const TTL_MS = {
   prs: 300_000,
   usage: 600_000,
   teams: 3_600_000,
-  azLogin: 300_000,
-  azUser: 3_600_000,
+  hostLogin: 300_000,
+  hostUser: 3_600_000,
 } as const;
 
 export interface TtlCache {
@@ -95,17 +95,17 @@ export const cacheKeys = {
     `linear:issues:${project}:${ids.join(",")}`,
   teams: (project: string) => `linear:teams:${project}`,
   prs: (repoPath: string) => `prs:${repoPath}`,
-  ci: (org: string, prId: number) => `ci:${org}:${prId}`,
+  ci: (repoPath: string, prId: number) => `ci:${repoPath}:${prId}`,
   usage: (project: string) => `usage:${project}`,
-  azLogin: () => "az:login",
-  azUser: () => "az:user",
+  hostLogin: (project: string, envHash: string) => `host:login:${project}:${envHash}`,
+  hostUser: (project: string, envHash: string) => `host:user:${project}:${envHash}`,
 };
 
 export type RefreshTarget = "linear" | "prs" | "usage" | "teams" | "all";
 
 export const REFRESH_PREFIXES: Record<RefreshTarget, string[]> = {
   linear: ["linear:todo:", "linear:issues:"],
-  prs: ["prs:", "ci:", "az:"],
+  prs: ["prs:", "ci:", "host:"],
   usage: ["usage:"],
   teams: ["linear:teams:"],
   all: [""],

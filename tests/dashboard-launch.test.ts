@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ExecError, type Exec } from "../src/dashboard/exec.js";
+import { ExecError, type Exec } from "../src/exec.js";
 import {
   AGENT_NAME,
   agentName,

@@ -1,3 +1,4 @@
+import { PR_HOST_DENIED_DOMAINS } from "./pr-host.js";
 import type { RepoConfig } from "./project.js";
 
 const SECRET_NAME = /^(LINEAR_|AZURE_|ARM_)|^(AWS_|TF_TOKEN_)|(_TOKEN|_PAT|_SECRET|_PASSWORD|_API_KEY|_KEY|_CREDENTIALS?|_PASSWD|_authToken)$/i;
@@ -10,7 +11,6 @@ export function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 const DENY_READ = ["~/.ssh", "~/.aws", "~/.azure", "~/.config/gh", "~/.npmrc", "~/.netrc", "~/.git-credentials"];
-const ADO_DOMAINS = ["dev.azure.com", "*.dev.azure.com", "*.visualstudio.com", "vssps.visualstudio.com"];
 
 export function buildAgentSettings(
   { network, allowLocalBinding }: Pick<RepoConfig, "network" | "allowLocalBinding">, nightshiftRoot: string, { readLogs = false, secretFiles = [] }: { readLogs?: boolean; secretFiles?: string[] } = {},
@@ -31,7 +31,7 @@ export function buildAgentSettings(
       allowUnsandboxedCommands: false,
       filesystem: { denyRead },
       network: {
-        strictAllowlist: true, allowedDomains: network, deniedDomains: ADO_DOMAINS,
+        strictAllowlist: true, allowedDomains: network, deniedDomains: PR_HOST_DENIED_DOMAINS,
         ...(allowLocalBinding ? { allowLocalBinding: true } : {}),
       },
     },

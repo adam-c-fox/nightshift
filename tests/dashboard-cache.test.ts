@@ -158,13 +158,14 @@ describe("cacheKeys and constants", () => {
     expect(cacheKeys.prs("/r")).toBe("prs:/r");
     expect(cacheKeys.ci("org", 7)).toBe("ci:org:7");
     expect(cacheKeys.usage("acme")).toBe("usage:acme");
-    expect(cacheKeys.azLogin()).toBe("az:login");
+    expect(cacheKeys.hostLogin("acme", "ab12")).toBe("host:login:acme:ab12");
+    expect(cacheKeys.hostUser("acme", "ab12")).toBe("host:user:acme:ab12");
   });
 
   it("maps refresh targets to key prefixes", () => {
     expect(REFRESH_PREFIXES).toEqual({
       linear: ["linear:todo:", "linear:issues:"],
-      prs: ["prs:", "ci:", "az:"],
+      prs: ["prs:", "ci:", "host:"],
       usage: ["usage:"],
       teams: ["linear:teams:"],
       all: [""],
@@ -177,8 +178,8 @@ describe("cacheKeys and constants", () => {
       prs: 300_000,
       usage: 600_000,
       teams: 3_600_000,
-      azLogin: 300_000,
-      azUser: 3_600_000,
+      hostLogin: 300_000,
+      hostUser: 3_600_000,
     });
   });
 });

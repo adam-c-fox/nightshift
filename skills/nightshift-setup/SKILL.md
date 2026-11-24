@@ -26,11 +26,16 @@ Resolve this skill's directory through any symlink, then set `$NS` to its grandp
 
 ## 2. Fit check
 
-Nightshift's PR host is hardwired. Check every repo against this:
+Nightshift needs a PR host for each repo. For every repo, run this from `$NS`:
 
-- **PR host is Azure DevOps.** The `origin` remote must be on `dev.azure.com` or `*.visualstudio.com`. Nightshift opens PRs, reads CI and lists open PRs only through `az`.
+```
+npm run --silent pr-host -- "$(git -C <repo path> remote get-url origin)"
+```
 
-A repo on another PR host is a **blocker**. Stop before writing files and tell the user which part of nightshift would need to change. Anything smaller is a gap: note it and carry on.
+- **Exit 1 is a blocker.** Stop before writing files, tell the user nightshift has no PR host for that remote, and point them to `$NS/docs/providers.md`.
+- **All repos in a project must report the same `prHost`.** Different values are a blocker.
+
+Keep each repo's output: `prHost` goes into `project.json` and `env` goes into `.env` in step 5. Anything smaller than a blocker is a gap: note it and carry on.
 
 ## 3. Test database
 
@@ -63,18 +68,14 @@ The baseline runs unsandboxed, but night agents run sandboxed. Their network all
 
 ## 5. Write `$NS/projects/<name>/`
 
-- **`project.json`**: use the example's shape. `/tonight` and `/prep` route each ticket to a repo by its `description`, so fill it with the nouns tickets will use: frameworks, cloud provider, resource types, top-level directories. Set `defaultRepo` when there are two or more repos. Add `testDb` if you wrote the script.
+- **`project.json`**: use the example's shape. `prHost` is required: write the value from step 2. `/tonight` and `/prep` route each ticket to a repo by its `description`, so fill it with the nouns tickets will use: frameworks, cloud provider, resource types, top-level directories. Set `defaultRepo` when there are two or more repos. Add `testDb` if you wrote the script.
   - Per repo, `setup` and `checks` come from step 1 and the baseline.
   - `network` holds the registries setup and tests reach (npm, PyPI, NuGet, Terraform registry...), plus `localhost` and `127.0.0.1` when tests use local services (with `allowLocalBinding: true`).
   - `tools` holds the command prefixes the agent needs, e.g. `npm`, `dotnet`, `.venv/bin/pytest`.
   - A runtime that isn't installed here is a **Missing here** item, not a reason to drop the check.
-- **`.env`**: three keys, then `chmod 600`.
-  - `AZURE_DEVOPS_ORG` and `AZURE_DEVOPS_PROJECT` come from `origin`. The remote can be in any of these forms (URL-decode the project name):
-    - `git@ssh.dev.azure.com:v3/<org>/<project>/<repo>`
-    - `https://dev.azure.com/<org>/<project>/_git/<repo>`
-    - `https://<org>.visualstudio.com/<project>/_git/<repo>`
+- **`.env`**: the `env` entries from step 2 and `BRANCH_PREFIX`, then `chmod 600`.
   - Ask the user for an optional `BRANCH_PREFIX`, or leave it empty.
-  - The PAT, `LINEAR_API_KEY` and the Claude token belong in the root `$NS/.env`.
+  - Credentials (PATs, tokens), `LINEAR_API_KEY` and the Claude token belong in the root `$NS/.env`.
 - **`AGENTS.md`**: the example's three sections, each holding only facts you verified in steps 1–4:
   - **Repos**: the layout, how to run one test file, and every place the generic `AGENTS.md` is wrong for this repo. The root `AGENTS.md` is stack-neutral, so stack-specific workflow notes go here (e.g. Terraform: validate instead of unit tests, never plan or apply).
   - **Services in this environment**.

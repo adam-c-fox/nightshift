@@ -66,7 +66,7 @@ npm run -s prep-status
 
 ## Projects
 
-`/projects` lists each project with its overall file-check status: config, default repo, `.env` keys, `AGENTS.md` and the test database script. The `linearTeams` and `az` login checks run on the project's own page. The dashboard doesn't edit projects. `project.json` is written by `/nightshift-setup` or by hand; see [Projects](setup.md#projects).
+`/projects` lists each project with its overall file-check status: config, default repo, `.env` keys, `AGENTS.md` and the test database script. The `linearTeams` and PR host login checks run on the project's own page. The dashboard doesn't edit projects. `project.json` is written by `/nightshift-setup` or by hand; see [Projects](setup.md#projects).
 
 ## Security
 

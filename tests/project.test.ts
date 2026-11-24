@@ -14,7 +14,7 @@ import {
 
 const everything = () => true;
 const parseProjectConfig = (name: string, dir: string, raw: unknown, exists: (p: string) => boolean) =>
-  parseConfigStrict(name, dir, { linearProjects: ["Acme"], ...(raw as object) }, exists);
+  parseConfigStrict(name, dir, { linearProjects: ["Acme"], prHost: "azure-devops", ...(raw as object) }, exists);
 const repos = {
   main: { path: "/r/app", description: "app", checks: [{ name: "tests", command: "npm test" }] },
   infra: {
@@ -53,6 +53,7 @@ describe("parseProjectConfig", () => {
       defaultRepo: "main",
       testDbScript: "/p/acme/test-db.sh",
       linearProjects: ["Acme"],
+      prHost: "azure-devops",
       envFile: "/p/acme/.env",
     });
   });
@@ -182,6 +183,16 @@ describe("parseProjectConfig", () => {
     ).toThrow(/linearProjects must be a non-empty list of Linear project names/);
   });
 
+  it.each([undefined, "github", 7])("rejects prHost %j", (value) => {
+    expect(() =>
+      parseConfigStrict("a", "/p/a", { repos: { app: repos.main }, linearProjects: ["Acme"], prHost: value }, everything),
+    ).toThrow(/prHost must be one of: azure-devops/);
+  });
+
+  it("sets prHost from the config", () => {
+    expect(parseProjectConfig("a", "/p/a", { repos: { app: repos.main } }, everything).prHost).toBe("azure-devops");
+  });
+
   it("rejects a project with no repos", () => {
     expect(() =>
       parseProjectConfig("a", "/p/a", { repos: {} }, everything),
@@ -269,6 +280,7 @@ describe("loadProject", () => {
       JSON.stringify({
         repos: { app: { path: repo, description: "app", checks: [{ name: "t", command: "x" }] } },
         linearProjects: ["Acme"],
+        prHost: "azure-devops",
       }),
     );
     writeFileSync(join(root, "acme", "AGENTS.md"), "# Acme\n");
@@ -333,6 +345,7 @@ describe("loadAllProjects", () => {
       JSON.stringify({
         repos: { app: { path: repo, description: "app", checks: [{ name: "t", command: "x" }] } },
         linearProjects,
+        prHost: "azure-devops",
       }),
     );
   };

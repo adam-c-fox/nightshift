@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCache } from "../src/dashboard/cache.js";
-import { ExecError, type Exec } from "../src/dashboard/exec.js";
+import { ExecError, type Exec } from "../src/exec.js";
 import {
   MAX_BODY_BYTES,
   createDashboardServer,
@@ -564,6 +564,7 @@ describe("POST /api/queue", () => {
       JSON.stringify({
         repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
         linearProjects: ["Demo"],
+        prHost: "azure-devops",
       }),
     );
     write(join(root, ".env"), "LINEAR_API_KEY=k\n");
@@ -666,6 +667,7 @@ describe("no secrets in responses", () => {
         repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
         linearTeams: ["DEMO"],
         linearProjects: ["Demo"],
+        prHost: "azure-devops",
       }),
     );
     write(
@@ -678,6 +680,7 @@ describe("no secrets in responses", () => {
       JSON.stringify({
         repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
         linearProjects: ["Example"],
+        prHost: "azure-devops",
       }),
     );
     const deps = {

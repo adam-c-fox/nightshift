@@ -2,7 +2,7 @@
 
 Nightshift can work across different codebases without changing its source when they fit the stack below. Repo paths, routing descriptions, project instructions, Linear projects, and test database scripts are project configuration. The nightly Claude allowance is one setting for every project. Each repo's setup and check commands are configuration too. Providers and agent integrations are code.
 
-There is no connector registry or provider interface today. New integrations are feasible, but adding one means changing and testing the runner and its related tools.
+PR hosts sit behind the `PrHost` interface in [`pr-host.ts`](../src/pr-host.ts). Each project picks one with the required `prHost` key in `project.json`, and Azure DevOps is the only implementation. The issue tracker and coding agent have no interface yet, so adding one means changing and testing the runner and its related tools.
 
 ## What works today
 
@@ -10,7 +10,7 @@ There is no connector registry or provider interface today. New integrations are
 | --- | --- |
 | Projects | Multiple local git repos per project, with absolute paths and a default repo. Each repo lists its own `setup` and `checks` commands, sandbox `network` hosts and agent `tools`. |
 | Tickets | Linear descriptions, comments, assignees and workflow states. The evening list uses the state name `Todo`; the runner looks for a started state and an `In Review` state. Ticket IDs use letters followed by a number, such as `ENG-142`. |
-| PRs and remote CI | Azure DevOps through `az`, including existing PRs, reviewer votes, auto-complete, branch policies, build runs and failure logs. A project's repos share its Azure organization/project settings. |
+| PRs and remote CI | `prHost: azure-devops`, through `az`, including existing PRs, reviewer votes, auto-complete, branch policies, build runs and failure logs. A project's repos share its Azure organization/project settings. |
 | Target repos | Any repo whose setup and checks are shell commands. A command can run once per directory matched by a file glob. |
 | Implementation and review | Claude Code implements and fixes changes, confirms review candidates and runs the postmortem. Codex supplies an additional read-only review pass; an unavailable Codex pass is recorded as skipped. |
 | Test services | An optional executable project script accepts `up` and `down`. `up` prints one URL, exported as `TEST_DATABASE_URL`. The example runs Postgres in Docker. |
@@ -47,10 +47,8 @@ Adding another project, including one with a different package manager or langua
 
 | Integration | Starting points | Work beyond the API calls |
 | --- | --- | --- |
-| GitHub or GitLab PRs | [`pr.ts`](../src/pr.ts), [`ci-logs.ts`](../src/ci-logs.ts), [`dashboard/azure.ts`](../src/dashboard/azure.ts) | Normalize open/update PR operations, branch matching, check status, failure logs, votes and auto-merge protection. Wire the provider into the runner, dashboard, project checks and setup skill. Azure branch-policy and stacked-build behavior needs an equivalent or an explicit supported limitation. |
+| GitHub or GitLab PRs | [`pr-host.ts`](../src/pr-host.ts), [`pr-hosts/azure-devops/`](../src/pr-hosts/azure-devops), [`pr-host-contract.ts`](../tests/pr-host-contract.ts) | Implement the `PrHost` interface and add one entry to `PR_HOSTS`. Azure branch-policy and stacked-build behavior needs an equivalent or an explicit supported limitation. See [providers.md](providers.md), part A. |
 | Jira or GitHub Issues | [`linear.ts`](../src/linear.ts), [`types.ts`](../src/types.ts), [`tickets.ts`](../src/tickets.ts) | Normalize ticket content, comments, assignment and state transitions. Update prep commands, skills, dashboard queries and ticket-ID validation. GitHub's numeric issue IDs need a repository-qualified identity so tickets from different repos cannot collide. |
 | Another coding agent | [`claude.ts`](../src/claude.ts), [`codex.ts`](../src/codex.ts), [`budget.ts`](../src/budget.ts) | Implement process arguments, authentication, event/output parsing, usage accounting, retries and sandbox permissions. The structured report/review blocks are reusable, but confirmation, fixing and postmortem runs still depend on Claude. |
 
-For a second PR host, first extract a small provider interface around the operations the runner already calls, then implement both Azure and the new host against it. Share that provider between the runner and dashboard rather than adding another set of provider conditionals. For a second issue tracker, do the same with ticket retrieval and workflow updates, and replace Linear-specific domain types at that boundary.
-
-The core worktree, check-comparison, review-confirmation and report logic can stay. [`runner.ts`](../src/runner.ts) and [`dashboard/sources.ts`](../src/dashboard/sources.ts) currently import providers directly, so changing only one API module will not complete a connector. Use the existing provider tests as behavior contracts, then validate authentication, PR creation, CI failure handling and status updates in a disposable real project.
+To add a PR host, follow [providers.md](providers.md), part A. For a second issue tracker or coding agent, follow part B: list the calls the runner already makes, put an interface around them, and replace provider-specific domain types at that boundary.

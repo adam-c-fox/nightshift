@@ -55,6 +55,7 @@ function goodConfig(overrides: Record<string, unknown> = {}) {
     testDb: "db.sh",
     linearTeams: ["DEMO"],
     linearProjects: ["Demo"],
+    prHost: "azure-devops",
     ...overrides,
   };
 }
@@ -71,7 +72,7 @@ function deps(overrides: Partial<CheckDeps> = {}): CheckDeps {
     exampleDir: join(projectsDir, "example"),
     rootDir: root,
     teams: async () => ok([{ key: "DEMO", name: "G" }]),
-    azLogin: async () => ({ ok: true, reason: "logged in as a" }),
+    hostLogin: async () => "a",
     ...overrides,
   };
 }
@@ -299,12 +300,12 @@ describe("requiredEnvKeys", () => {
 });
 
 describe("projectChecks", () => {
-  it("appends passing linearTeams and az login checks", async () => {
+  it("appends passing linearTeams and PR host login checks", async () => {
     const checks = await projectChecks("good", deps());
     expect(checks.slice(-2)).toEqual([
       expect.objectContaining({ name: "linearTeams", level: "pass" }),
       expect.objectContaining({
-        name: "az login",
+        name: "PR host login",
         level: "pass",
         reason: "logged in as a",
       }),
@@ -344,44 +345,84 @@ describe("projectChecks", () => {
     expect(teams).not.toHaveBeenCalled();
   });
 
-  it("fails az login when not logged in", async () => {
+  it("fails PR host login with the first line of the host error", async () => {
     const checks = await projectChecks(
       "good",
-      deps({ azLogin: async () => ({ ok: false, reason: "not logged in" }) }),
+      deps({
+        hostLogin: async () => {
+          throw new Error("Please run 'az login'\nmore detail");
+        },
+      }),
     );
-    expect(byName(checks, "az login")).toMatchObject({
+    expect(byName(checks, "PR host login")).toMatchObject({
       level: "fail",
-      reason: "not logged in",
+      reason: "Please run 'az login'",
     });
   });
 
-  it("passes az login from a PAT in the env chain without running az", async () => {
+  it("asks the host for the user with the project kind and env chain", async () => {
     writeFileSync(
       join(projectsDir, "good", ".env"),
       "AZURE_DEVOPS_PAT=secretpat\n",
     );
-    const azLogin = vi.fn(async () => ({
-      ok: false,
-      reason: "should not run",
-    }));
-    const checks = await projectChecks("good", deps({ azLogin }));
-    expect(byName(checks, "az login")).toMatchObject({
-      level: "pass",
-      reason: "using the PAT from .env",
+    const hostLogin = vi.fn(async (_kind: string, lookup: (n: string) => string | undefined, _repoPath: string) =>
+      lookup("AZURE_DEVOPS_PAT") ?? "none",
+    );
+    const checks = await projectChecks("good", deps({ hostLogin }));
+    expect(hostLogin).toHaveBeenCalledWith("azure-devops", expect.any(Function), repo);
+    expect(byName(checks, "PR host login").level).toBe("pass");
+  });
+
+  it("fails when only a PAT is set and the host cannot resolve a user", async () => {
+    writeFileSync(
+      join(projectsDir, "good", ".env"),
+      "AZURE_DEVOPS_PAT=secretpat\n",
+    );
+    const checks = await projectChecks(
+      "good",
+      deps({
+        hostLogin: async () => {
+          throw new Error("no az account");
+        },
+      }),
+    );
+    expect(byName(checks, "PR host login")).toMatchObject({
+      level: "fail",
+      reason: "no az account",
     });
-    expect(azLogin).not.toHaveBeenCalled();
     expect(JSON.stringify(checks)).not.toContain("secretpat");
   });
 
-  it("accepts AZURE_DEVOPS_EXT_PAT from the root .env", async () => {
-    writeFileSync(join(root, ".env"), "AZURE_DEVOPS_EXT_PAT=rootpat\n");
-    const azLogin = vi.fn(async () => ({
-      ok: false,
-      reason: "should not run",
-    }));
-    const checks = await projectChecks("good", deps({ azLogin }));
-    expect(byName(checks, "az login").level).toBe("pass");
-    expect(azLogin).not.toHaveBeenCalled();
+  it("emits no PR host login check without a valid prHost", async () => {
+    writeProject("good", goodConfig({ prHost: undefined }), goodFiles);
+    const hostLogin = vi.fn(async () => "a");
+    const checks = await projectChecks("good", deps({ hostLogin }));
+    expect(checks.map((c) => c.name)).not.toContain("PR host login");
+    expect(byName(checks, "config").level).toBe("fail");
+    expect(hostLogin).not.toHaveBeenCalled();
+    writeProject("good", goodConfig({ prHost: "gitlab" }), goodFiles);
+    expect(
+      (await projectChecks("good", deps({ hostLogin }))).map((c) => c.name),
+    ).not.toContain("PR host login");
+  });
+
+  it("emits no PR host login check when no repo has a path", async () => {
+    writeProject("good", goodConfig({ repos: { app: { checks: [] } } }), goodFiles);
+    const hostLogin = vi.fn(async () => "a");
+    const checks = await projectChecks("good", deps({ hostLogin }));
+    expect(checks.map((c) => c.name)).not.toContain("PR host login");
+    expect(hostLogin).not.toHaveBeenCalled();
+  });
+
+  it("requires the host's env keys even when the example does not list them", () => {
+    writeFileSync(join(projectsDir, "example", ".env.example"), "BRANCH_PREFIX=\n");
+    const env = byName(fileChecks("good", deps()), ".env");
+    expect(env.keys?.missing).toEqual([
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "BRANCH_PREFIX",
+      "AZURE_DEVOPS_ORG",
+      "AZURE_DEVOPS_PROJECT",
+    ]);
   });
 });
 

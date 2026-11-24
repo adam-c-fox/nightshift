@@ -32,8 +32,8 @@ Fill in the project's `.env` (see [Projects](#projects)). An empty value there f
 
 | Variable | What it's for |
 | --- | --- |
-| `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT` | Opening PRs and reading CI results |
-| `AZURE_DEVOPS_USER` | Optional. Your Azure DevOps email, for finding your PRs, when `az account show` doesn't give it |
+| `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT` | For `prHost: azure-devops`: opening PRs and reading CI results |
+| `AZURE_DEVOPS_USER` | For `prHost: azure-devops`. Optional. Your Azure DevOps email, for finding your PRs, when `az account show` doesn't give it |
 | `BRANCH_PREFIX` | Optional prefix for ticket branches |
 
 The `az` login, or the PAT with Code (Read & write) scope, must be able to read and write PR threads, because the PR comment sweep replies to and resolves them.
@@ -64,9 +64,9 @@ A project is the set of repos nightshift works in, plus the instructions for the
 
 | File | What it's for |
 | --- | --- |
-| `project.json` | Repos (`path`, `description`, `setup`, `checks`, `network`, `allowLocalBinding`, `tools`), `defaultRepo`, `linearProjects` (required), optional `testDb` script and `linearTeams` |
+| `project.json` | Repos (`path`, `description`, `setup`, `checks`, `network`, `allowLocalBinding`, `tools`), `defaultRepo`, `linearProjects` (required), `prHost` (required, `azure-devops` is the only value), optional `testDb` script and `linearTeams` |
 | `AGENTS.md` | Project instructions appended to the root [`AGENTS.md`](../AGENTS.md): repo layout, services available, tools missing |
-| `.env` | Azure DevOps settings and `BRANCH_PREFIX` for this project |
+| `.env` | The PR host's settings and `BRANCH_PREFIX` for this project |
 | `test-db.sh` | Optional script that starts the throwaway Postgres |
 
 Each repo lists its own commands. Nothing is built in:
@@ -109,7 +109,7 @@ Each repo lists its own commands. Nothing is built in:
 
 `linearProjects` is a list of Linear project names, such as `["Mobile app"]`. A ticket belongs to the nightshift project that owns its Linear project, and no Linear project can belong to two nightshift projects. A Todo ticket whose Linear project no nightshift project owns isn't offered for tonight. `linearTeams` is an optional list of Linear team keys such as `["ENG"]`; the PR sweep only treats a branch named after a ticket in those teams as that ticket. `allowancePercent` is rejected: set `NIGHTLY_ALLOWANCE_PERCENT` in the root `.env`. `night` is reserved and can't be a project name. `/prep` and `/tonight` use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](dashboard.md#prep-memory).
 
-Start a new project by running `/nightshift-setup` from the root of its repo, after installing the skill above. It writes `projects/<name>/`, reads the repo's CI config for `setup` and `checks`, runs them against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`templates/project`](../templates/project) to `projects/<name>`, create its `.env` from `.env.example`, and replace the placeholder paths in `project.json`; it won't load until they exist. `prep-mark`, `usage` and `open-prs` take `--project <name>` or `NIGHTSHIFT_PROJECT`. `npm run run` has no `--project`: one night covers every project, and `--allowance <pct>` overrides the night's budget.
+Start a new project by running `/nightshift-setup` from the root of its repo, after installing the skill above. It writes `projects/<name>/`, reads the repo's CI config for `setup` and `checks`, runs them against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`templates/project`](../templates/project) to `projects/<name>`, create its `.env` from `.env.example`, add the PR host's keys to it (`npm run pr-host -- <origin-url>` prints them for a repo's `origin` remote), and replace the placeholder paths in `project.json`; it won't load until they exist. Projects created before `prHost` existed need `"prHost": "azure-devops"` added to `project.json`; loading fails without it. `prep-mark`, `usage` and `open-prs` take `--project <name>` or `NIGHTSHIFT_PROJECT`. `npm run run` has no `--project`: one night covers every project, and `--allowance <pct>` overrides the night's budget.
 
 ## Each evening
 
