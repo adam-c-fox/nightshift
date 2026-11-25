@@ -28,12 +28,7 @@ Discover the connected tools for the project's `issueTracker` (`linear`: the Lin
    "Not ready" ends the prep: list what the ticket still needs, then run `npm run -s prep-mark -- <ID> --project <project> --not-ready "<blockers in one line>"`, leave the ticket unchanged, and stop. If it prints `error`, tell the user and stop anyway.
    Done when every gap has an answer.
 
-5. Draft the new description. Keep the existing text as it is. After it, add only the sections that have content:
-   - `## Acceptance criteria`: testable checkboxes, when the ticket has none or they are vague;
-   - `## Decisions`: one bullet per gap answer and per decision found only in comments. Write "your call" as "Your call on X; state the choice in notes";
-   - `## Pointers`: likely files as `see <path>`, helpers to reuse, areas to leave alone.
-
-   If the description already has a section with one of these names, update it in place. Write it for a developer reading the ticket: plain, specific, with no mention of nightshift, agents or automation.
+5. Draft the new description. Follow `draft.md` in this skill's folder.
    Done when every gap answer appears exactly once, and no bullet repeats the existing text.
 
 6. Show the full draft description and ask the user to approve or edit. Repeat until they approve.

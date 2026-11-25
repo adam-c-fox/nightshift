@@ -32,8 +32,59 @@ export const PREP_STATE_LABELS: Record<PrepStateName, string> = {
   none: "none",
 };
 
-export const PREP_SECTIONS =
-  /^##\s+(Decisions|Acceptance criteria|Pointers)\s*$/im;
+export interface PrepSections {
+  acceptanceCriteria: string[];
+  decisions: string[];
+  pointers: string[];
+}
+
+const SECTION_HEADINGS: Record<keyof PrepSections, string> = {
+  acceptanceCriteria: "Acceptance criteria",
+  decisions: "Decisions",
+  pointers: "Pointers",
+};
+
+export const PREP_SECTIONS = new RegExp(
+  `^##\\s+(${Object.values(SECTION_HEADINGS).join("|")})\\s*$`,
+  "im",
+);
+
+function sectionBlock(key: keyof PrepSections, items: string[]): string[] {
+  const bullet = key === "acceptanceCriteria" ? "- [ ] " : "- ";
+  return [`## ${SECTION_HEADINGS[key]}`, ...items.map((item) => bullet + item)];
+}
+
+export function mergePrepSections(
+  description: string,
+  sections: PrepSections,
+): string {
+  let lines = description.split("\n");
+  const appended: string[][] = [];
+  for (const key of Object.keys(SECTION_HEADINGS) as (keyof PrepSections)[]) {
+    if (sections[key].length === 0) continue;
+    const block = sectionBlock(key, sections[key]);
+    const start = lines.findIndex(
+      (line) =>
+        PREP_SECTIONS.exec(line)?.[1].toLowerCase() ===
+        SECTION_HEADINGS[key].toLowerCase(),
+    );
+    if (start === -1) {
+      appended.push(block);
+      continue;
+    }
+    let end = lines.findIndex((line, i) => i > start && /^#{1,2}\s/.test(line));
+    if (end === -1) end = lines.length;
+    let trailing = end;
+    while (trailing > start + 1 && lines[trailing - 1].trim() === "") trailing--;
+    lines = [...lines.slice(0, start), ...block, ...lines.slice(trailing)];
+  }
+  let out = lines.join("\n");
+  for (const block of appended) {
+    const gap = out === "" || out.endsWith("\n\n") ? "" : out.endsWith("\n") ? "\n" : "\n\n";
+    out += gap + block.join("\n");
+  }
+  return out;
+}
 
 export function descriptionHash(description: string): string {
   return createHash("sha256").update(description).digest("hex");

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   descriptionHash,
+  mergePrepSections,
   prepState,
   readPrepStore,
   upsertPrepRecord,
@@ -148,5 +149,42 @@ describe("prep store", () => {
       /not valid JSON/,
     );
     expect(readFileSync(file, "utf-8")).toBe("{");
+  });
+});
+
+describe("mergePrepSections", () => {
+  const sections = {
+    acceptanceCriteria: ["Export returns 200"],
+    decisions: ["Use streaming"],
+    pointers: ["see src/export.ts"],
+  };
+  const none = { acceptanceCriteria: [], decisions: [], pointers: [] };
+
+  it("appends missing sections after the untouched text", () => {
+    const out = mergePrepSections("Fix the export.", sections);
+    expect(out).toBe(
+      "Fix the export.\n\n## Acceptance criteria\n- [ ] Export returns 200\n\n## Decisions\n- Use streaming\n\n## Pointers\n- see src/export.ts",
+    );
+  });
+
+  it("replaces an existing section in place and leaves the rest byte-equal", () => {
+    const before = "Intro\r\n  keep me  \n\n## decisions\n- old\n- older\n\n## Notes\nTail \n";
+    const out = mergePrepSections(before, { ...none, decisions: ["new"] });
+    expect(out).toBe("Intro\r\n  keep me  \n\n## Decisions\n- new\n\n## Notes\nTail \n");
+  });
+
+  it("omits empty sections", () => {
+    expect(mergePrepSections("Body", none)).toBe("Body");
+    const before = "Body\n\n## Pointers\n- see a\n";
+    expect(mergePrepSections(before, none)).toBe(before);
+  });
+
+  it("is idempotent", () => {
+    const once = mergePrepSections("Body\n\n## Pointers\n- old\n\n## Tail\nx", sections);
+    expect(mergePrepSections(once, sections)).toBe(once);
+  });
+
+  it("starts from nothing on an empty description", () => {
+    expect(mergePrepSections("", { ...none, pointers: ["see a"] })).toBe("## Pointers\n- see a");
   });
 });
