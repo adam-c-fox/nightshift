@@ -20,6 +20,9 @@ export function runWithWatchdog(
     checkIntervalMs: number;
     shouldAbort?: () => string | undefined;
     killGraceMs?: number;
+    onStdoutLine?: (line: string) => void;
+    onSpawn?: (pid: number) => void;
+    signal?: AbortSignal;
   },
 ): Promise<WatchdogResult> {
   return new Promise(resolve => {
@@ -28,7 +31,14 @@ export function runWithWatchdog(
     let stderr = "";
     let abortReason: string | undefined;
     let error: Error | undefined;
-    child.stdout.setEncoding("utf-8").on("data", d => { stdout += d; });
+    let pending = "";
+    child.stdout.setEncoding("utf-8").on("data", d => {
+      stdout += d;
+      if (!opts.onStdoutLine) return;
+      const lines = (pending + d).split("\n");
+      pending = lines.pop() ?? "";
+      lines.forEach(opts.onStdoutLine);
+    });
     child.stderr.setEncoding("utf-8").on("data", d => { stderr += d; });
     child.stdin.on("error", () => {});
     child.stdin.end(opts.input);
@@ -45,9 +55,14 @@ export function runWithWatchdog(
       if (reason) kill(reason);
     }, opts.checkIntervalMs);
 
+    if (child.pid !== undefined) opts.onSpawn?.(child.pid);
+    if (opts.signal?.aborted) kill("cancelled");
+    else opts.signal?.addEventListener("abort", () => kill("cancelled"), { once: true });
+
     const finish = (status: number | null, signal: NodeJS.Signals | null) => {
       clearTimeout(timeout);
       clearInterval(check);
+      if (pending) opts.onStdoutLine?.(pending);
       resolve({ stdout, stderr, status, signal, error, abortReason });
     };
     child.on("error", e => { error = e; finish(null, null); });

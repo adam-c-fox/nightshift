@@ -29,4 +29,32 @@ describe("runWithWatchdog", () => {
     const r = await runWithWatchdog("definitely-not-a-binary-xyz", [], base);
     expect(r.error?.message).toMatch(/ENOENT/);
   });
+
+  it("calls onStdoutLine per complete line, joining a line split across chunks and flushing a trailing one", async () => {
+    const lines: string[] = [];
+    const script = "process.stdout.write('one\\ntw'); setTimeout(() => process.stdout.write('o\\nthree'), 50)";
+    const r = await runWithWatchdog(node, ["-e", script], { ...base, onStdoutLine: l => lines.push(l) });
+    expect(lines).toEqual(["one", "two", "three"]);
+    expect(r.stdout).toBe("one\ntwo\nthree");
+  });
+
+  it("reports the child pid through onSpawn", async () => {
+    let pid = 0;
+    await runWithWatchdog(node, ["-e", "process.stdout.write(String(process.pid))"], { ...base, onSpawn: p => { pid = p; } }).then(r => {
+      expect(pid).toBe(Number(r.stdout));
+    });
+  });
+
+  it("kills the process when the signal aborts", async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 100);
+    const r = await runWithWatchdog(node, ["-e", "setTimeout(() => {}, 60000)"], { ...base, signal: controller.signal });
+    expect(r.abortReason).toBe("cancelled");
+    expect(r.signal).toBe("SIGTERM");
+  });
+
+  it("kills at once when the signal is already aborted", async () => {
+    const r = await runWithWatchdog(node, ["-e", "setTimeout(() => {}, 60000)"], { ...base, signal: AbortSignal.abort() });
+    expect(r.abortReason).toBe("cancelled");
+  });
 });

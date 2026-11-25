@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, dedupeProfile, dedupeSystemPrompt, finderSystemPrompt, fixReviewSystemPrompt, editProfile, POSTMORTEM_PROFILE, reviewProfile } from "../src/claude.js";
+import { agentRunArgs, buildClaudeArgs, confirmSystemPrompt, dedupeProfile, dedupeSystemPrompt, finderSystemPrompt, fixReviewSystemPrompt, editProfile, POSTMORTEM_PROFILE, prepProfile, reviewProfile } from "../src/claude.js";
 import { runtimeSettings } from "../src/settings.js";
 
 describe("agent instructions", () => {
@@ -301,5 +301,23 @@ describe("postmortem run args", () => {
 
   it("adds no directories by default", () => {
     expect(buildClaudeArgs("x", POSTMORTEM_PROFILE)).not.toContain("--add-dir");
+  });
+});
+
+describe("prep run args", () => {
+  const args = buildClaudeArgs("x", prepProfile());
+  const value = (flag: string) => args[args.indexOf(flag) + 1];
+
+  it("reads only, never prompting", () => {
+    expect(value("--permission-mode")).toBe("dontAsk");
+    expect(value("--tools")).toBe("Read,Grep,Glob");
+    expect(value("--allowedTools")).toBe("Read,Grep,Glob");
+    expect(value("--disallowedTools").split(",")).toEqual(["Edit", "Write", "NotebookEdit", "Bash", "WebFetch", "WebSearch"]);
+    expect(prepProfile().enforceAllowList).toBe(true);
+  });
+
+  it("takes the model and effort from the runtime settings", () => {
+    expect(prepProfile().model).toBe(runtimeSettings().implementationModel);
+    expect(value("--effort")).toBe(runtimeSettings().claudeEffort);
   });
 });

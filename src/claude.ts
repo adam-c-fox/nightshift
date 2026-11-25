@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
+import { getEnv } from "./env.js";
 import { runWithWatchdog, type WatchdogResult } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
 import type { RepoConfig } from "./project.js";
@@ -585,6 +587,15 @@ export const POSTMORTEM_PROFILE: ToolProfile = {
   enforceAllowList: true,
 };
 
+export const prepProfile = (): ToolProfile => ({
+  permissionMode: "dontAsk",
+  tools: ["Read", "Grep", "Glob"],
+  allowedTools: ["Read", "Grep", "Glob"],
+  disallowedTools: ["Edit", "Write", "NotebookEdit", "Bash", "WebFetch", "WebSearch"],
+  enforceAllowList: true,
+  model: runtimeSettings().implementationModel,
+});
+
 export function buildClaudeArgs(operatingInstructions: string, profile: ToolProfile = editProfile(), addDirs: string[] = []): string[] {
   return [
     "-p",
@@ -633,6 +644,16 @@ export interface ClaudeRun {
 
 const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
+function usageOf(parsed: any): RunUsage {
+  const u = parsed.usage ?? {};
+  return {
+    inputTokens: count(u.input_tokens), outputTokens: count(u.output_tokens),
+    cacheReadTokens: count(u.cache_read_input_tokens), cacheCreationTokens: count(u.cache_creation_input_tokens),
+    costUsd: count(parsed.total_cost_usd), turns: count(parsed.num_turns), durationMs: count(parsed.duration_ms),
+    models: Object.keys(parsed.modelUsage ?? {}),
+  };
+}
+
 export function parseRunOutput(stdout: string): { text: string; usage?: RunUsage } {
   let parsed: any;
   try {
@@ -641,16 +662,7 @@ export function parseRunOutput(stdout: string): { text: string; usage?: RunUsage
     return { text: stdout };
   }
   if (typeof parsed?.result !== "string") return { text: stdout };
-  const u = parsed.usage ?? {};
-  return {
-    text: parsed.result,
-    usage: {
-      inputTokens: count(u.input_tokens), outputTokens: count(u.output_tokens),
-      cacheReadTokens: count(u.cache_read_input_tokens), cacheCreationTokens: count(u.cache_creation_input_tokens),
-      costUsd: count(parsed.total_cost_usd), turns: count(parsed.num_turns), durationMs: count(parsed.duration_ms),
-      models: Object.keys(parsed.modelUsage ?? {}),
-    },
-  };
+  return { text: parsed.result, usage: usageOf(parsed) };
 }
 
 export const MAX_RESUMES = 2;
@@ -726,6 +738,82 @@ export async function execClaude(
   const text = parsed[parsed.length - 1].text;
   const rawOutput = [...parsed.flatMap((p, i) => [p.text, attempts[i].proc.stderr]), failure ?? ""].filter(Boolean).join("\n");
   return { stdout: text, rawOutput, failure, abortReason, usage: sumUsage(parsed.map(p => p.usage)) };
+}
+
+const STEP_MAX_TURNS = 40;
+const STEP_TIMEOUT_MS = 10 * 60 * 1000;
+const STEP_CHECK_INTERVAL_MS = 1000;
+const STDERR_TAIL_CHARS = 2000;
+
+export interface ToolUse { name?: string; input?: Record<string, unknown> }
+
+export type StructuredStepResult =
+  | { ok: true; output: unknown; sessionId: string; usage: RunUsage }
+  | { ok: false; error: string };
+
+export interface StructuredStepOptions {
+  root: string;
+  cwd: string;
+  addDirs: string[];
+  prompt: string;
+  systemPrompt: string;
+  schema: unknown;
+  resumeId?: string;
+  onActivity: (text: string) => void;
+  onSpawn?: (pid: number) => void;
+  signal?: AbortSignal;
+}
+
+const withFlagValue = (args: string[], flag: string, value: string): string[] => args.map((a, i) => (args[i - 1] === flag ? value : a));
+
+function relativeTo(cwd: string, p: string): string {
+  const rel = path.relative(cwd, p);
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : p;
+}
+
+export function activityText(toolUse: ToolUse, cwd: string): string {
+  const input = toolUse.input ?? {};
+  const where = typeof input.path === "string" ? relativeTo(cwd, input.path) : undefined;
+  switch (toolUse.name) {
+    case "Read": return `Read ${relativeTo(cwd, String(input.file_path ?? ""))}`;
+    case "Grep": return `Grep "${input.pattern}"${where ? ` in ${where}` : ""}`;
+    case "Glob": return `Glob ${input.pattern}${where ? ` in ${where}` : ""}`;
+    default: return String(toolUse.name);
+  }
+}
+
+export async function runStructuredStep(opts: StructuredStepOptions): Promise<StructuredStepResult> {
+  const token = getEnv(CLAUDE_TOKEN);
+  if (!token) return { ok: false, error: `${CLAUDE_TOKEN} isn't set in the root .env` };
+  const profile = prepProfile();
+  const settings = buildAgentSettings({ network: [], allowLocalBinding: false }, opts.root);
+  const base = withFlagValue(withFlagValue(buildClaudeArgs(opts.systemPrompt, profile, opts.addDirs), "--output-format", "stream-json"), "--max-turns", String(STEP_MAX_TURNS));
+  const args = [
+    ...agentRunArgs(base, settings, profile), "--verbose", "--json-schema", JSON.stringify(opts.schema),
+    ...sessionArgs(opts.resumeId ?? randomUUID(), opts.resumeId !== undefined),
+  ];
+  let final: any;
+  const onStdoutLine = (line: string) => {
+    let event: any;
+    try { event = JSON.parse(line); } catch { return; }
+    if (event?.type === "result") final = event;
+    else if (event?.type === "assistant" && Array.isArray(event.message?.content)) {
+      for (const block of event.message.content) if (block?.type === "tool_use") opts.onActivity(activityText(block, opts.cwd));
+    }
+  };
+  const proc = await runWithWatchdog("claude", args, {
+    cwd: opts.cwd, input: opts.prompt, env: agentEnv({ ...process.env, [CLAUDE_TOKEN]: token }),
+    timeoutMs: STEP_TIMEOUT_MS, checkIntervalMs: STEP_CHECK_INTERVAL_MS,
+    onStdoutLine, onSpawn: opts.onSpawn, signal: opts.signal,
+  });
+  const stderr = proc.stderr.slice(-STDERR_TAIL_CHARS);
+  const fail = (reason: string): StructuredStepResult => ({ ok: false, error: [reason, stderr].filter(Boolean).join("\n") });
+  if (proc.error) return fail(`claude failed to run: ${proc.error.message}`);
+  if (proc.abortReason) return fail(`claude stopped: ${proc.abortReason}`);
+  if (proc.status !== 0) return fail(`claude exited with status ${proc.status}`);
+  if (typeof final?.subtype === "string" && final.subtype.startsWith("error_")) return fail(`claude failed: ${final.subtype}`);
+  if (final?.structured_output === undefined) return fail("claude returned no structured output");
+  return { ok: true, output: final.structured_output, sessionId: String(final.session_id), usage: usageOf(final) };
 }
 
 export function parseOrError<T>(stdout: string, failure: string | undefined, parse: (output: string) => T): { value?: T; error?: string } {
