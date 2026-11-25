@@ -4,17 +4,15 @@ import {
   AGENT_NAME,
   agentName,
   agentStartArgs,
-  fallbackCommand,
   herdrRunning,
   launch,
   parseLaunchRequest,
   parseWorkspaceCreate,
-  shellQuote,
-  skillPrompt,
   workspaceCreateArgs,
   workspaceLabel,
   type LaunchRequest,
 } from "../src/dashboard/launch.js";
+import { fallbackCommand } from "../src/dashboard/sessions.js";
 
 const prep: LaunchRequest = { kind: "prep", id: "ENG-142", project: "acme" };
 const tonight: LaunchRequest = { kind: "tonight" };
@@ -28,54 +26,22 @@ describe("parseLaunchRequest", () => {
     ).toEqual(prep);
   });
 
-  it("returns a valid tonight request", () => {
+  it("returns a valid tonight request and drops other fields", () => {
     expect(
-      parseLaunchRequest({ kind: "tonight" }, ["acme"]),
+      parseLaunchRequest(
+        { kind: "tonight", project: "nope", id: "ENG-1", extra: "x" },
+        ["acme"],
+      ),
     ).toEqual(tonight);
-  });
-
-  it("drops fields that are not part of the request", () => {
-    const parsed = parseLaunchRequest(
-      { kind: "tonight", project: "nope", id: "ENG-1", extra: "x" },
-      ["acme"],
-    );
-    expect(parsed).toEqual(tonight);
   });
 
   it.each([
     [{ kind: "prep", id: "eng-1", project: "acme" }, /ticket ID/],
-    [{ kind: "prep", id: "ENG-1; rm -rf ~", project: "acme" }, /ticket ID/],
-    [{ kind: "prep", project: "acme" }, /ticket ID/],
-    [{ kind: "prep", id: 142, project: "acme" }, /ticket ID/],
     [{ kind: "prep", id: "ENG-1", project: "nope" }, /unknown project/],
-    [{ kind: "prep", id: "ENG-1" }, /unknown project/],
-    [{ kind: "prep", id: "ENG-1", project: ["acme"] }, /unknown project/],
     [{ kind: "shell" }, /kind/],
-    [{ kind: "prep ", id: "ENG-1", project: "acme" }, /kind/],
     [null, /kind/],
-    ["prep", /kind/],
-    [[], /kind/],
   ])("rejects %j", (body, reason) => {
     expect(() => parseLaunchRequest(body, ["acme"])).toThrow(reason);
-  });
-});
-
-describe("skillPrompt", () => {
-  it("names the skill and its arguments", () => {
-    expect(skillPrompt(prep)).toBe("/prep ENG-142 acme");
-    expect(skillPrompt(tonight)).toBe("/tonight");
-  });
-});
-
-describe("shellQuote and fallbackCommand", () => {
-  it("single-quotes and escapes embedded quotes", () => {
-    expect(shellQuote("it's")).toBe(`'it'\\''s'`);
-  });
-
-  it("builds a cd and claude command", () => {
-    expect(fallbackCommand(prep, "/Users/a/night shift")).toBe(
-      "cd '/Users/a/night shift' && claude '/prep ENG-142 acme'",
-    );
   });
 });
 

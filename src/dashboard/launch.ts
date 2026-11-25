@@ -1,10 +1,13 @@
-import { PROJECT_NAME } from "../project.js";
-import { TICKET_ID } from "../tickets.js";
 import { ExecError, type Exec } from "../exec.js";
+import {
+  assertPrepShape,
+  fallbackCommand,
+  parseSessionRequest,
+  skillPrompt,
+  type PrepRequest,
+} from "./sessions.js";
 
-export type LaunchRequest =
-  | { kind: "prep"; id: string; project: string }
-  | { kind: "tonight" };
+export type LaunchRequest = PrepRequest | { kind: "tonight" };
 
 export type LaunchResult =
   | {
@@ -30,43 +33,18 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function assertShape(body: unknown): LaunchRequest {
-  const { kind, id, project } = asRecord(body);
-  if (kind !== "prep" && kind !== "tonight") {
-    throw new Error("kind must be prep or tonight");
-  }
-  if (kind === "prep" && (typeof id !== "string" || !TICKET_ID.test(id))) {
-    throw new Error("invalid ticket ID");
-  }
-  if (kind === "tonight") return { kind };
-  if (typeof project !== "string" || !PROJECT_NAME.test(project)) {
-    throw new Error("unknown project");
-  }
-  return { kind, id: id as string, project };
+  return asRecord(body).kind === "tonight"
+    ? { kind: "tonight" }
+    : assertPrepShape(body);
 }
 
 export function parseLaunchRequest(
   body: unknown,
   projects: string[],
 ): LaunchRequest {
-  const req = assertShape(body);
-  if (req.kind === "prep" && !projects.includes(req.project)) {
-    throw new Error("unknown project");
-  }
-  return req;
-}
-
-export function skillPrompt(req: LaunchRequest): string {
-  return req.kind === "prep"
-    ? `/prep ${req.id} ${req.project}`
-    : "/tonight";
-}
-
-export function shellQuote(s: string): string {
-  return `'${s.replaceAll("'", `'\\''`)}'`;
-}
-
-export function fallbackCommand(req: LaunchRequest, root: string): string {
-  return `cd ${shellQuote(root)} && claude ${shellQuote(skillPrompt(req))}`;
+  return asRecord(body).kind === "tonight"
+    ? { kind: "tonight" }
+    : parseSessionRequest(body, projects);
 }
 
 export function workspaceLabel(req: LaunchRequest): string {
