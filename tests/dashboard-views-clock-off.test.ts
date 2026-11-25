@@ -85,7 +85,8 @@ describe("page", () => {
 
   it("sends the CSRF header on every POST and PUT", () => {
     expect(CLIENT_SCRIPT).toContain('"X-Nightshift": "1"');
-    expect(CLIENT_SCRIPT).toContain("/api/launch");
+    expect(CLIENT_SCRIPT).toContain("/api/sessions");
+    expect(CLIENT_SCRIPT).not.toContain("/api/launch");
     expect(CLIENT_SCRIPT).toContain("/api/refresh");
     expect(CLIENT_SCRIPT).toContain("/api/queue");
   });
@@ -106,8 +107,7 @@ describe("eveningHTML", () => {
     expect(html).toContain("70%");
     expect(html).toContain("2 tickets · 2 projects swept");
     expect(html).toContain('data-code="auto_complete"');
-    expect(html).toContain("&quot;kind&quot;:&quot;tonight&quot;}");
-    expect(html).not.toContain("&quot;kind&quot;:&quot;tonight&quot;,&quot;project");
+    expect(html).not.toContain("Plan tonight");
     expect(html).toContain('data-refresh="all"');
     expect(html).not.toContain('id="project"');
   });
@@ -158,10 +158,11 @@ describe("eveningHTML", () => {
     expect(html).not.toMatch(/data-queue-op="add" data-id="DEMO-1"/);
   });
 
-  it("renders a prep launch button per tab row with escaped JSON", () => {
+  it("renders a prep session button per tab row with escaped JSON", () => {
     expect(html).toContain(
-      'data-launch="{&quot;kind&quot;:&quot;prep&quot;,&quot;id&quot;:&quot;DEMO-2&quot;,&quot;project&quot;:&quot;acme&quot;}"',
+      'data-prep="{&quot;kind&quot;:&quot;prep&quot;,&quot;id&quot;:&quot;DEMO-2&quot;,&quot;project&quot;:&quot;acme&quot;}"',
     );
+    expect(html).not.toContain("data-launch");
   });
 
   it("labels every cell for the stacked mobile layout", () => {
@@ -221,6 +222,7 @@ describe("eveningHTML", () => {
   it("shows empty states", () => {
     const empty = eveningHTML(view({ queue: [], tabs: [{ project: "acme", rows: [] }, { project: "beta", rows: [] }] }));
     expect(empty).toContain("Nothing queued");
+    expect(empty).not.toContain("Plan tonight");
     expect(empty).toContain("No Todo tickets assigned to you in acme");
     expect(eveningHTML(view({ tabs: [{ project: "acme", rows: [] }], linearError: "down" }))).not.toContain("No Todo tickets");
   });
@@ -238,6 +240,8 @@ describe("homeHTML", () => {
     expect(html).toContain('data-fragment="/fragments/evening"');
     expect(html).toContain('data-poll="30"');
     expect(html).toContain('data-fragment="/fragments/runs"');
+    expect(html).toContain('data-fragment="/fragments/sessions"');
+    expect(html.indexOf("/fragments/sessions")).toBeLessThan(html.indexOf("/fragments/evening"));
     expect(html).toContain('data-fragment="/fragments/inbox"');
     expect(html).toContain('data-fragment="/fragments/nights"');
     expect(html).not.toContain("<select");

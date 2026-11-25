@@ -1,6 +1,6 @@
 import { esc, STATUS_COLORS, THEME_CSS } from "../../report.js";
 import type { RefreshTarget } from "../cache.js";
-import type { LaunchRequest } from "../launch.js";
+import type { PrepRequest } from "../sessions.js";
 
 export const DASHBOARD_CSS = `
   body { padding: 1rem; max-width: 1100px; margin: 0 auto; }
@@ -38,6 +38,16 @@ export const DASHBOARD_CSS = `
   .allowance input { width: 4.5rem; }
   details.notes { margin-top: 0.4rem; }
   details.notes textarea { display: block; width: 100%; margin: 0.25rem 0; }
+  .session fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.9rem;
+                      margin-bottom: 0.75rem; }
+  .session fieldset label { display: block; margin: 0.25rem 0; }
+  .session textarea { display: block; width: 100%; margin: 0.25rem 0; }
+  .session details { margin: 0.75rem 0; }
+  .session pre.highlight { white-space: pre-wrap; background: var(--surface); padding: 0.6rem 0.9rem;
+                           border-left: 4px solid var(--accent); border-radius: 6px; }
+  ul.activity, ul.open-preps { list-style: none; }
+  ul.activity li { color: var(--text-dim); padding: 0.1rem 0; overflow-wrap: anywhere; }
+  ul.open-preps li { padding: 0.3rem 0; }
   .bar .spacer { flex: 1 1 auto; }
   .bar .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .banner, .error { border: 1px solid var(--border); border-left-width: 4px; border-radius: 6px;
@@ -123,7 +133,12 @@ export const CLIENT_SCRIPT = `(() => {
     } catch {
       html = '<div class="error">Couldn&#39;t load this section (network error). <button type="button" class="btn" data-retry>Retry</button></div>';
     }
-    if (ticket === el.loadTicket) el.innerHTML = html;
+    if (ticket !== el.loadTicket) return;
+    el.innerHTML = html;
+    clearTimeout(el.pollTimer);
+    const root = el.firstElementChild;
+    const ms = root ? Number(root.dataset.poll) : 0;
+    if (ms > 0) el.pollTimer = setTimeout(() => loadFragment(el), ms);
   };
   const loadAll = () => document.querySelectorAll("[data-fragment]").forEach(loadFragment);
 
@@ -139,26 +154,53 @@ export const CLIENT_SCRIPT = `(() => {
     return data;
   };
 
-  const launch = async (button) => {
+  const prep = async (button) => {
     button.disabled = true;
     try {
-      const result = await post("/api/launch", JSON.parse(button.dataset.launch));
-      if (result.launched) {
-        toast('Opened herdr workspace "' + result.agent + '"');
-      } else {
-        const message = "herdr unavailable (" + result.reason + "). Command copied: " + result.command;
-        try {
-          await navigator.clipboard.writeText(result.command);
-          toast(message);
-        } catch {
-          toast("herdr unavailable (" + result.reason + "). Copy this command: " + result.command);
-        }
-      }
+      const result = await post("/api/sessions", JSON.parse(button.dataset.prep));
+      location.href = result.url;
     } catch (err) {
       toast(err.message);
-    } finally {
       button.disabled = false;
     }
+  };
+
+  const copyCommand = async (button) => {
+    try {
+      await navigator.clipboard.writeText(button.dataset.copy);
+      toast("Command copied: " + button.dataset.copy);
+    } catch {
+      toast("Copy this command: " + button.dataset.copy);
+    }
+  };
+
+  const sessionBody = (act, root) => {
+    const value = (selector) => root.querySelector(selector).value;
+    if (act === "answers") {
+      const answers = [...root.querySelectorAll("fieldset[data-gap]")].map((box) => {
+        const choice = box.querySelector("input[type=radio]:checked").value;
+        const answer = { gapId: box.dataset.gap, choice };
+        if (choice === "other") answer.text = box.querySelector("[data-other]").value;
+        return answer;
+      });
+      return { answers };
+    }
+    if (act === "revise") return { feedback: value("[data-feedback]") };
+    if (act === "approve") return { description: value("[data-draft]") };
+    if (act === "not-ready") return { blockers: value("[data-blockers]") };
+    return {};
+  };
+
+  const sessionAction = async (button) => {
+    const root = button.closest("[data-session]");
+    const slot = root.closest("[data-fragment]");
+    button.disabled = true;
+    try {
+      await post("/api/sessions/" + root.dataset.session + "/" + button.dataset.sessionAction, sessionBody(button.dataset.sessionAction, root));
+    } catch (err) {
+      toast(err.message);
+    }
+    await loadFragment(slot);
   };
 
   const refresh = async (button) => {
@@ -251,8 +293,12 @@ export const CLIENT_SCRIPT = `(() => {
 
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
-    const launchButton = target && target.closest("[data-launch]");
-    if (launchButton) return launch(launchButton);
+    const prepButton = target && target.closest("[data-prep]");
+    if (prepButton) return prep(prepButton);
+    const copyButton = target && target.closest("[data-copy]");
+    if (copyButton) return copyCommand(copyButton);
+    const sessionButton = target && target.closest("[data-session-action]");
+    if (sessionButton) return sessionAction(sessionButton);
     const refreshButton = target && target.closest("[data-refresh]");
     if (refreshButton) return refresh(refreshButton);
     const queueButton = target && target.closest("[data-queue-op]");
@@ -352,8 +398,8 @@ export function errorBox(message: string): string {
   return `<div class="error">${esc(message)}</div>`;
 }
 
-export function launchButton(req: LaunchRequest, label: string): string {
-  return `<button type="button" class="btn primary" data-launch="${esc(JSON.stringify(req))}">${esc(label)}</button>`;
+export function prepButton(req: PrepRequest, label: string): string {
+  return `<button type="button" class="btn primary" data-prep="${esc(JSON.stringify(req))}">${esc(label)}</button>`;
 }
 
 export function refreshButton(what: RefreshTarget, label: string): string {

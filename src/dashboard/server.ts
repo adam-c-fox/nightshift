@@ -10,9 +10,16 @@ import {
 } from "./actions.js";
 import { DASHBOARD_HOST, DASHBOARD_PORT } from "./address.js";
 import { firstLine, parseRefreshTarget } from "./cache.js";
-import { parseLaunchRequest } from "./launch.js";
 import { parseQueueOp } from "./queue-edit.js";
 import { resolveReportFile } from "./reports.js";
+import {
+  parseAnswers,
+  parseApproval,
+  parseBlockers,
+  parseFeedback,
+  parseSessionRequest,
+  SessionError,
+} from "./sessions.js";
 import { checkRequest, preflightHeaders, type Verdict } from "./security.js";
 import { createSources, defaultDeps, type Sources } from "./sources.js";
 import {
@@ -21,6 +28,11 @@ import {
   homeHTML,
 } from "./views/clock-off.js";
 import { errorBox, page } from "./views/layout.js";
+import {
+  openPrepsHTML,
+  sessionFragmentHTML,
+  sessionPageHTML,
+} from "./views/session.js";
 import { inboxHTML, nightsHTML, runBannerHTML } from "./views/morning.js";
 import {
   projectChecksHTML,
@@ -32,6 +44,7 @@ export interface ServerContext {
   sources: Sources;
   reportsDir: string;
   actionsFile: string;
+  codeRoot: string;
 }
 
 export const MAX_BODY_BYTES = 65_536;
@@ -138,8 +151,20 @@ function decodeName(segment: string): string | null {
   }
 }
 
+async function asHttpError<T>(run: () => T | Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof SessionError) throw new HttpError(error.status, error.message);
+    throw error;
+  }
+}
+
+const SESSION_ACTIONS = "answers|revise|approve|not-ready|retry|cancel";
+
 function routes(ctx: ServerContext): Route[] {
   const { sources } = ctx;
+  const { sessions } = sources;
   const knownProject = (name: string | null): name is string =>
     name !== null && sources.projects().includes(name);
 
@@ -253,14 +278,72 @@ function routes(ctx: ServerContext): Route[] {
     },
     {
       method: "POST",
-      pattern: /^\/api\/launch$/,
+      pattern: /^\/api\/sessions$/,
       handler: async ({ readJson }) => {
         const body = await readJson();
-        const request = badRequest(() =>
-          parseLaunchRequest(body, sources.projects()),
-        );
-        return json(await sources.launch(request));
+        const request = badRequest(() => parseSessionRequest(body, sources.projects()));
+        const { session, created } = await asHttpError(() => sessions.start(request));
+        return json({ id: session.id, url: `/prep/${session.id}` }, created ? 201 : 200);
       },
+    },
+    {
+      method: "POST",
+      pattern: new RegExp(`^/api/sessions/([A-Za-z0-9-]+)/(${SESSION_ACTIONS})$`),
+      handler: async ({ match, readJson }) => {
+        const [, sid, act] = match;
+        const body = await readJson();
+        return asHttpError(async () => {
+          const session = sessions.get(sid);
+          if (!session) throw new SessionError(404, "no such session");
+          const ok = { ok: true };
+          switch (act) {
+            case "answers": {
+              if (!session.survey) throw new SessionError(409, `session is ${session.state}`);
+              const { survey } = session;
+              sessions.answer(sid, badRequest(() => parseAnswers(body, survey)));
+              return json(ok, 202);
+            }
+            case "revise":
+              sessions.revise(sid, badRequest(() => parseFeedback(body)));
+              return json(ok, 202);
+            case "retry":
+              sessions.retry(sid);
+              return json(ok, 202);
+            case "approve":
+              await sessions.approve(sid, badRequest(() => parseApproval(body)));
+              return json(ok);
+            case "not-ready":
+              sessions.notReady(sid, badRequest(() => parseBlockers(body)));
+              return json(ok);
+            default:
+              sessions.cancel(sid);
+              return json(ok);
+          }
+        });
+      },
+    },
+    {
+      method: "GET",
+      pattern: /^\/prep\/([A-Za-z0-9-]+)$/,
+      handler: ({ match }) => {
+        const session = sessions.get(match[1]);
+        return session ? html(sessionPageHTML(session.id, session.ticketId)) : notFoundPage();
+      },
+    },
+    {
+      method: "GET",
+      pattern: /^\/fragments\/session\/([A-Za-z0-9-]+)$/,
+      handler: ({ match }) => {
+        const session = sessions.get(match[1]);
+        return session
+          ? html(sessionFragmentHTML(session, ctx.codeRoot))
+          : html(errorBox("No such session"), 404);
+      },
+    },
+    {
+      method: "GET",
+      pattern: /^\/fragments\/sessions$/,
+      handler: () => html(openPrepsHTML(sessions.listOpen())),
     },
     {
       method: "POST",
@@ -386,10 +469,13 @@ function main(): void {
   const root = process.env.NIGHTSHIFT_ROOT ?? ROOT;
   const port = Number(process.env.NIGHTSHIFT_DASHBOARD_PORT ?? DASHBOARD_PORT);
   const deps = defaultDeps(root);
+  const sources = createSources(deps);
+  sources.sessions.recover();
   const server = createDashboardServer({
-    sources: createSources(deps),
+    sources,
     reportsDir: deps.reportsDir,
     actionsFile: deps.state.actions,
+    codeRoot: deps.codeRoot,
   });
   server.requestTimeout = 30_000;
   server.on("error", (error: NodeJS.ErrnoException) => {

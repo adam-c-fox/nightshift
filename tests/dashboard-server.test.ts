@@ -18,6 +18,7 @@ import {
   createDashboardServer,
   type ServerContext,
 } from "../src/dashboard/server.js";
+import { SessionError, type PrepSession } from "../src/dashboard/sessions.js";
 import {
   createSources,
   defaultDeps,
@@ -48,6 +49,42 @@ const write = (file: string, content: string) => {
   mkdirSync(join(file, ".."), { recursive: true });
   writeFileSync(file, content);
 };
+
+const SID = "11111111-aaaa";
+
+const fakeSession = (over: Record<string, unknown> = {}): PrepSession => ({
+  id: SID,
+  kind: "prep",
+  ticketId: "ENG-1",
+  project: "acme",
+  state: "answering",
+  running: false,
+  createdAt: "2026-10-01T00:00:00.000Z",
+  updatedAt: "2026-10-01T00:00:00.000Z",
+  ticket: { title: "A <b>title</b>", url: "https://linear.app/x/issue/ENG-1", description: "", descHash: "h" },
+  activity: [],
+  revisions: [],
+  usage: [],
+  survey: { repo: "app", gaps: [{ id: "g1", title: "Gap", question: "Q", recommended: "R" }], pointers: [] },
+  ...over,
+}) as PrepSession;
+
+function fakeSessions(): Sources["sessions"] {
+  const known = (sid: string) => (sid === SID ? fakeSession() : undefined);
+  return {
+    get: vi.fn(known),
+    listOpen: vi.fn(() => [fakeSession()]),
+    settled: vi.fn(async () => {}),
+    start: vi.fn(async () => ({ session: fakeSession(), created: true })),
+    answer: vi.fn(() => fakeSession()),
+    revise: vi.fn(() => fakeSession()),
+    approve: vi.fn(async () => {}),
+    notReady: vi.fn(() => fakeSession()),
+    retry: vi.fn(() => fakeSession()),
+    cancel: vi.fn(() => fakeSession()),
+    recover: vi.fn(),
+  };
+}
 
 function fakeSources(): Sources {
   return {
@@ -95,13 +132,7 @@ function fakeSources(): Sources {
       ok: true as const,
       value: [{ key: "DEMO", name: "Growth" }],
     })),
-    launch: vi.fn(async () => ({
-      launched: true as const,
-      workspaceId: "w1",
-      paneId: "p1",
-      agent: "prep-eng-1-ab12",
-      command: "cmd",
-    })),
+    sessions: fakeSessions(),
     refresh: vi.fn(),
   };
 }
@@ -173,6 +204,7 @@ beforeEach(async () => {
     sources,
     reportsDir: join(root, "reports"),
     actionsFile: join(root, "state/actions.json"),
+    codeRoot: "/code/nightshift",
   };
   await listen(ctx);
 });
@@ -463,49 +495,13 @@ describe("actions API", () => {
   });
 });
 
-describe("launch and refresh", () => {
+describe("refresh", () => {
   const post = (path: string, body: unknown) =>
     req("POST", path, { headers: jsonHeaders, body: JSON.stringify(body) });
 
-  it("rejects an invalid launch without calling sources", async () => {
-    const res = await post("/api/launch", {
-      kind: "prep",
-      id: "eng-1",
-      project: "acme",
-    });
-    expect(res.status).toBe(400);
-    expect(JSON.parse(res.body).error).toMatch(/ticket ID/);
-    expect(sources.launch).not.toHaveBeenCalled();
-  });
-
-  it("launches a valid request", async () => {
-    const res = await post("/api/launch", {
-      kind: "prep",
-      id: "ENG-1",
-      project: "acme",
-    });
-    expect(res.status).toBe(200);
-    expect(JSON.parse(res.body)).toMatchObject({
-      launched: true,
-      agent: "prep-eng-1-ab12",
-    });
-    expect(sources.launch).toHaveBeenCalledWith({
-      kind: "prep",
-      id: "ENG-1",
-      project: "acme",
-    });
-  });
-
-  it("passes a herdr fallback through as a 200", async () => {
-    const fallback = {
-      launched: false as const,
-      command: "run it",
-      reason: "no herdr",
-    };
-    vi.mocked(sources.launch).mockResolvedValue(fallback);
+  it("no longer serves /api/launch", async () => {
     const res = await post("/api/launch", { kind: "tonight" });
-    expect(res.status).toBe(200);
-    expect(JSON.parse(res.body)).toEqual(fallback);
+    expect(res.status).toBe(404);
   });
 
   it("refreshes a cache", async () => {
@@ -575,6 +571,7 @@ describe("POST /api/queue", () => {
       sources: createSources(deps),
       reportsDir: deps.reportsDir,
       actionsFile: deps.state.actions,
+      codeRoot: deps.codeRoot,
     });
   });
 
@@ -697,6 +694,7 @@ describe("no secrets in responses", () => {
       sources: createSources(deps),
       reportsDir: deps.reportsDir,
       actionsFile: deps.state.actions,
+      codeRoot: deps.codeRoot,
     });
   });
 
@@ -728,5 +726,106 @@ describe("no secrets in responses", () => {
       expect(JSON.stringify(res.headers), path).not.toContain(LINEAR);
     }
     expect(seenKeys).toContain(LINEAR);
+  });
+});
+
+describe("sessions", () => {
+  const post = (path: string, body: unknown, headers: Record<string, string> = jsonHeaders) =>
+    req("POST", path, { headers, body: JSON.stringify(body) });
+  const prep = { kind: "prep", id: "ENG-1", project: "acme" };
+  const answers = { answers: [{ gapId: "g1", choice: "recommended" }] };
+  const actions: [string, unknown, string][] = [
+    ["answers", answers, "answer"],
+    ["revise", { feedback: "shorter" }, "revise"],
+    ["approve", { description: "text" }, "approve"],
+    ["not-ready", { blockers: "waiting" }, "notReady"],
+    ["retry", {}, "retry"],
+    ["cancel", {}, "cancel"],
+  ];
+
+  it("creates a session with 201 and returns its url", async () => {
+    const res = await post("/api/sessions", prep);
+    expect(res.status).toBe(201);
+    expect(JSON.parse(res.body)).toEqual({ id: SID, url: `/prep/${SID}` });
+    expect(sources.sessions.start).toHaveBeenCalledWith(prep);
+  });
+
+  it("returns 200 for an existing open session", async () => {
+    vi.mocked(sources.sessions.start).mockResolvedValue({ session: fakeSession(), created: false });
+    expect((await post("/api/sessions", prep)).status).toBe(200);
+  });
+
+  it("rejects a bad ticket or project with 400 before starting", async () => {
+    expect((await post("/api/sessions", { ...prep, id: "eng-1" })).status).toBe(400);
+    expect((await post("/api/sessions", { ...prep, project: "nope" })).status).toBe(400);
+    expect(sources.sessions.start).not.toHaveBeenCalled();
+  });
+
+  it("maps a night run in progress to 409 and a full queue to 429", async () => {
+    vi.mocked(sources.sessions.start).mockRejectedValueOnce(new SessionError(409, "a night run is in progress"));
+    const busy = await post("/api/sessions", prep);
+    expect(busy.status).toBe(409);
+    expect(JSON.parse(busy.body).error).toBe("a night run is in progress");
+    vi.mocked(sources.sessions.start).mockRejectedValueOnce(new SessionError(429, "2 steps are already running"));
+    expect((await post("/api/sessions", prep)).status).toBe(429);
+  });
+
+  it.each(actions)("%s answers with its status and calls sessions", async (name, body, method) => {
+    const res = await post(`/api/sessions/${SID}/${name}`, body);
+    expect(res.status).toBe(["answers", "revise", "retry"].includes(name) ? 202 : 200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+    expect(sources.sessions[method as "retry"]).toHaveBeenCalled();
+  });
+
+  it.each(actions)("%s returns 404 for an unknown session", async (name, body, method) => {
+    const res = await post(`/api/sessions/nope/${name}`, body);
+    expect(res.status).toBe(404);
+    expect(sources.sessions[method as "retry"]).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the action does not fit the state", async () => {
+    vi.mocked(sources.sessions.cancel).mockImplementation(() => {
+      throw new SessionError(409, "session is saved");
+    });
+    const res = await post(`/api/sessions/${SID}/cancel`, {});
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body).error).toBe("session is saved");
+  });
+
+  it("returns 409 for the approve conflict and 400 for invalid bodies", async () => {
+    vi.mocked(sources.sessions.approve).mockRejectedValue(new SessionError(409, "ENG-1 changed in Linear since this prep started"));
+    expect((await post(`/api/sessions/${SID}/approve`, { description: "x" })).status).toBe(409);
+    expect((await post(`/api/sessions/${SID}/revise`, { feedback: "" })).status).toBe(400);
+    expect((await post(`/api/sessions/${SID}/answers`, { answers: [] })).status).toBe(400);
+    expect((await post(`/api/sessions/${SID}/not-ready`, { blockers: "a\nb" })).status).toBe(400);
+  });
+
+  it("serves the page shell, the fragment and the open preps strip", async () => {
+    const pageRes = await req("GET", `/prep/${SID}`);
+    expect(pageRes.status).toBe(200);
+    expect(pageRes.body).toContain(`data-fragment="/fragments/session/${SID}"`);
+    const fragment = await req("GET", `/fragments/session/${SID}`);
+    expect(fragment.status).toBe(200);
+    expect(fragment.body).toContain("A &lt;b&gt;title&lt;/b&gt;");
+    expect(fragment.body).toContain("claude '/prep ENG-1 acme'");
+    const strip = await req("GET", "/fragments/sessions");
+    expect(strip.body).toContain(`href="/prep/${SID}"`);
+  });
+
+  it("returns 404 for an unknown session on page and fragment routes", async () => {
+    expect((await req("GET", "/prep/nope")).status).toBe(404);
+    expect((await req("GET", "/fragments/session/nope")).status).toBe(404);
+    expect((await req("GET", "/prep/bad_sid")).status).toBe(404);
+  });
+
+  it("rejects session POSTs without X-Nightshift, from a foreign or null origin", async () => {
+    const paths = ["/api/sessions", `/api/sessions/${SID}/cancel`];
+    for (const path of paths) {
+      expect((await post(path, prep, { "content-type": "application/json" })).status).toBe(403);
+      expect((await post(path, prep, { ...jsonHeaders, origin: "https://evil.com" })).status).toBe(403);
+      expect((await post(path, prep, { ...jsonHeaders, origin: "null" })).status).toBe(403);
+    }
+    expect(sources.sessions.start).not.toHaveBeenCalled();
+    expect(sources.sessions.cancel).not.toHaveBeenCalled();
   });
 });

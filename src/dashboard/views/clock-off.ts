@@ -15,8 +15,8 @@ import type {
 import {
   errorBox,
   fragmentSlot,
-  launchButton,
   page,
+  prepButton,
   refreshButton,
 } from "./layout.js";
 
@@ -102,7 +102,7 @@ ${cell("Est.", row.estimate === null ? EMPTY : String(row.estimate))}
 ${cell("Prep", prepCell(row))}
 ${cell("Tonight", addCell(row, project))}
 ${cell("PR", prCell(row.pr))}
-${cell("Action", launchButton({ kind: "prep", id: row.id, project }, "Prep"), "action")}
+${cell("Action", prepButton({ kind: "prep", id: row.id, project }, "Prep"), "action")}
 </tr>`;
 }
 
@@ -187,7 +187,7 @@ function queueTableHTML(view: EveningView): string {
   );
   const empty =
     view.queue.length === 0
-      ? `<p class="dim">Nothing queued. Add tickets from the tabs below, or Plan tonight.</p>`
+      ? `<p class="dim">Nothing queued. Add tickets from the tabs below.</p>`
       : "";
   return `<table class="tickets queue">
 <thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
@@ -228,7 +228,7 @@ ${allowanceHTML(view.allowance)}
 ${usageHTML(view.usage)}
 <span>Queued: <strong>${esc(queued)}</strong></span>
 <span class="spacer"></span>
-<span class="actions">${launchButton({ kind: "tonight" }, "Plan tonight")}${refreshButton("all", "Refresh")}</span>
+<span class="actions">${refreshButton("all", "Refresh")}</span>
 </div>`;
 }
 
@@ -301,6 +301,7 @@ export function homeHTML(opts: { projects: string[]; tab?: string }): string {
   const body = [
     fragmentSlot("/fragments/runs", "run status", { poll: RUNS_POLL_SECONDS }),
     "<h2>Before clocking off</h2>",
+    fragmentSlot("/fragments/sessions", "open preps", { poll: RUNS_POLL_SECONDS }),
     fragmentSlot(`/fragments/evening${query}`, "tickets"),
     "<h2>Outstanding</h2>",
     fragmentSlot("/fragments/inbox", "inbox"),

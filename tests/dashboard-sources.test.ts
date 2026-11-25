@@ -653,18 +653,6 @@ describe("runs", () => {
   });
 });
 
-describe("launch", () => {
-  it("falls back to a command when herdr is missing", async () => {
-    const result = await sources.launch({ kind: "tonight" });
-    expect(result).toMatchObject({
-      launched: false,
-      reason: "herdr not found",
-    });
-    expect(result.command).toContain("claude '/tonight'");
-    expect(result.command).toContain(codeRoot);
-  });
-});
-
 describe("projects", () => {
   it("lists the projects and summarises each one", () => {
     expect(sources.projects()).toEqual(["acme", "example"]);

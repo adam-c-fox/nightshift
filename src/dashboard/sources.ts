@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { nightlyAllowancePercent, parseUsageSummary, type UsageSummary } from "../budget.js";
@@ -17,7 +17,9 @@ import { readProjectRuns, type ProjectRun } from "../heartbeat.js";
 import { readNightRecord } from "../night-record.js";
 import { pickTicketPr } from "../pr.js";
 import { createPrHost, type OpenPrList, type PrHost } from "../pr-host.js";
-import { readPrepStore } from "../prep.js";
+import { readPrepStore, upsertPrepRecord } from "../prep.js";
+import { readPrepSkillTexts } from "../prep-flow.js";
+import { runStructuredStep } from "../claude.js";
 import {
   listProjects,
   loadAllProjects,
@@ -74,11 +76,6 @@ import {
   type PrRef,
 } from "./inbox.js";
 import {
-  launch as launchInHerdr,
-  type LaunchRequest,
-  type LaunchResult,
-} from "./launch.js";
-import {
   fileChecks,
   overallLevel,
   projectChecks,
@@ -87,6 +84,7 @@ import {
 } from "./project-checks.js";
 import type { QueueOp } from "./queue-edit.js";
 import { listNightFiles } from "./reports.js";
+import { createSessions, type Sessions } from "./sessions.js";
 
 export const SLOW_MS = { usage: 8_000, prs: 10_000, linear: 15_000 };
 
@@ -136,7 +134,7 @@ export interface Sources {
   projectSummaries(): { name: string; level: CheckLevel; reason: string }[];
   projectChecks(name: string): Promise<ConfigCheck[]>;
   trackerTeams(name: string): Promise<Loaded<TrackerTeam[]>>;
-  launch(req: LaunchRequest): Promise<LaunchResult>;
+  sessions: Sessions;
   refresh(target: RefreshTarget): void;
 }
 
@@ -677,6 +675,36 @@ export function createSources(deps: DashboardDeps): Sources {
 
   const projects = () => listProjects(deps.projectsDir);
 
+  const sessions = createSessions({
+    dir: deps.state.sessions,
+    root: deps.root,
+    loadProject: (name) => loadProject(name, deps.projectsDir),
+    tracker: (name) => {
+      const { project, lookup } = openProject(name);
+      const built = trackerFor(project.issueTracker, lookup, `projects/${name}/.env or .env`);
+      if (!built.ok) throw new Error(built.error);
+      return built.value;
+    },
+    runStep: runStructuredStep,
+    recordPrep: (id, record) => upsertPrepRecord(deps.state.prep, id, record),
+    runsLive: () => readProjectRuns(deps.logsDir, deps.now()).some((run) => run.view.state === "running"),
+    onSaved: () => {
+      for (const prefix of REFRESH_PREFIXES.linear) cache.clear(prefix);
+    },
+    now: deps.now,
+    uuid: randomUUID,
+    kill: (pid, signal) => process.kill(pid, signal),
+    isAlive: (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    readSkillTexts: () => readPrepSkillTexts(deps.codeRoot),
+  });
+
   return {
     projects,
     evening,
@@ -702,12 +730,7 @@ export function createSources(deps: DashboardDeps): Sources {
           ),
       }),
     trackerTeams,
-    launch: (req) =>
-      launchInHerdr(req, {
-        exec,
-        root: deps.codeRoot,
-        suffix: deps.suffix,
-      }),
+    sessions,
     refresh(target) {
       for (const prefix of REFRESH_PREFIXES[target]) cache.clear(prefix);
     },
