@@ -77,6 +77,15 @@ export function describeIssueTrackerContract(label: string, fixture: (world: Fak
       expect(f.moves()).toEqual([{ identifier: "ENG-1", to: found!.startTarget!.id }]);
     });
 
+    it("saveForNight rewrites the description and leaves the issue assigned to me and ready", async () => {
+      const { tracker } = fixture(world({ issues: [issue("ENG-1", "backlog", { assignedToMe: false })] }));
+      const found = await tracker.getIssue("ENG-1");
+      await tracker.saveForNight(found!, "Rewritten");
+      expect((await tracker.getIssue("ENG-1"))?.description).toBe("Rewritten");
+      expect((await tracker.listTodo()).map(t => t.identifier)).toEqual(["ENG-1"]);
+      expect((await tracker.getSnapshots(["ENG-1"]))["ENG-1"]).toMatchObject({ assignedToMe: true, ready: true });
+    });
+
     it("listTodo returns only my ready issues with their fields carried through", async () => {
       const { tracker } = fixture(world({
         issues: [
@@ -115,6 +124,7 @@ export function describeIssueTrackerContract(label: string, fixture: (world: Fak
       const found = { identifier: "ENG-1", id: "x", name: "", description: "", comments: [], state: "Todo", url: "" };
       await expect(tracker.getIssue("ENG-1")).rejects.toThrow();
       await expect(tracker.moveIssue(found, { id: "s", name: "S" })).rejects.toThrow();
+      await expect(tracker.saveForNight(found, "x")).rejects.toThrow();
       await expect(tracker.listTodo()).rejects.toThrow();
       await expect(tracker.getSnapshots(["ENG-1"])).rejects.toThrow();
       await expect(tracker.listTeams()).rejects.toThrow();

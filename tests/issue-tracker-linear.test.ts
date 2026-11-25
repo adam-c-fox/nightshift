@@ -40,6 +40,16 @@ function linearFixture(world: FakeTrackerWorld): TrackerFixture {
       moves.push({ identifier: found!.identifier, to: variables.stateId });
       return respond({ data: { issueUpdate: { success: true } } });
     }
+    if (operation === "SaveForNightLookup") {
+      return respond({ data: { viewer: { id: "viewer-1" }, issue: { team: { states: { nodes: states.filter(s => s.name === variables.stateName).map(s => ({ id: s.id })) } } } } });
+    }
+    if (operation === "SaveForNight") {
+      const found = byId(variables.id)!;
+      found.description = variables.description;
+      found.assignedToMe = variables.assigneeId === "viewer-1";
+      found.state = (Object.keys(STATES) as FakeIssueState[]).find(key => `state-${key}` === variables.stateId)!;
+      return respond({ data: { issueUpdate: { success: true } } });
+    }
     if (operation === "TodoIssues") {
       const wanted = variables.filter.state.name.eq;
       const nodes = world.issues

@@ -5,6 +5,7 @@ import {
   fetchTicket,
   fetchTodoIssues,
   isFinished,
+  saveIssueForNight,
   pickInProgressState,
   pickInReviewState,
   setIssueState,
@@ -83,6 +84,39 @@ describe("setIssueState", () => {
 
     vi.stubGlobal("fetch", respond(false));
     await expect(setIssueState("issue-1", "progress", { apiKey: "lin_api_x" })).rejects.toThrow(/not updated/);
+  });
+});
+
+describe("saveIssueForNight", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const lookup = (stateNodes: unknown[]) => ({ data: { viewer: { id: "viewer-1" }, issue: { team: { states: { nodes: stateNodes } } } } });
+
+  it("sets description, the viewer and the Todo state in one issueUpdate", async () => {
+    const bodies: { variables: unknown }[] = [];
+    const replies = [lookup([{ id: "todo-1" }]), { data: { issueUpdate: { success: true } } }];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(replies.shift()));
+    }));
+    await saveIssueForNight("issue-1", "New text", { apiKey: "lin_api_x" });
+    expect(bodies[0].variables).toMatchObject({ id: "issue-1", stateName: "Todo" });
+    expect(bodies[1].variables).toEqual({ id: "issue-1", description: "New text", assigneeId: "viewer-1", stateId: "todo-1" });
+  });
+
+  it("throws without mutating when the team has no Todo state", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(lookup([]))));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(saveIssueForNight("issue-1", "x", { apiKey: "lin_api_x" })).rejects.toThrow(/Todo/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws when Linear reports failure", async () => {
+    const replies = [lookup([{ id: "todo-1" }]), { data: { issueUpdate: { success: false } } }];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(replies.shift()))));
+    await expect(saveIssueForNight("issue-1", "x", { apiKey: "lin_api_x" })).rejects.toThrow(/not updated/);
   });
 });
 

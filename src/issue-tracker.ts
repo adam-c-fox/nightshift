@@ -67,6 +67,8 @@ export interface IssueTracker {
   getIssue(identifier: string): Promise<Issue | null>;
   /** Move an issue to its own startTarget or reviewTarget. */
   moveIssue(issue: Issue, to: WorkflowStep): Promise<void>;
+  /** Replace the description, assign the issue to the authenticated user and put it in the ready state. */
+  saveForNight(issue: Issue, description: string): Promise<void>;
   /** Tickets assigned to the authenticated user in the ready state. */
   listTodo(): Promise<TodoIssue[]>;
   /** One entry per requested ID; null for IDs the tracker doesn't know. */

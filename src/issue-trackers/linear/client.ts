@@ -128,6 +128,30 @@ export async function setIssueState(issueId: string, stateId: string, client: Li
   }
 }
 
+export async function saveIssueForNight(issueId: string, description: string, client: LinearClient): Promise<void> {
+  const lookup = await linearRequest<{
+    data?: { viewer: { id: string }; issue: { team: { states: { nodes: { id: string }[] } } } | null };
+    errors?: { message: string }[];
+  }>(`
+    query SaveForNightLookup($id: String!, $stateName: String!) {
+      viewer { id }
+      issue(id: $id) { team { states(filter: { name: { eq: $stateName } }) { nodes { id } } } }
+    }
+  `, { id: issueId, stateName: TODO_STATE }, client);
+  const stateId = lookup.data?.issue?.team.states.nodes[0]?.id;
+  if (!stateId) throw new Error(`Linear issue ${issueId} has no ${TODO_STATE} state`);
+
+  const json = await linearRequest<{ data?: { issueUpdate?: { success: boolean } }; errors?: { message: string }[] }>(`
+    mutation SaveForNight($id: String!, $description: String!, $assigneeId: String!, $stateId: String!) {
+      issueUpdate(id: $id, input: { description: $description, assigneeId: $assigneeId, stateId: $stateId }) { success }
+    }
+  `, { id: issueId, description, assigneeId: lookup.data!.viewer.id, stateId }, client);
+  if (!json.data?.issueUpdate?.success) {
+    const reason = json.errors?.map(e => e.message).join("; ") ?? "no error given";
+    throw new Error(`Linear issue ${issueId} not updated: ${reason.slice(0, 200)}`);
+  }
+}
+
 export function authorizationHeader(apiKey: string): string {
   return apiKey.startsWith("lin_oauth_") ? `Bearer ${apiKey}` : apiKey;
 }

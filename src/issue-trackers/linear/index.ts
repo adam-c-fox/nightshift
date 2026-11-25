@@ -1,7 +1,7 @@
 import type { IssueTrackerDescriptor } from "../../issue-tracker.js";
 import {
   TODO_STATE, fetchIssueSnapshots, fetchTeams, fetchTicket, fetchTodoIssues,
-  isFinished, linearClient, setIssueState, shouldMarkInProgress,
+  isFinished, linearClient, saveIssueForNight, setIssueState, shouldMarkInProgress,
 } from "./client.js";
 
 export const linear: IssueTrackerDescriptor = {
@@ -19,6 +19,7 @@ export const linear: IssueTrackerDescriptor = {
         };
       },
       moveIssue: async (issue, to) => setIssueState(issue.id, to.id, client()),
+      saveForNight: async (issue, description) => saveIssueForNight(issue.id, description, client()),
       listTodo: async () =>
         (await fetchTodoIssues(client())).map(({ id: _id, ...rest }) => ({ ...rest, state: TODO_STATE })),
       getSnapshots: async identifiers => {
