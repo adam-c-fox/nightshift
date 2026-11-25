@@ -71,6 +71,7 @@ export type QueueRow = ClockOffRow & {
   repo: string;
   repos: string[];
   position: number;
+  notes: string[];
 };
 
 export interface EveningView {
@@ -277,6 +278,7 @@ export function buildEvening(input: EveningInput): EveningView {
       projects.find((p) => p.name === ticket.project)?.repos ?? {},
     ),
     position: i + 1,
+    notes: ticket.context,
   }));
 
   const tabs = projects.map((p) => ({

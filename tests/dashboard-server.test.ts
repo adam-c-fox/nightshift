@@ -72,6 +72,7 @@ function fakeSources(): Sources {
             project: "acme",
             repo: "app",
             repos: ["app"],
+            notes: [],
             position: 1,
           },
         ],

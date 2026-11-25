@@ -34,6 +34,10 @@ export const DASHBOARD_CSS = `
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem;
          background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
          padding: 0.75rem 1rem; margin-bottom: 1rem; }
+  .allowance { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+  .allowance input { width: 4.5rem; }
+  details.notes { margin-top: 0.4rem; }
+  details.notes textarea { display: block; width: 100%; margin: 0.25rem 0; }
   .bar .spacer { flex: 1 1 auto; }
   .bar .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .banner, .error { border: 1px solid var(--border); border-left-width: 4px; border-radius: 6px;
@@ -184,6 +188,22 @@ export const CLIENT_SCRIPT = `(() => {
     }
   };
 
+  const saveNotes = (button) => {
+    const box = document.querySelector('textarea[data-notes-for="' + button.dataset.id + '"]');
+    const notes = box.value.split("\\n").map((line) => line.trim()).filter(Boolean);
+    return editQueue({ op: "notes", id: button.dataset.id, notes }, button);
+  };
+
+  const saveAllowance = (button) => {
+    const kind = button.dataset.allowance;
+    const input = document.querySelector("[data-allowance-input]");
+    const percent = kind === "default" ? null : kind === "week" ? 100 : Number(input.value);
+    if (kind === "save" && !(Number.isInteger(percent) && percent >= 1 && percent <= 100)) {
+      return toast("Allowance must be a whole number from 1 to 100");
+    }
+    return editQueue({ op: "allowance", percent }, button);
+  };
+
   const queueRows = () => [...document.querySelectorAll("tr[data-queue-id]")];
 
   const moveTo = (row, offset, op) => {
@@ -237,6 +257,10 @@ export const CLIENT_SCRIPT = `(() => {
     if (refreshButton) return refresh(refreshButton);
     const queueButton = target && target.closest("[data-queue-op]");
     if (queueButton) return queueClick(queueButton);
+    const notesButton = target && target.closest("[data-notes-save]");
+    if (notesButton) return saveNotes(notesButton);
+    const allowanceButton = target && target.closest("[data-allowance]");
+    if (allowanceButton) return saveAllowance(allowanceButton);
     const retry = target && target.closest("[data-retry]");
     if (retry) {
       const slot = retry.closest("[data-fragment]");

@@ -24,7 +24,7 @@ function row(id: string, extra: Partial<ClockOffRow> = {}): ClockOffRow {
 }
 
 function queueRow(id: string, position: number, project: string, repos: string[], extra: Partial<QueueRow> = {}): QueueRow {
-  return { ...row(id, { tonightPosition: position }), project, repo: repos[0], repos, position, ...extra };
+  return { ...row(id, { tonightPosition: position }), project, repo: repos[0], repos, position, notes: [], ...extra };
 }
 
 function view(extra: Partial<EveningView> = {}): EveningView {
@@ -103,7 +103,6 @@ describe("eveningHTML", () => {
   });
 
   it("shows the summary with allowance, usage, counts, warnings and the buttons", () => {
-    expect(html).toContain("Tonight's allowance: <strong>40%</strong> (tonight.md)");
     expect(html).toContain("70%");
     expect(html).toContain("2 tickets · 2 projects swept");
     expect(html).toContain('data-code="auto_complete"');
@@ -255,5 +254,55 @@ describe("eveningErrorHTML", () => {
     const html = eveningErrorHTML("bad");
     expect(html).toContain("Tonight can't be loaded: bad");
     expect(html).toContain('href="/projects"');
+  });
+});
+
+describe("queue notes", () => {
+  const withNotes = (extra: Partial<QueueRow>) =>
+    eveningHTML(view({ queue: [queueRow("DEMO-1", 1, "acme", ["api"], extra)] }));
+
+  it("renders notes one per line, escaped, with a count", () => {
+    const html = withNotes({ notes: ["use <b>x</b>", "keep it small"] });
+    expect(html).toContain("<summary>Notes (2)</summary>");
+    expect(html).toContain("use &lt;b&gt;x&lt;/b&gt;\nkeep it small</textarea>");
+    expect(html).toContain('data-notes-for="DEMO-1"');
+    expect(html).toContain('type="button" class="btn" data-notes-save data-id="DEMO-1"');
+    expect(html).toContain('<label for="notes-DEMO-1"');
+  });
+
+  it("omits the count when there are no notes", () => {
+    expect(withNotes({})).toContain("<summary>Notes</summary>");
+  });
+
+  it("asks what to change on the open PR", () => {
+    const html = withNotes({ pr: { prId: 8, url: "u", autoComplete: false } });
+    expect(html).toContain(`placeholder="What should tonight's run change on PR #8?"`);
+  });
+
+  it("uses a neutral placeholder without an open PR", () => {
+    expect(withNotes({ pr: "unknown" })).toContain(`placeholder="Notes for tonight's run"`);
+  });
+});
+
+describe("allowance form", () => {
+  it("shows the current value and source", () => {
+    const html = eveningHTML(view());
+    expect(html).toContain('<input type="number" min="1" max="100" value="40" id="allowance-percent" data-allowance-input>');
+    expect(html).toContain('<label for="allowance-percent">Tonight\'s allowance</label>');
+    expect(html).toContain("set in tonight.md");
+    expect(html).toContain('data-allowance="save"');
+    expect(html).toContain('data-allowance="default"');
+    expect(html).toContain('data-allowance="week"');
+  });
+
+  it("names the nightly default as the source", () => {
+    const html = eveningHTML(view({ allowance: { percent: 25, source: "nightly default" } }));
+    expect(html).toContain("nightly default");
+    expect(html).not.toContain("set in tonight.md");
+  });
+
+  it("posts notes and allowance through the queue endpoint", () => {
+    expect(CLIENT_SCRIPT).toContain('op: "notes"');
+    expect(CLIENT_SCRIPT).toContain('op: "allowance"');
   });
 });

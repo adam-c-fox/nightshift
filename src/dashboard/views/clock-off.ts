@@ -136,6 +136,21 @@ function repoSelect(row: QueueRow): string {
   return `<select data-queue-repo data-id="${esc(row.id)}" aria-label="Repo for ${esc(row.id)}">${options.join("")}</select>`;
 }
 
+function notesHTML(row: QueueRow): string {
+  const id = esc(row.id);
+  const count = row.notes.length > 0 ? ` (${row.notes.length})` : "";
+  const placeholder =
+    row.pr && row.pr !== "unknown"
+      ? `What should tonight's run change on PR #${row.pr.prId}?`
+      : "Notes for tonight's run";
+  return `<details class="notes">
+<summary>Notes${count}</summary>
+<label for="notes-${id}" class="dim">Notes for ${id}, one per line</label>
+<textarea id="notes-${id}" rows="3" data-notes-for="${id}" placeholder="${esc(placeholder)}">${esc(row.notes.join("\n"))}</textarea>
+<button type="button" class="btn" data-notes-save data-id="${id}">Save notes</button>
+</details>`;
+}
+
 function queueRowHTML(row: QueueRow, last: boolean, tag: Tag): string {
   const actions = [
     queueButton("up", row.id, `Move ${row.id} up`, "↑", row.position === 1),
@@ -147,7 +162,7 @@ function queueRowHTML(row: QueueRow, last: boolean, tag: Tag): string {
 ${cell("#", String(row.position))}
 ${cell("Project", tag(row.project))}
 ${cell("ID", idCell(row), "id")}
-${cell("Title", titleCell(row))}
+${cell("Title", titleCell(row) + notesHTML(row))}
 ${cell("Prep", prepCell(row))}
 ${cell("Repo", repoSelect(row))}
 ${cell("Action", actions, "action")}
@@ -194,10 +209,22 @@ function usageHTML(usage: EveningView["usage"]): string {
     : `<span class="dim">Usage unavailable: ${esc(usage.error)}</span>`;
 }
 
+function allowanceHTML({ percent, source }: EveningView["allowance"]): string {
+  const origin = source === "tonight.md" ? "set in tonight.md" : source;
+  return `<span class="allowance">
+<label for="allowance-percent">Tonight's allowance</label>
+<input type="number" min="1" max="100" value="${percent}" id="allowance-percent" data-allowance-input>%
+<span class="dim">(${esc(origin)})</span>
+<button type="button" class="btn" data-allowance="save">Save</button>
+<button type="button" class="btn" data-allowance="default">Use default</button>
+<button type="button" class="btn" data-allowance="week">Use the rest of the week (100%)</button>
+</span>`;
+}
+
 function barHTML(view: EveningView): string {
   const queued = `${view.queue.length} ticket${view.queue.length === 1 ? "" : "s"} · ${view.sweep.length} project${view.sweep.length === 1 ? "" : "s"} swept`;
   return `<div class="bar">
-<span>Tonight's allowance: <strong>${view.allowance.percent}%</strong> (${esc(view.allowance.source)})</span>
+${allowanceHTML(view.allowance)}
 ${usageHTML(view.usage)}
 <span>Queued: <strong>${esc(queued)}</strong></span>
 <span class="spacer"></span>
