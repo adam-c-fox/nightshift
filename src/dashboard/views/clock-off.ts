@@ -156,7 +156,10 @@ function queueRowHTML(row: QueueRow, last: boolean, tag: Tag): string {
     queueButton("up", row.id, `Move ${row.id} up`, "↑", row.position === 1),
     queueButton("down", row.id, `Move ${row.id} down`, "↓", last),
     queueButton("remove", row.id, `Remove ${row.id}`, "Remove"),
-  ].join(" ");
+  ];
+  if (row.prep?.state !== "fresh") {
+    actions.unshift(prepButton({ kind: "prep", id: row.id, project: row.project }, "Prep"));
+  }
   return `<tr draggable="true" data-queue-id="${esc(row.id)}"${row.inTodo ? "" : ' class="not-todo"'}>
 <td class="grip" aria-hidden="true">⠿</td>
 ${cell("#", String(row.position))}
@@ -165,7 +168,7 @@ ${cell("ID", idCell(row), "id")}
 ${cell("Title", titleCell(row) + notesHTML(row))}
 ${cell("Prep", prepCell(row))}
 ${cell("Repo", repoSelect(row))}
-${cell("Action", actions, "action")}
+${cell("Action", actions.join(" "), "action")}
 </tr>`;
 }
 

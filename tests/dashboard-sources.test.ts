@@ -13,6 +13,7 @@ import { ExecError, type Exec } from "../src/exec.js";
 import {
   createSources,
   defaultDeps,
+  isClaudeCommand,
   SLOW_MS,
   type DashboardDeps,
   type Sources,
@@ -179,7 +180,6 @@ function deps(over: Partial<DashboardDeps> = {}): DashboardDeps {
     fetch: fakeFetch,
     now: () => now,
     cache: createCache(),
-    suffix: () => "ab12",
     ...over,
   };
 }
@@ -787,6 +787,13 @@ describe("defaultDeps", () => {
         actions: "/data/state/actions.json",
       },
     });
-    expect(d.suffix()).toMatch(/^[a-z0-9]+$/);
+  });
+});
+
+describe("isClaudeCommand", () => {
+  it("accepts a claude process and rejects others or empty output", () => {
+    expect(isClaudeCommand("/usr/local/bin/claude -p --output-format json\n")).toBe(true);
+    expect(isClaudeCommand("/usr/sbin/cron\n")).toBe(false);
+    expect(isClaudeCommand("")).toBe(false);
   });
 });

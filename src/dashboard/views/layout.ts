@@ -22,7 +22,7 @@ export const DASHBOARD_CSS = `
   h3 { font-size: 0.95rem; margin: 1rem 0 0.5rem; }
   .dim { color: var(--text-dim); }
   .loading { color: var(--text-dim); }
-  .btn, select { font: inherit; color: var(--text); background: var(--surface);
+  .btn, select, input:not([type=radio]):not([type=checkbox]), textarea { font: inherit; color: var(--text); background: var(--surface);
           border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.8rem;
           min-height: 2.25rem; }
   .btn { cursor: pointer; white-space: nowrap; }
@@ -121,6 +121,11 @@ export const CLIENT_SCRIPT = `(() => {
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastEl.classList.remove("show"), 10000);
   };
+
+  document.addEventListener("input", (e) => {
+    if (!e.target.matches("[data-other]")) return;
+    e.target.closest("fieldset").querySelector("input[value=other]").checked = true;
+  });
 
   const loadFragment = async (el) => {
     const ticket = (el.loadTicket = (el.loadTicket || 0) + 1);

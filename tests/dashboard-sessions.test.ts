@@ -19,6 +19,7 @@ import {
 } from "../src/dashboard/sessions.js";
 import type { Issue } from "../src/issue-tracker.js";
 import type { Survey } from "../src/prep-flow.js";
+import type { Project } from "../src/project.js";
 import { descriptionHash, mergePrepSections, type PrepRecord } from "../src/prep.js";
 import type { RunUsage } from "../src/types.js";
 
@@ -86,7 +87,7 @@ function setup(options: { live?: boolean; issue?: Issue | null } = {}) {
         app: { path: "/code/app", description: "the app" },
         lib: { path: "/code/lib", description: "the lib" },
       },
-    }) as never,
+    }) as unknown as Project,
     tracker: () => tracker as never,
     runStep: async (opts) => {
       steps.push(opts);
@@ -150,6 +151,13 @@ const never = (opts: StructuredStepOptions) =>
   );
 
 describe("start and survey", () => {
+  it("shows the ticket title while the survey runs", async () => {
+    const t = setup();
+    t.queue(never);
+    await t.sessions.start({ id: "ENG-142", project: "acme" });
+    await vi.waitFor(() => expect(get(t, "sid-1").ticket.title).toBe(baseIssue.name));
+  });
+
   it("creates a surveying session and ends in answering with the survey", async () => {
     const t = setup();
     t.queue(ok(surveyOutput, "claude-9"));
@@ -416,7 +424,7 @@ describe("approve", () => {
     t.setIssue("Someone else edited this");
     await expect(t.sessions.approve(sid, "Final text")).rejects.toMatchObject({
       status: 409,
-      message: "ENG-142 changed in the tracker since this prep started",
+      message: "ENG-142 changed in the tracker since this prep started; cancel this prep and start again to pick up the new description",
     });
     expect(t.saved).toEqual([]);
     expect(t.records).toEqual([]);

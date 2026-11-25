@@ -152,6 +152,15 @@ describe("eveningHTML", () => {
     expect(eveningHTML(view(), "nope")).toContain('<a href="?tab=acme" aria-current="page">');
   });
 
+  it("offers a Prep button on queue rows unless the prep is fresh", () => {
+    const rows = (state: "fresh" | "stale" | "none" | "inferred") =>
+      eveningHTML(view({ queue: [queueRow("DEMO-1", 1, "acme", ["api"], { prep: { state } })] })).match(
+        /<tr draggable="true" data-queue-id="DEMO-1"[\s\S]*?<\/tr>/,
+      )![0];
+    expect(rows("fresh")).not.toContain("data-prep");
+    for (const state of ["stale", "none", "inferred"] as const) expect(rows(state)).toContain("data-prep");
+  });
+
   it("shows in queue #N or a + add button in a tab", () => {
     expect(html).toContain("in queue #1");
     expect(html).toMatch(/data-queue-op="add" data-id="DEMO-2" data-project="acme">\+ add</);

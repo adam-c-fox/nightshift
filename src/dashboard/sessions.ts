@@ -58,7 +58,7 @@ export class SessionError extends Error {
 export interface SessionDeps {
   dir: string;
   root: string;
-  loadProject(name: string): Pick<Project, "repos" | "defaultRepo">;
+  loadProject(name: string): Project;
   tracker(project: string): Pick<IssueTracker, "getIssue" | "saveForNight">;
   runStep(opts: StructuredStepOptions): Promise<StructuredStepResult>;
   recordPrep(id: string, record: PrepRecord): void;
@@ -139,11 +139,14 @@ export function createSessions(deps: SessionDeps) {
     const project = deps.loadProject(s.project);
     const issue = await deps.tracker(s.project).getIssue(s.ticketId);
     if (!issue) throw new Error(`${s.ticketId} not found in the tracker`);
+    patch(s.id, (x) => {
+      x.ticket = ticketOf(issue);
+    });
     const repoNames = Object.keys(project.repos);
     return {
       input: {
         ...stepDirs(project),
-        prompt: buildSurveyPrompt(issue, project as Project, deps.readSkillTexts().gapsMd),
+        prompt: buildSurveyPrompt(issue, project, deps.readSkillTexts().gapsMd),
         schema: SURVEY_SCHEMA(repoNames),
       },
       apply(session, output, claudeSessionId) {
@@ -249,7 +252,7 @@ export function createSessions(deps: SessionDeps) {
           s.draft = approved;
           delete s.approvedDescription;
         });
-        throw new SessionError(409, `${ticketId} changed in the tracker since this prep started`);
+        throw new SessionError(409, `${ticketId} changed in the tracker since this prep started; cancel this prep and start again to pick up the new description`);
       }
       if (need(sid).state !== "saving") return;
       await deps.tracker(project).saveForNight(issue, approved!);

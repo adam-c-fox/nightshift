@@ -1,4 +1,5 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { nightlyAllowancePercent, parseUsageSummary, type UsageSummary } from "../budget.js";
@@ -105,8 +106,9 @@ export interface DashboardDeps {
   fetch: typeof fetch;
   now: () => Date;
   cache: TtlCache;
-  suffix: () => string;
 }
+
+export const isClaudeCommand = (psOutput: string): boolean => psOutput.includes("claude");
 
 export function defaultDeps(root: string): DashboardDeps {
   return {
@@ -121,7 +123,6 @@ export function defaultDeps(root: string): DashboardDeps {
     fetch: globalThis.fetch,
     now: () => new Date(),
     cache: createCache(),
-    suffix: () => randomBytes(3).toString("hex"),
   };
 }
 
@@ -696,8 +697,7 @@ export function createSources(deps: DashboardDeps): Sources {
     kill: (pid, signal) => process.kill(pid, signal),
     isAlive: (pid) => {
       try {
-        process.kill(pid, 0);
-        return true;
+        return isClaudeCommand(execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }));
       } catch {
         return false;
       }

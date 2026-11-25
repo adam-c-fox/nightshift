@@ -168,7 +168,7 @@ describe("openPrepsHTML", () => {
 describe("session client script", () => {
   it("parses and wires polling, session actions, prep and copy", () => {
     expect(() => new Function(CLIENT_SCRIPT)).not.toThrow();
-    for (const needle of ["dataset.poll", "clearTimeout(el.pollTimer)", "data-session-action", "data-prep", "data-copy", "/api/sessions"]) {
+    for (const needle of ["dataset.poll", "clearTimeout(el.pollTimer)", "data-session-action", "data-prep", "data-copy", "/api/sessions", "[data-other]", "input[value=other]"]) {
       expect(CLIENT_SCRIPT).toContain(needle);
     }
   });
