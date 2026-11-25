@@ -190,7 +190,7 @@ export const CLIENT_SCRIPT = `(() => {
       });
       return { answers };
     }
-    if (act === "revise") return { feedback: value("[data-feedback]") };
+    if (act === "revise") return { feedback: value("[data-feedback]"), draft: value("[data-draft]") };
     if (act === "approve") return { description: value("[data-draft]") };
     if (act === "not-ready") return { blockers: value("[data-blockers]") };
     return {};
@@ -204,6 +204,8 @@ export const CLIENT_SCRIPT = `(() => {
       await post("/api/sessions/" + root.dataset.session + "/" + button.dataset.sessionAction, sessionBody(button.dataset.sessionAction, root));
     } catch (err) {
       toast(err.message);
+      button.disabled = false;
+      return;
     }
     await loadFragment(slot);
   };

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -112,6 +112,25 @@ describe("runStructuredStep", () => {
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     const { r } = await run({});
     expect(r).toEqual({ ok: false, error: "CLAUDE_CODE_OAUTH_TOKEN isn't set in the root .env" });
+  });
+
+  it("denies reading project env files under the configured root", async () => {
+    stub({ lines: [JSON.stringify(result)] });
+    const root = mkdtempSync(path.join(tmpdir(), "root-"));
+    mkdirSync(path.join(root, "projects", "acme"), { recursive: true });
+    await run({ root });
+    const args = argv();
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+    expect(settings.permissions.deny).toContain(`Read(/${root}/projects/acme/.env)`);
+  });
+
+  it("reads the token from the configured root's .env", async () => {
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    stub({ lines: [JSON.stringify(result)] });
+    const root = mkdtempSync(path.join(tmpdir(), "root-"));
+    writeFileSync(path.join(root, ".env"), "CLAUDE_CODE_OAUTH_TOKEN=from-root\n");
+    const { r } = await run({ root });
+    expect(r.ok).toBe(true);
   });
 
   it("reports the pid through onSpawn", async () => {

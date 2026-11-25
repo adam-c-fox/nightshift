@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { agentEnv, buildAgentSettings, CLAUDE_TOKEN } from "./agent-env.js";
-import { getEnv } from "./env.js";
+import { envLookup } from "./env.js";
 import { runWithWatchdog, type WatchdogResult } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
-import type { RepoConfig } from "./project.js";
+import { projectEnvFiles, type RepoConfig } from "./project.js";
 import { runtimeSettings } from "./settings.js";
 import type { IssueComment } from "./issue-tracker.js";
 import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, ThreadReport, ThreadVerdict, Verdict, VerifyResult } from "./types.js";
@@ -783,10 +783,10 @@ export function activityText(toolUse: ToolUse, cwd: string): string {
 }
 
 export async function runStructuredStep(opts: StructuredStepOptions): Promise<StructuredStepResult> {
-  const token = getEnv(CLAUDE_TOKEN);
+  const token = envLookup([path.join(opts.root, ".env")])(CLAUDE_TOKEN);
   if (!token) return { ok: false, error: `${CLAUDE_TOKEN} isn't set in the root .env` };
   const profile = prepProfile();
-  const settings = buildAgentSettings({ network: [], allowLocalBinding: false }, opts.root);
+  const settings = buildAgentSettings({ network: [], allowLocalBinding: false }, opts.root, { secretFiles: projectEnvFiles(path.join(opts.root, "projects")) });
   const base = withFlagValue(withFlagValue(buildClaudeArgs(opts.systemPrompt, profile, opts.addDirs), "--output-format", "stream-json"), "--max-turns", String(STEP_MAX_TURNS));
   const args = [
     ...agentRunArgs(base, settings, profile), "--verbose", "--json-schema", JSON.stringify(opts.schema),

@@ -115,6 +115,15 @@ describe("sessionFragmentHTML", () => {
     expect(render({ state: "surveying", error: "interrupted" })).toContain("Interrupted");
   });
 
+  it("offers Cancel in every non-terminal state", () => {
+    for (const state of ["surveying", "answering", "drafting", "reviewing", "revising", "saving"] as const) {
+      expect(render({ state, survey, draft: "d" })).toContain('data-session-action="cancel"');
+    }
+    for (const state of ["saved", "not_ready", "cancelled"] as const) {
+      expect(render({ state })).not.toContain('data-session-action="cancel"');
+    }
+  });
+
   it("sums the usage cost as an estimate in every state", () => {
     const html = render({ state: "cancelled", usage: [usage(0.4), usage(0.35)] });
     expect(html).toContain("est. cost so far $0.75");
@@ -171,5 +180,9 @@ describe("session client script", () => {
     for (const needle of ["dataset.poll", "clearTimeout(el.pollTimer)", "data-session-action", "data-prep", "data-copy", "/api/sessions", "[data-other]", "input[value=other]"]) {
       expect(CLIENT_SCRIPT).toContain(needle);
     }
+    expect(CLIENT_SCRIPT).toContain("{ feedback: value(\"[data-feedback]\"), draft: value(\"[data-draft]\") }");
+    const action = CLIENT_SCRIPT.slice(CLIENT_SCRIPT.indexOf("const sessionAction"), CLIENT_SCRIPT.indexOf("const refresh"));
+    expect(action).toMatch(/catch \(err\) \{\s*toast\(err\.message\);\s*button\.disabled = false;\s*return;\s*\}/);
+    expect(action.indexOf("return;")).toBeLessThan(action.indexOf("loadFragment"));
   });
 });

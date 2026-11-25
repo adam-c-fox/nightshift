@@ -16,7 +16,7 @@ import {
   parseAnswers,
   parseApproval,
   parseBlockers,
-  parseFeedback,
+  parseRevision,
   parseSessionRequest,
   SessionError,
 } from "./sessions.js";
@@ -303,9 +303,11 @@ function routes(ctx: ServerContext): Route[] {
               sessions.answer(sid, badRequest(() => parseAnswers(body, survey)));
               return json(ok, 202);
             }
-            case "revise":
-              sessions.revise(sid, badRequest(() => parseFeedback(body)));
+            case "revise": {
+              const { feedback, draft } = badRequest(() => parseRevision(body));
+              sessions.revise(sid, feedback, draft);
               return json(ok, 202);
+            }
             case "retry":
               sessions.retry(sid);
               return json(ok, 202);

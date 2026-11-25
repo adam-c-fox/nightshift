@@ -328,10 +328,12 @@ export function createSessions(deps: SessionDeps) {
       return need(sid);
     },
 
-    revise(sid: string, feedback: string): PrepSession {
+    revise(sid: string, feedback: string, draft: string): PrepSession {
       admit(need(sid), ["reviewing"]);
       admitStep();
       patch(sid, (s) => {
+        if (s.draft !== draft) s.revisions.push(s.draft!);
+        s.draft = draft;
         s.feedback = feedback;
         s.state = "revising";
       });
@@ -503,6 +505,11 @@ function boundedText(body: unknown, field: string, max: number, trim: boolean): 
 }
 
 export const parseFeedback = (body: unknown): string => boundedText(body, "feedback", 4000, true);
+
+export const parseRevision = (body: unknown): { feedback: string; draft: string } => ({
+  feedback: parseFeedback(body),
+  draft: boundedText(body, "draft", 60000, false),
+});
 
 export const parseApproval = (body: unknown): string => boundedText(body, "description", 60000, false);
 

@@ -736,7 +736,7 @@ describe("sessions", () => {
   const answers = { answers: [{ gapId: "g1", choice: "recommended" }] };
   const actions: [string, unknown, string][] = [
     ["answers", answers, "answer"],
-    ["revise", { feedback: "shorter" }, "revise"],
+    ["revise", { feedback: "shorter", draft: "text" }, "revise"],
     ["approve", { description: "text" }, "approve"],
     ["not-ready", { blockers: "waiting" }, "notReady"],
     ["retry", {}, "retry"],
@@ -792,10 +792,16 @@ describe("sessions", () => {
     expect(JSON.parse(res.body).error).toBe("session is saved");
   });
 
+  it("passes the edited draft with the feedback to revise", async () => {
+    await post(`/api/sessions/${SID}/revise`, { feedback: "shorter", draft: "edited" });
+    expect(sources.sessions.revise).toHaveBeenCalledWith(SID, "shorter", "edited");
+    expect((await post(`/api/sessions/${SID}/revise`, { feedback: "shorter" })).status).toBe(400);
+  });
+
   it("returns 409 for the approve conflict and 400 for invalid bodies", async () => {
     vi.mocked(sources.sessions.approve).mockRejectedValue(new SessionError(409, "ENG-1 changed in Linear since this prep started"));
     expect((await post(`/api/sessions/${SID}/approve`, { description: "x" })).status).toBe(409);
-    expect((await post(`/api/sessions/${SID}/revise`, { feedback: "" })).status).toBe(400);
+    expect((await post(`/api/sessions/${SID}/revise`, { feedback: "", draft: "d" })).status).toBe(400);
     expect((await post(`/api/sessions/${SID}/answers`, { answers: [] })).status).toBe(400);
     expect((await post(`/api/sessions/${SID}/not-ready`, { blockers: "a\nb" })).status).toBe(400);
   });

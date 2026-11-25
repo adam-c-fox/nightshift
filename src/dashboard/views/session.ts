@@ -112,8 +112,15 @@ function savedHTML(s: PrepSession): string {
 <p class="dim">Repo: ${esc(s.survey?.repo ?? "unknown")} · ready</p>`;
 }
 
+const hasFailed = (s: PrepSession) => s.error !== undefined && !s.running && !TERMINAL.includes(s.state);
+
 function bodyHTML(s: PrepSession): string {
-  if (s.error !== undefined && !s.running && !TERMINAL.includes(s.state)) return failedHTML(s);
+  if (hasFailed(s)) return failedHTML(s);
+  const body = stateHTML(s);
+  return TERMINAL.includes(s.state) ? body : `${body}\n<p>${action("cancel", "Cancel prep")}</p>`;
+}
+
+function stateHTML(s: PrepSession): string {
   switch (s.state) {
     case "surveying":
       return activityHTML(s, "Reading the code…");

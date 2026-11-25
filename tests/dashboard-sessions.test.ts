@@ -11,6 +11,7 @@ import {
   parseApproval,
   parseBlockers,
   parseFeedback,
+  parseRevision,
   parseSessionRequest,
   shellQuote,
   skillPrompt,
@@ -300,7 +301,7 @@ describe("answer and revise", () => {
     const first = get(t, sid).draft;
     const revised = { acceptanceCriteria: ["better"], decisions: [], pointers: [] };
     t.queue(ok(revised));
-    t.sessions.revise(sid, "make it better");
+    t.sessions.revise(sid, "make it better", first!);
     expect(get(t, sid)).toMatchObject({ state: "revising", running: true });
     await t.sessions.settled();
     expect(get(t, sid)).toMatchObject({
@@ -314,10 +315,32 @@ describe("answer and revise", () => {
     expect(t.steps[2]?.prompt).toContain(first);
   });
 
+  it("revises from the edited draft, keeping the original in revisions", async () => {
+    const t = setup();
+    const sid = await t.reachReviewing();
+    const first = get(t, sid).draft;
+    t.queue(ok({ acceptanceCriteria: ["better"], decisions: [], pointers: [] }));
+    t.sessions.revise(sid, "make it better", "my edited draft");
+    expect(get(t, sid).draft).toBe("my edited draft");
+    await t.sessions.settled();
+    expect(get(t, sid).revisions).toEqual([first, "my edited draft"]);
+    expect(t.steps[2]?.prompt).toContain("my edited draft");
+  });
+
+  it("does not push an unchanged draft onto revisions before revising", async () => {
+    const t = setup();
+    const sid = await t.reachReviewing();
+    const first = get(t, sid).draft!;
+    t.queue({ ok: false, error: "boom" });
+    t.sessions.revise(sid, "again", first);
+    await t.sessions.settled();
+    expect(get(t, sid).revisions).toEqual([]);
+  });
+
   it("409s answer while reviewing and revise while answering", async () => {
     const t = setup();
     const answering = await t.reachAnswering();
-    expect(await statusOf(() => t.sessions.revise(answering, "x"))).toBe(409);
+    expect(await statusOf(() => t.sessions.revise(answering, "x", "d"))).toBe(409);
     t.queue(ok(draftOutput));
     t.sessions.answer(answering, [{ gapId: "g1", choice: "recommended" }]);
     expect(await statusOf(() => t.sessions.answer(answering, []))).toBe(409);
@@ -329,8 +352,8 @@ describe("answer and revise", () => {
     const t = setup();
     const sid = await t.reachReviewing();
     t.queue(never);
-    t.sessions.revise(sid, "x");
-    expect(await statusOf(() => t.sessions.revise(sid, "y"))).toBe(409);
+    t.sessions.revise(sid, "x", "d");
+    expect(await statusOf(() => t.sessions.revise(sid, "y", "d"))).toBe(409);
     t.sessions.cancel(sid);
     await t.sessions.settled();
 
@@ -368,7 +391,7 @@ describe("answer and revise", () => {
     const t = setup();
     const sid = await t.reachReviewing();
     t.queue({ ok: false, error: "boom" });
-    t.sessions.revise(sid, "again");
+    t.sessions.revise(sid, "again", get(t, sid).draft!);
     await t.sessions.settled();
     t.queue(ok(draftOutput));
     t.sessions.retry(sid);
@@ -776,6 +799,14 @@ describe("input parsers", () => {
     expect(parseFeedback({ feedback: "x".repeat(4000) })).toHaveLength(4000);
     for (const body of [{ feedback: "" }, { feedback: "  " }, { feedback: "x".repeat(4001) }, { feedback: 1 }, {}, null]) {
       expect(() => parseFeedback(body)).toThrow(/feedback/);
+    }
+  });
+
+  it("parseRevision returns feedback and a draft up to 60000 characters", () => {
+    expect(parseRevision({ feedback: " tighten ", draft: "text" })).toEqual({ feedback: "tighten", draft: "text" });
+    expect(parseRevision({ feedback: "f", draft: "x".repeat(60000) }).draft).toHaveLength(60000);
+    for (const body of [{ feedback: "f" }, { feedback: "f", draft: "" }, { feedback: "f", draft: "x".repeat(60001) }, { draft: "d" }]) {
+      expect(() => parseRevision(body)).toThrow();
     }
   });
 
