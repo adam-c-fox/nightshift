@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addToQueue, loadQueue, moveInQueue, parseQueue, removeFromQueue, setQueueRepo } from "../src/queue.js";
-import { loadAllowance } from "../src/tickets.js";
+import { addToQueue, loadQueue, moveInQueue, parseQueue, removeFromQueue, setQueueAllowance, setQueueNotes, setQueueRepo } from "../src/queue.js";
+import { loadAllowance, parseAllowance } from "../src/tickets.js";
 
 const REPOS = {
   eoe: { names: ["app", "infra"], defaultRepo: "app" },
@@ -16,6 +16,7 @@ const SECTIONS = [
   "## GSAI-2 – memo cap\nproject: memosum\n- one bullet",
   "## GSAI-3 – button\nproject: eoe\nbase: GSAI-1\nrepo: infra\n- call the endpoint",
 ];
+const loadAllowanceFrom = (raw: string) => parseAllowance(raw);
 const RAW = HEADER + SECTIONS.join("\n\n") + "\n";
 
 describe("parseQueue", () => {
@@ -169,5 +170,53 @@ describe("removeFromQueue", () => {
 
   it("refuses an ID that isn't queued", () => {
     expect(() => removeFromQueue(RAW, REPOS, "GSAI-9")).toThrow(/not in the queue/);
+  });
+});
+
+describe("setQueueNotes", () => {
+  it("replaces the bullets and leaves every other section untouched", () => {
+    const result = setQueueNotes(RAW, REPOS, "GSAI-1", ["  first\nline  ", "", "second"]);
+    const replaced = "## GSAI-1 – export CSV\nproject: eoe\nrepo: infra\n- first line\n- second";
+    expect(result).toBe(HEADER + [replaced, SECTIONS[1], SECTIONS[2]].join("\n\n") + "\n");
+  });
+
+  it("keeps non-bullet lines in place and appends when there were no bullets", () => {
+    const raw = "## GSAI-1 – a\nproject: eoe\nbase-less text\n- old\nrepo: infra\n";
+    expect(setQueueNotes(raw, REPOS, "GSAI-1", ["new"])).toBe("## GSAI-1 – a\nproject: eoe\nbase-less text\n- new\nrepo: infra\n");
+    expect(setQueueNotes("## GSAI-1 – a\nproject: eoe\n", REPOS, "GSAI-1", ["x"])).toBe("## GSAI-1 – a\nproject: eoe\n- x\n");
+  });
+
+  it("clears the bullets with an empty list", () => {
+    expect(setQueueNotes(RAW, REPOS, "GSAI-2", [])).toContain("## GSAI-2 – memo cap\nproject: memosum\n\n## GSAI-3");
+  });
+
+  it("enforces the limits and the ticket id", () => {
+    expect(() => setQueueNotes(RAW, REPOS, "GSAI-1", Array(11).fill("n"))).toThrow(/at most 10/);
+    expect(() => setQueueNotes(RAW, REPOS, "GSAI-1", ["x".repeat(301)])).toThrow(/300/);
+    expect(setQueueNotes(RAW, REPOS, "GSAI-1", ["x".repeat(300)])).toContain("x".repeat(300));
+    expect(() => setQueueNotes(RAW, REPOS, "GSAI-9", ["n"])).toThrow(/not in the queue/);
+  });
+});
+
+describe("setQueueAllowance", () => {
+  it("replaces the header allowance line, leaving the rest byte-identical", () => {
+    expect(setQueueAllowance(RAW, REPOS, 60)).toBe(RAW.replace("allowance: 30", "allowance: 60"));
+  });
+
+  it("adds the line to the header when there is none", () => {
+    const raw = "# Tonight\n\n" + SECTIONS[1] + "\n";
+    const result = setQueueAllowance(raw, REPOS, 40);
+    expect(result).toBe("# Tonight\nallowance: 40\n\n" + SECTIONS[1] + "\n");
+    expect(loadAllowanceFrom(result)).toBe(40);
+  });
+
+  it("removes the line with null", () => {
+    expect(setQueueAllowance(RAW, REPOS, null)).toBe(RAW.replace("allowance: 30\n", ""));
+  });
+
+  it("rejects out-of-range values", () => {
+    expect(() => setQueueAllowance(RAW, REPOS, 0)).toThrow(/1 to 100/);
+    expect(() => setQueueAllowance(RAW, REPOS, 101)).toThrow(/1 to 100/);
+    expect(() => setQueueAllowance(RAW, REPOS, 1.5)).toThrow(/1 to 100/);
   });
 });

@@ -10,7 +10,7 @@ export interface TicketRepos {
 
 export const COMMENT = /<!--[\s\S]*?-->/g;
 export const REPO_LINE = new RegExp(`^repo:\\s*(${REPO_NAME_PATTERN})\\s*$`, "i");
-const ALLOWANCE_LINE = /^allowance:\s*(.*?)\s*$/i;
+export const ALLOWANCE_LINE = /^allowance:\s*(.*?)\s*$/i;
 export const TICKET_ID_PATTERN = "[A-Z]+-\\d+";
 export const TICKET_ID = new RegExp(`^${TICKET_ID_PATTERN}$`);
 export const HEADING = new RegExp(`^##\\s+(${TICKET_ID_PATTERN})\\s*[–-]\\s*(.*)`);

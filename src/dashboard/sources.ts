@@ -34,6 +34,8 @@ import {
   loadQueue,
   moveInQueue,
   removeFromQueue,
+  setQueueAllowance,
+  setQueueNotes,
   setQueueRepo,
   type QueueRepos,
 } from "../queue.js";
@@ -553,6 +555,10 @@ export function createSources(deps: DashboardDeps): Sources {
           return moveInQueue(raw, repos, op.order);
         case "repo":
           return setQueueRepo(raw, repos, op.id, op.repo);
+        case "notes":
+          return setQueueNotes(raw, repos, op.id, op.notes);
+        case "allowance":
+          return setQueueAllowance(raw, repos, op.percent);
       }
     })();
     writeTextAtomic(queueFile(), next);

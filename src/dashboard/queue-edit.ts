@@ -1,11 +1,13 @@
-import { REPO_NAME, PROJECT_NAME } from "../project.js";
+import { REPO_NAME, PROJECT_NAME, isValidPercent } from "../project.js";
 import { TICKET_ID } from "../tickets.js";
 
 export type QueueOp =
   | { op: "add"; id: string; project: string; repo?: string }
   | { op: "remove"; id: string }
   | { op: "move"; order: string[] }
-  | { op: "repo"; id: string; repo: string };
+  | { op: "repo"; id: string; repo: string }
+  | { op: "notes"; id: string; notes: string[] }
+  | { op: "allowance"; percent: number | null };
 
 const isString = (value: unknown): value is string => typeof value === "string";
 
@@ -38,7 +40,15 @@ export function parseQueueOp(body: unknown): QueueOp {
       return { op: "move", order: fields.order.map(ticketId) };
     case "repo":
       return { op: "repo", id: ticketId(fields.id), repo: repoName(fields.repo) };
+    case "notes":
+      if (!Array.isArray(fields.notes) || !fields.notes.every(isString)) throw new Error("notes must be a list of strings");
+      return { op: "notes", id: ticketId(fields.id), notes: fields.notes };
+    case "allowance":
+      if (fields.percent !== null && !isValidPercent(fields.percent)) {
+        throw new Error("allowance must be a whole number from 1 to 100, or null");
+      }
+      return { op: "allowance", percent: fields.percent };
     default:
-      throw new Error("op must be add, remove, move or repo");
+      throw new Error("op must be add, remove, move, repo, notes or allowance");
   }
 }

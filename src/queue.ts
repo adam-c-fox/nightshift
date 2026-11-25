@@ -1,10 +1,12 @@
 import path from "node:path";
 import { ROOT } from "./state.js";
-import { REPO_NAME } from "./project.js";
+import { REPO_NAME, isValidPercent } from "./project.js";
 import {
+  ALLOWANCE_LINE,
   COMMENT,
   HEADING,
   REPO_LINE,
+  headerLines,
   loadFile,
   parseSections,
   validateBases,
@@ -69,9 +71,14 @@ function joinQueue(header: string, sections: Section[]): string {
   return header + (sections.length ? gap + sections.map((s) => s.lines.join("\n")).join("\n\n") + "\n" : "");
 }
 
-function rewrite(raw: string, repos: QueueRepos, edit: (sections: Section[]) => Section[]): string {
+function rewrite(
+  raw: string,
+  repos: QueueRepos,
+  edit: (sections: Section[]) => Section[],
+  editHeader: (header: string) => string = (header) => header,
+): string {
   const { header, sections } = splitQueue(raw);
-  const result = joinQueue(header, edit(sections));
+  const result = joinQueue(editHeader(header), edit(sections));
   parseQueue(result, repos);
   return result;
 }
@@ -126,5 +133,47 @@ export function setQueueRepo(raw: string, repos: QueueRepos, id: string, repo: s
       masked[at] = `repo: ${repo}`;
     }
     return sections.map((s) => (s === target ? { ...target, lines, masked } : s));
+  });
+}
+
+const MAX_NOTES = 10;
+const MAX_NOTE_LENGTH = 300;
+const BULLET_LINE = /^-\s+/;
+
+export function setQueueNotes(raw: string, repos: QueueRepos, id: string, notes: string[]): string {
+  const cleaned = notes.map((note) => note.replace(/[\r\n]+/g, " ").trim()).filter((note) => note !== "");
+  if (cleaned.length > MAX_NOTES) throw new Error(`Ticket ${id}: at most ${MAX_NOTES} notes`);
+  if (cleaned.some((note) => note.length > MAX_NOTE_LENGTH)) {
+    throw new Error(`Ticket ${id}: notes are at most ${MAX_NOTE_LENGTH} characters`);
+  }
+  return rewrite(raw, repos, (sections) => {
+    const target = requireSection(sections, id);
+    const firstBullet = target.masked.findIndex((line) => BULLET_LINE.test(line.trim()));
+    const keep = target.lines.map((_, i) => !BULLET_LINE.test(target.masked[i].trim()));
+    const insertAt = firstBullet === -1 ? target.lines.length : firstBullet;
+    const bullets = cleaned.map((note) => `- ${note}`);
+    const splice = (lines: string[]) => {
+      const kept = lines.filter((_, i) => keep[i]);
+      const before = keep.slice(0, insertAt).filter(Boolean).length;
+      return [...kept.slice(0, before), ...bullets, ...kept.slice(before)];
+    };
+    return sections.map((s) => (s === target ? { ...target, lines: splice(target.lines), masked: splice(target.masked) } : s));
+  });
+}
+
+export function setQueueAllowance(raw: string, repos: QueueRepos, percent: number | null): string {
+  if (percent !== null && !isValidPercent(percent)) throw new Error("allowance must be a whole number from 1 to 100");
+  return rewrite(raw, repos, (sections) => sections, (header) => {
+    const { lines, masked } = headerLines(header);
+    const at = masked.findIndex((line) => ALLOWANCE_LINE.test(line.trim()));
+    if (percent === null) {
+      if (at !== -1) lines.splice(at, 1);
+    } else if (at !== -1) {
+      lines[at] = `allowance: ${percent}`;
+    } else {
+      const trailingBlanks = lines.length - 1 - lines.map((line) => line.trim() === "").lastIndexOf(false);
+      lines.splice(lines.length - trailingBlanks, 0, `allowance: ${percent}`);
+    }
+    return lines.join("\n");
   });
 }

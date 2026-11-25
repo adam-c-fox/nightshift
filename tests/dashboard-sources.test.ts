@@ -565,6 +565,16 @@ describe("editQueue", () => {
     await sources.editQueue({ op: "remove", id: "DEMO-2" });
     expect(queue()).not.toContain("DEMO-2");
   });
+
+  it("sets notes and the allowance", async () => {
+    await sources.editQueue({ op: "notes", id: "DEMO-1", notes: ["be careful", "add a test"] });
+    expect(queue()).toContain("- be careful\n- add a test");
+    await sources.editQueue({ op: "allowance", percent: 55 });
+    expect(queue()).toContain("allowance: 55");
+    await sources.editQueue({ op: "allowance", percent: null });
+    expect(queue()).not.toContain("allowance:");
+    await expect(sources.editQueue({ op: "notes", id: "DEMO-1", notes: Array(11).fill("n") })).rejects.toThrow(/at most 10/);
+  });
 });
 
 describe("morning", () => {
