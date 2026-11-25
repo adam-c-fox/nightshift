@@ -94,7 +94,7 @@ describe("report budget section", () => {
 });
 
 const ticketResult = (over: Partial<TicketResult> = {}): TicketResult => ({
-  ticket: { id: "ENG-1", name: "Export", context: [], repo: "main" }, linear: null, status: "done",
+  ticket: { id: "ENG-1", name: "Export", context: [], repo: "main" }, issue: null, status: "done",
   summary: "Did it.", filesCreated: [], filesModified: [], tests: [], verifyCommands: [], notes: "", followups: [],
   worktreePath: "/w", branch: "b", durationSec: 1, ...over,
 });

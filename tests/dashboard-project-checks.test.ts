@@ -53,8 +53,9 @@ function goodConfig(overrides: Record<string, unknown> = {}) {
   return {
     repos: { app: { path: repo, checks: [{ name: "t", command: "x" }], description: "d" } },
     testDb: "db.sh",
-    linearTeams: ["DEMO"],
-    linearProjects: ["Demo"],
+    trackerTeams: ["DEMO"],
+    issueTracker: "linear",
+    trackerProjects: ["Demo"],
     prHost: "azure-devops",
     ...overrides,
   };
@@ -155,6 +156,16 @@ describe("fileChecks", () => {
     const env = byName(fileChecks("good", deps()), ".env");
     expect(env.level).toBe("pass");
     expect(env.keys!.missing).toEqual([]);
+  });
+
+  it("requires the issue tracker's env keys even when no .env.example lists them", () => {
+    writeFileSync(join(projectsDir, "good", ".env"), "");
+    mkdirSync(join(root, "empty-examples"));
+    const env = byName(
+      fileChecks("good", deps({ exampleDir: join(root, "empty-examples") })),
+      ".env",
+    );
+    expect(env.keys!.missing).toContain("LINEAR_API_KEY");
   });
 
   it("never leaks env values", () => {
@@ -300,10 +311,10 @@ describe("requiredEnvKeys", () => {
 });
 
 describe("projectChecks", () => {
-  it("appends passing linearTeams and PR host login checks", async () => {
+  it("appends passing trackerTeams and PR host login checks", async () => {
     const checks = await projectChecks("good", deps());
     expect(checks.slice(-2)).toEqual([
-      expect.objectContaining({ name: "linearTeams", level: "pass" }),
+      expect.objectContaining({ name: "trackerTeams", level: "pass" }),
       expect.objectContaining({
         name: "PR host login",
         level: "pass",
@@ -317,7 +328,7 @@ describe("projectChecks", () => {
       "good",
       deps({ teams: async () => ok([{ key: "ENG", name: "E" }]) }),
     );
-    expect(byName(checks, "linearTeams")).toMatchObject({
+    expect(byName(checks, "trackerTeams")).toMatchObject({
       level: "fail",
       reason: expect.stringMatching(/unknown team keys: DEMO/),
     });
@@ -328,17 +339,17 @@ describe("projectChecks", () => {
       "good",
       deps({ teams: async () => failed("no key") }),
     );
-    expect(byName(checks, "linearTeams")).toMatchObject({
+    expect(byName(checks, "trackerTeams")).toMatchObject({
       level: "warn",
       reason: expect.stringMatching(/couldn't check/),
     });
   });
 
-  it("passes without calling teams when no linearTeams are configured", async () => {
-    writeProject("good", goodConfig({ linearTeams: undefined }), goodFiles);
+  it("passes without calling teams when no trackerTeams are configured", async () => {
+    writeProject("good", goodConfig({ trackerTeams: undefined }), goodFiles);
     const teams = vi.fn(async () => ok([]));
     const checks = await projectChecks("good", deps({ teams }));
-    expect(byName(checks, "linearTeams")).toMatchObject({
+    expect(byName(checks, "trackerTeams")).toMatchObject({
       level: "pass",
       reason: expect.stringMatching(/all your Todo tickets/),
     });

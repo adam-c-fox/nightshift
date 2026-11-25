@@ -14,7 +14,7 @@ Fill in the root `.env`:
 
 | Variable | What it's for |
 | --- | --- |
-| `LINEAR_API_KEY` | Fetching tickets and moving them to In Progress and In Review |
+| `LINEAR_API_KEY` | Fetching Linear tickets and moving them to In Progress and In Review |
 | `CLAUDE_CODE_OAUTH_TOKEN` | From `claude setup-token`. Cron can't read the login keychain. |
 | `NIGHTLY_ALLOWANCE_PERCENT` | Share of the weekly Claude usage one night may use. Default 15. |
 | `IMPLEMENTATION_MODEL` | Claude model for implementation and fix runs. Default: the CLI's default. |
@@ -50,7 +50,7 @@ ln -s "$PWD/.claude/skills/tonight" ~/.claude/skills/tonight
 ln -s "$PWD/.claude/skills/postmortem" ~/.claude/skills/postmortem
 ```
 
-If one of those names is already installed, inspect the existing directory or link before replacing it. `/prep` and `/tonight` also need a connected Linear tool that can read and update issues; the unattended runner uses `LINEAR_API_KEY` directly.
+If one of those names is already installed, inspect the existing directory or link before replacing it. `/prep` and `/tonight` also need a connected tool for your issue tracker (Linear connector for `linear`) that can read and update issues; the unattended runner uses the tracker's API key (`LINEAR_API_KEY`) directly.
 
 Configure a project below and [preview a night](#each-evening) before scheduling it. Cron has a minimal `PATH`: set it in your crontab to include the directories containing `node`, `npm`, `claude`, `az` and `codex`, as well as system tools. Find those paths with `command -v node npm claude az codex`. Replace `/path/to/nightshift` with your checkout. One run covers every project:
 
@@ -64,7 +64,7 @@ A project is the set of repos nightshift works in, plus the instructions for the
 
 | File | What it's for |
 | --- | --- |
-| `project.json` | Repos (`path`, `description`, `setup`, `checks`, `network`, `allowLocalBinding`, `tools`), `defaultRepo`, `linearProjects` (required), `prHost` (required, `azure-devops` is the only value), optional `testDb` script and `linearTeams` |
+| `project.json` | Repos (`path`, `description`, `setup`, `checks`, `network`, `allowLocalBinding`, `tools`), `defaultRepo`, `issueTracker` (required, `linear` is the only value), `trackerProjects` (required), `prHost` (required, `azure-devops` is the only value), optional `testDb` script and `trackerTeams` |
 | `AGENTS.md` | Project instructions appended to the root [`AGENTS.md`](../AGENTS.md): repo layout, services available, tools missing |
 | `.env` | The PR host's settings and `BRANCH_PREFIX` for this project |
 | `test-db.sh` | Optional script that starts the throwaway Postgres |
@@ -107,7 +107,7 @@ Each repo lists its own commands. Nothing is built in:
 
 `toolchain` was removed. A repo that still has it fails validation.
 
-`linearProjects` is a list of Linear project names, such as `["Mobile app"]`. A ticket belongs to the nightshift project that owns its Linear project, and no Linear project can belong to two nightshift projects. A Todo ticket whose Linear project no nightshift project owns isn't offered for tonight. `linearTeams` is an optional list of Linear team keys such as `["ENG"]`; the PR sweep only treats a branch named after a ticket in those teams as that ticket. `allowancePercent` is rejected: set `NIGHTLY_ALLOWANCE_PERCENT` in the root `.env`. `night` is reserved and can't be a project name. `/prep` and `/tonight` use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](dashboard.md#prep-memory).
+`issueTracker` names the tracker. Every project must name the same one, because `tonight.md`, `prep-status` and the dashboard evening view work across projects. `trackerProjects` is a list of tracker project names, such as `["Mobile app"]`. A ticket belongs to the nightshift project that owns its tracker project, and no tracker project can belong to two nightshift projects. A Todo ticket whose tracker project no nightshift project owns isn't offered for tonight. `trackerTeams` is an optional list of team keys such as `["ENG"]`; the PR sweep only treats a branch named after a ticket in those teams as that ticket. `linearProjects` and `linearTeams` are rejected with a message naming their new keys. `allowancePercent` is rejected: set `NIGHTLY_ALLOWANCE_PERCENT` in the root `.env`. `night` is reserved and can't be a project name. `/prep` and `/tonight` use `prep-mark` and `prep-status` to keep track of which tickets have been prepped, described under [Prep memory](dashboard.md#prep-memory).
 
 Start a new project by running `/nightshift-setup` from the root of its repo, after installing the skill above. It writes `projects/<name>/`, reads the repo's CI config for `setup` and `checks`, runs them against the repo and reports where the repo doesn't fit. To do it by hand instead, copy [`templates/project`](../templates/project) to `projects/<name>`, create its `.env` from `.env.example`, add the PR host's keys to it (`npm run pr-host -- <origin-url>` prints them for a repo's `origin` remote), and replace the placeholder paths in `project.json`; it won't load until they exist. Projects created before `prHost` existed need `"prHost": "azure-devops"` added to `project.json`; loading fails without it. `prep-mark`, `usage` and `open-prs` take `--project <name>` or `NIGHTSHIFT_PROJECT`. `npm run run` has no `--project`: one night covers every project, and `--allowance <pct>` overrides the night's budget.
 

@@ -6,14 +6,14 @@ import {
 } from "../src/prep-mark.js";
 import { prepStatusLines } from "../src/prep-status.js";
 import { descriptionHash, type PrepRecord } from "../src/prep.js";
-import type { TodoIssue } from "../src/linear.js";
+import type { TodoIssue } from "../src/issue-tracker.js";
 
 const preppedAt = "2026-10-07T20:00:00.000Z";
 
 const issue = (identifier: string, description: string): TodoIssue => ({
-  id: `id-${identifier}`,
   identifier,
   title: `Title ${identifier}`,
+  state: "Todo",
   url: `https://linear.app/acme/issue/${identifier}`,
   priority: 2,
   priorityLabel: "High",
@@ -24,7 +24,7 @@ const issue = (identifier: string, description: string): TodoIssue => ({
   commentCreatedAt: [],
 });
 
-const projects = [{ name: "acme", linearProjects: ["Acme Work"] }];
+const projects = [{ name: "acme", trackerProjects: ["Acme Work"] }];
 
 const recFor = (description: string): PrepRecord => ({
   project: "acme",
@@ -175,7 +175,7 @@ describe("prepStatusLines", () => {
   });
 
   it("tags each ticket with its project and drops tickets no project claims", () => {
-    const two = [...projects, { name: "memosum", linearProjects: ["Memo"] }];
+    const two = [...projects, { name: "memosum", trackerProjects: ["Memo"] }];
     const lines = prepStatusLines(
       [
         issue("ENG-1", "D"),

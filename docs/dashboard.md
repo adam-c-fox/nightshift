@@ -29,7 +29,7 @@ Open <http://127.0.0.1:4100>. It listens on that address only, so nothing else o
 The home page has a "Before clocking off" section. It opens with a global summary, then the shared queue, then one tab per project (`?tab=<project>`):
 
 - **Queue.** The root `tonight.md`, in run order, with a pinned PR-sweep row first. Drag a row, or use Up and Down, to reorder it, Remove to drop it, and the repo dropdown to change its repo. Tickets that are queued but no longer in Todo stay listed, with their Linear state.
-- **Project tabs.** Your Linear Todo tickets owned by that project through `linearProjects`, with priority, estimate, prep state, queue position and any open PR. `+ add` appends one to the queue.
+- **Project tabs.** Your Linear Todo tickets owned by that project through `trackerProjects`, with priority, estimate, prep state, queue position and any open PR. `+ add` appends one to the queue.
 - **Prep state.** One of:
   - `fresh`: prepped with `/prep`, the description hasn't changed since and there are no newer comments.
   - `stale`: the description changed after `/prep`.
@@ -66,7 +66,7 @@ npm run -s prep-status
 
 ## Projects
 
-`/projects` lists each project with its overall file-check status: config, default repo, `.env` keys, `AGENTS.md` and the test database script. The `linearTeams` and PR host login checks run on the project's own page. The dashboard doesn't edit projects. `project.json` is written by `/nightshift-setup` or by hand; see [Projects](setup.md#projects).
+`/projects` lists each project with its overall file-check status: config, default repo, `.env` keys, `AGENTS.md` and the test database script. The `trackerTeams` and PR host login checks run on the project's own page. The dashboard doesn't edit projects. `project.json` is written by `/nightshift-setup` or by hand; see [Projects](setup.md#projects).
 
 ## Security
 

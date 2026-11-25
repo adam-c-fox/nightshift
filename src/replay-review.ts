@@ -10,7 +10,7 @@ import { parseReportBlock, runConfirm, runDedupe, runFinder, type AgentReport, t
 import { readCited, ticketText } from "./confirm.js";
 import { getEnv, useProjectEnv } from "./env.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
-import { fetchTicket } from "./linear.js";
+import { createIssueTracker } from "./issue-tracker.js";
 import { parseGolden, scoreSummary, scoreTicket, type TicketScore } from "./golden.js";
 import { loadProject, projectEnvFiles, PROJECTS_DIR, type RepoConfig } from "./project.js";
 import { runtimeSettings } from "./settings.js";
@@ -114,9 +114,10 @@ export function briefFromSession(session: unknown, ticketId: string): { brief: T
   const tickets = (session as { tickets?: TicketResult[] } | null)?.tickets;
   const t = Array.isArray(tickets) ? tickets.find(x => x.ticket.id === ticketId) : undefined;
   if (!t) throw new Error(`ticket ${ticketId} is not in the session`);
+  const issue = t.issue ?? (t as { linear?: TicketResult["issue"] }).linear;
   const brief: TicketBrief = {
-    ticketId, ticketName: t.linear?.name ?? t.ticket.name ?? "", context: t.ticket.context ?? [], linearDesc: t.linear?.description ?? "",
-    linearComments: t.linear?.comments ?? [], linearUrl: t.linear?.url ?? "", state: t.linear?.state ?? "",
+    ticketId, ticketName: issue?.name ?? t.ticket.name ?? "", context: t.ticket.context ?? [], linearDesc: issue?.description ?? "",
+    linearComments: issue?.comments ?? [], linearUrl: issue?.url ?? "", state: issue?.state ?? "",
   };
   const checks = (t.checks ?? []).map((c: CheckRecord): ClassifiedCheck => ({
     name: c.name, command: c.command, passed: c.passed, durationSec: c.durationSec, outputTail: "", status: c.status ?? (c.passed ? "passed" : "pre-existing"),
@@ -237,7 +238,7 @@ async function replay(args: ReplayArgs): Promise<FindAndConfirmResult> {
   let from: { brief: TicketBrief; checks?: ClassifiedCheck[] };
   if (args.session) from = briefFromSession(JSON.parse(readFileSync(args.session, "utf-8")), args.ticket);
   else {
-    const linear = await fetchTicket(args.ticket);
+    const linear = await createIssueTracker(project.issueTracker, getEnv).getIssue(args.ticket);
     if (!linear) throw new Error(`ticket ${args.ticket} not found in Linear`);
     from = {
       brief: {

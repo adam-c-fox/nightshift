@@ -67,6 +67,7 @@
   },
   "defaultRepo": "app",
   "testDb": "test-db.sh",
-  "linearProjects": ["Your Linear project"],
+  "issueTracker": "linear",
+  "trackerProjects": ["Your tracker project"],
   "prHost": "azure-devops"
 }

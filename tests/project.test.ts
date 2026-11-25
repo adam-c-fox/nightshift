@@ -7,14 +7,16 @@ import {
   loadAllProjects,
   loadProject,
   parseProjectConfig as parseConfigStrict,
-  projectForLinearProject,
+  projectForTrackerProject,
+  sharedTrackerKind,
   projectEnvFiles,
   readRawProjectConfig,
 } from "../src/project.js";
+import type { IssueTrackerKind } from "../src/issue-tracker.js";
 
 const everything = () => true;
 const parseProjectConfig = (name: string, dir: string, raw: unknown, exists: (p: string) => boolean) =>
-  parseConfigStrict(name, dir, { linearProjects: ["Acme"], prHost: "azure-devops", ...(raw as object) }, exists);
+  parseConfigStrict(name, dir, { issueTracker: "linear", trackerProjects: ["Acme"], prHost: "azure-devops", ...(raw as object) }, exists);
 const repos = {
   main: { path: "/r/app", description: "app", checks: [{ name: "tests", command: "npm test" }] },
   infra: {
@@ -52,7 +54,8 @@ describe("parseProjectConfig", () => {
       repos: parsedRepos,
       defaultRepo: "main",
       testDbScript: "/p/acme/test-db.sh",
-      linearProjects: ["Acme"],
+      issueTracker: "linear",
+      trackerProjects: ["Acme"],
       prHost: "azure-devops",
       envFile: "/p/acme/.env",
     });
@@ -177,15 +180,30 @@ describe("parseProjectConfig", () => {
     );
   });
 
-  it.each([undefined, [], [""], "Acme"])("rejects linearProjects %j", (value) => {
+  it.each([undefined, [], [""], "Acme"])("rejects trackerProjects %j", (value) => {
     expect(() =>
-      parseConfigStrict("a", "/p/a", { repos: { app: repos.main }, linearProjects: value }, everything),
-    ).toThrow(/linearProjects must be a non-empty list of Linear project names/);
+      parseConfigStrict("a", "/p/a", { repos: { app: repos.main }, issueTracker: "linear", prHost: "azure-devops", trackerProjects: value }, everything),
+    ).toThrow(/trackerProjects must be a non-empty list of tracker project names/);
+  });
+
+  it.each([undefined, "jira", 7])("rejects issueTracker %j", (value) => {
+    expect(() =>
+      parseConfigStrict("a", "/p/a", { repos: { app: repos.main }, trackerProjects: ["Acme"], prHost: "azure-devops", issueTracker: value }, everything),
+    ).toThrow(/issueTracker must be one of: linear/);
+  });
+
+  it("fails with a rename message for the old Linear keys", () => {
+    expect(() => parseProjectConfig("a", "/p/a", { repos: { app: repos.main }, linearProjects: ["Acme"] }, everything)).toThrow(
+      'project "a": linearProjects was renamed to trackerProjects',
+    );
+    expect(() => parseProjectConfig("a", "/p/a", { repos: { app: repos.main }, linearTeams: ["ENG"] }, everything)).toThrow(
+      'project "a": linearTeams was renamed to trackerTeams',
+    );
   });
 
   it.each([undefined, "github", 7])("rejects prHost %j", (value) => {
     expect(() =>
-      parseConfigStrict("a", "/p/a", { repos: { app: repos.main }, linearProjects: ["Acme"], prHost: value }, everything),
+      parseConfigStrict("a", "/p/a", { repos: { app: repos.main }, issueTracker: "linear", trackerProjects: ["Acme"], prHost: value }, everything),
     ).toThrow(/prHost must be one of: azure-devops/);
   });
 
@@ -199,38 +217,38 @@ describe("parseProjectConfig", () => {
     ).toThrow(/at least one repo/);
   });
 
-  it("keeps the configured Linear team keys", () => {
+  it("keeps the configured tracker team keys", () => {
     const project = parseProjectConfig(
       "a",
       "/p/a",
-      { repos, defaultRepo: "main", linearTeams: ["DEMO", "ENG"] },
+      { repos, defaultRepo: "main", trackerTeams: ["DEMO", "ENG"] },
       everything,
     );
-    expect(project.linearTeams).toEqual(["DEMO", "ENG"]);
+    expect(project.trackerTeams).toEqual(["DEMO", "ENG"]);
   });
 
-  it("leaves linearTeams undefined when absent or empty", () => {
+  it("leaves trackerTeams undefined when absent or empty", () => {
     const base = { repos, defaultRepo: "main" };
     expect(
-      parseProjectConfig("a", "/p/a", base, everything).linearTeams,
+      parseProjectConfig("a", "/p/a", base, everything).trackerTeams,
     ).toBeUndefined();
     expect(
-      parseProjectConfig("a", "/p/a", { ...base, linearTeams: [] }, everything)
-        .linearTeams,
+      parseProjectConfig("a", "/p/a", { ...base, trackerTeams: [] }, everything)
+        .trackerTeams,
     ).toBeUndefined();
   });
 
   it.each([[["demo"]], ["DEMO"], [["ENG", 3]]])(
-    "rejects linearTeams %j",
+    "rejects trackerTeams %j",
     (teams) => {
       expect(() =>
         parseProjectConfig(
           "a",
           "/p/a",
-          { repos, defaultRepo: "main", linearTeams: teams },
+          { repos, defaultRepo: "main", trackerTeams: teams },
           everything,
         ),
-      ).toThrow(/linearTeams/);
+      ).toThrow(/trackerTeams/);
     },
   );
 });
@@ -279,7 +297,8 @@ describe("loadProject", () => {
       join(root, "acme", "project.json"),
       JSON.stringify({
         repos: { app: { path: repo, description: "app", checks: [{ name: "t", command: "x" }] } },
-        linearProjects: ["Acme"],
+        issueTracker: "linear",
+        trackerProjects: ["Acme"],
         prHost: "azure-devops",
       }),
     );
@@ -337,14 +356,15 @@ describe("loadProject", () => {
 });
 
 describe("loadAllProjects", () => {
-  const projectIn = (root: string, name: string, linearProjects: string[]) => {
+  const projectIn = (root: string, name: string, trackerProjects: string[]) => {
     const repo = mkdtempSync(join(tmpdir(), "repo-"));
     mkdirSync(join(root, name));
     writeFileSync(
       join(root, name, "project.json"),
       JSON.stringify({
         repos: { app: { path: repo, description: "app", checks: [{ name: "t", command: "x" }] } },
-        linearProjects,
+        issueTracker: "linear",
+        trackerProjects,
         prHost: "azure-devops",
       }),
     );
@@ -357,24 +377,40 @@ describe("loadAllProjects", () => {
     expect(loadAllProjects(root).map((p) => p.name)).toEqual(["a", "b"]);
   });
 
-  it("rejects a Linear project claimed by two projects", () => {
+  it("rejects a tracker project claimed by two projects", () => {
     const root = mkdtempSync(join(tmpdir(), "projects-"));
     projectIn(root, "a", ["Shared"]);
     projectIn(root, "b", ["Shared"]);
     expect(() => loadAllProjects(root)).toThrow(
-      'Linear project "Shared" is claimed by both a and b',
+      'Tracker project "Shared" is claimed by both a and b',
     );
   });
 });
 
-describe("projectForLinearProject", () => {
-  const projects = [{ name: "eoe", linearProjects: ["Client Implementation Automation"] }];
+describe("projectForTrackerProject", () => {
+  const projects = [{ name: "eoe", trackerProjects: ["Client Implementation Automation"] }];
 
   it("finds the owning project", () => {
-    expect(projectForLinearProject(projects, "Client Implementation Automation")).toBe("eoe");
+    expect(projectForTrackerProject(projects, "Client Implementation Automation")).toBe("eoe");
   });
 
   it.each([null, "Unknown"])("returns undefined for %j", (name) => {
-    expect(projectForLinearProject(projects, name)).toBeUndefined();
+    expect(projectForTrackerProject(projects, name)).toBeUndefined();
+  });
+});
+
+describe("sharedTrackerKind", () => {
+  it("is undefined with no projects", () => {
+    expect(sharedTrackerKind([])).toBeUndefined();
+  });
+
+  it("returns the kind every project agrees on", () => {
+    expect(sharedTrackerKind([{ name: "a", issueTracker: "linear" }, { name: "b", issueTracker: "linear" }])).toBe("linear");
+  });
+
+  it("throws when projects use different trackers", () => {
+    expect(() =>
+      sharedTrackerKind([{ name: "a", issueTracker: "linear" }, { name: "b", issueTracker: "jira" as IssueTrackerKind }]),
+    ).toThrow("projects use different issue trackers (a: linear, b: jira); the shared queue needs one");
   });
 });

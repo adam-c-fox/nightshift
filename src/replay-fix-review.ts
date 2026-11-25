@@ -8,7 +8,7 @@ import { parseFixesBlock, parseReportBlock, runConfirm, runDedupe, runFixReview,
 import { readCited, ticketText } from "./confirm.js";
 import { getEnv, useProjectEnv } from "./env.js";
 import { composeInstructions, GENERIC_AGENTS_MD } from "./instructions.js";
-import { fetchTicket } from "./linear.js";
+import { createIssueTracker } from "./issue-tracker.js";
 import { loadProject, projectEnvFiles } from "./project.js";
 import { addedDecisions, captureChange, confirmFixReview, reviewFixerChange, type FixReviewStep, type ReviewDeps } from "./review.js";
 import { TICKET_ID } from "./tickets.js";
@@ -108,7 +108,7 @@ async function replay(args: ReplayFixArgs): Promise<ReplayFixResult> {
   const repo = project.repos[project.defaultRepo];
   const repoPath = repo.path;
 
-  const linear = await fetchTicket(args.ticket);
+  const linear = await createIssueTracker(project.issueTracker, getEnv).getIssue(args.ticket);
   if (!linear) throw new Error(`ticket ${args.ticket} not found in Linear`);
   const brief: TicketBrief = {
     ticketId: args.ticket, ticketName: linear.name, context: [], linearDesc: linear.description,

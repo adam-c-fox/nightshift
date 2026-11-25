@@ -2,12 +2,13 @@ import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
 import { getEnv, useProjectEnv } from "./env.js";
 import { listProjects, type Project, loadProject, REPO_NAME_PATTERN } from "./project.js";
-import { fetchTicket } from "./linear.js";
+import { createIssueTracker } from "./issue-tracker.js";
 import { findOpenTicketPr } from "./pr.js";
 import { createPrHost } from "./pr-host.js";
+import { TICKET_ID_PATTERN } from "./tickets.js";
 import { ticketBranchName } from "./worktree.js";
 
-const TARGET = new RegExp(`^(${REPO_NAME_PATTERN}):([A-Z]+-\\d+)$`, "i");
+const TARGET = new RegExp(`^(${REPO_NAME_PATTERN}):(${TICKET_ID_PATTERN})$`, "i");
 
 export function parseOpenPrsArgs(args: string[]): { repo: string; id: string }[] {
   if (args.length === 0) throw new Error("usage: open-prs <repo>:<ID> ...");
@@ -22,7 +23,7 @@ async function lookup(project: Project, repo: string, id: string): Promise<objec
   try {
     const repoPath = project.repos[repo]?.path;
     if (!repoPath) return { id, error: `unknown repo ${repo}` };
-    const linear = await fetchTicket(id);
+    const linear = await createIssueTracker(project.issueTracker, getEnv).getIssue(id);
     if (!linear) return { id, error: `ticket ${id} not found in Linear` };
     const host = createPrHost(project.prHost, getEnv);
     const pr = await findOpenTicketPr(host, ticketBranchName(getEnv("BRANCH_PREFIX"), id, linear.name), repoPath);

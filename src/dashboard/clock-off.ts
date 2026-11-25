@@ -1,12 +1,12 @@
 import type { UsageSummary } from "../budget.js";
-import { TODO_STATE, type IssueSnapshot, type TodoIssue } from "../linear.js";
+import type { IssueSnapshot, TodoIssue } from "../issue-tracker.js";
 import {
   prepState,
   type PrepRecord,
   type PrepState,
   type PrepStore,
 } from "../prep.js";
-import { projectForLinearProject, type Project } from "../project.js";
+import { projectForTrackerProject, type Project } from "../project.js";
 import type { Ticket } from "../types.js";
 import type { Loaded } from "./cache.js";
 
@@ -19,7 +19,7 @@ export interface TicketPr {
 export type PrLookup = TicketPr | null | "unknown";
 
 export interface EveningInput {
-  projects: Pick<Project, "name" | "linearProjects" | "repos" | "defaultRepo">[];
+  projects: Pick<Project, "name" | "trackerProjects" | "repos" | "defaultRepo">[];
   todo: Loaded<TodoIssue[]>;
   queue: Loaded<{ tickets: Ticket[]; allowance?: number }>;
   rootAllowance: number;
@@ -120,7 +120,7 @@ function linearStateWarning(
       `${id} is in tonight.md but wasn't found in Linear`,
       id,
     );
-  if (snapshot.state !== TODO_STATE)
+  if (!snapshot.ready)
     return warn(
       "not_todo",
       `${id} is in tonight.md but is ${snapshot.state} in Linear`,
@@ -237,7 +237,7 @@ export function buildEvening(input: EveningInput): EveningView {
     priorityRank: priorityRank(issue.priority),
     estimate: issue.estimate,
     inTodo: true,
-    linearState: TODO_STATE,
+    linearState: issue.state,
     prep: prepState(prep[issue.identifier], issue),
     ...baseRow(issue.identifier),
   });
@@ -267,7 +267,7 @@ export function buildEvening(input: EveningInput): EveningView {
 
   const todoRows = new Map(todoIssues.map((i) => [i.identifier, todoRow(i)]));
   const projectOf = (issue: TodoIssue) =>
-    projectForLinearProject(projects, issue.projectName);
+    projectForTrackerProject(projects, issue.projectName);
 
   const queueRows: QueueRow[] = queueTickets.map((ticket, i) => ({
     ...(todoRows.get(ticket.id) ?? offTodoRow(ticket)),

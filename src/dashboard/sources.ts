@@ -4,14 +4,15 @@ import path from "node:path";
 import { nightlyAllowancePercent, parseUsageSummary, type UsageSummary } from "../budget.js";
 import { envLookup } from "../env.js";
 import {
-  fetchIssueSnapshots,
-  fetchTeams,
-  fetchTodoIssues,
+  createIssueTracker,
+  ISSUE_TRACKER_KINDS,
+  ISSUE_TRACKERS,
   type IssueSnapshot,
-  type LinearClient,
-  type LinearTeam,
+  type IssueTracker,
+  type IssueTrackerKind,
   type TodoIssue,
-} from "../linear.js";
+  type TrackerTeam,
+} from "../issue-tracker.js";
 import { readProjectRuns, type ProjectRun } from "../heartbeat.js";
 import { readNightRecord } from "../night-record.js";
 import { pickTicketPr } from "../pr.js";
@@ -23,7 +24,9 @@ import {
   loadProject,
   NIGHT_DIR_NAME,
   PROJECT_NAME,
-  projectForLinearProject,
+  projectForTrackerProject,
+  readRawProjectConfig,
+  sharedTrackerKind,
   type Project,
 } from "../project.js";
 import {
@@ -130,7 +133,7 @@ export interface Sources {
   runs(): ProjectRun[];
   projectSummaries(): { name: string; level: CheckLevel; reason: string }[];
   projectChecks(name: string): Promise<ConfigCheck[]>;
-  linearTeams(name: string): Promise<Loaded<LinearTeam[]>>;
+  trackerTeams(name: string): Promise<Loaded<TrackerTeam[]>>;
   launch(req: LaunchRequest): Promise<LaunchResult>;
   refresh(target: RefreshTarget): void;
 }
@@ -202,17 +205,39 @@ export function createSources(deps: DashboardDeps): Sources {
     };
   }
 
-  function linearClient(lookup: Lookup, where: string): Loaded<LinearClient> {
-    const apiKey = lookup("LINEAR_API_KEY");
-    if (!apiKey) return fail(`LINEAR_API_KEY is not set (${where})`);
-    return ok({ apiKey, fetch: deps.fetch });
+  function trackerFor(
+    kind: IssueTrackerKind,
+    lookup: Lookup,
+    where: string,
+  ): Loaded<IssueTracker> {
+    const missing = ISSUE_TRACKERS[kind].envKeys.find((key) => !lookup(key));
+    if (missing) return fail(`${missing} is not set (${where})`);
+    return ok(createIssueTracker(kind, lookup, deps.fetch));
   }
 
-  function loadTodo(client: Loaded<LinearClient>): Promise<Loaded<TodoIssue[]>> {
-    if (!client.ok) return Promise.resolve(client);
+  function machineTracker(projects: Project[]): Loaded<IssueTracker | undefined> {
+    try {
+      const kind = sharedTrackerKind(projects);
+      if (!kind) return ok(undefined);
+      return trackerFor(
+        kind,
+        envLookup([rootEnvFile(), ...projects.map((p) => p.envFile)]),
+        ".env",
+      );
+    } catch (error) {
+      return fail(firstLine(error));
+    }
+  }
+
+  function loadTodo(
+    tracker: Loaded<IssueTracker | undefined>,
+  ): Promise<Loaded<TodoIssue[]>> {
+    if (!tracker.ok) return Promise.resolve(tracker);
+    const { value } = tracker;
+    if (!value) return Promise.resolve(ok([]));
     return settle(
       cache.get(cacheKeys.todo(NIGHT_DIR_NAME), TTL_MS.todo, () =>
-        fetchTodoIssues(client.value),
+        value.listTodo(),
       ),
       SLOW_MS.linear,
       LINEAR_SLOW,
@@ -220,12 +245,14 @@ export function createSources(deps: DashboardDeps): Sources {
   }
 
   function loadSnapshots(
-    client: Loaded<LinearClient>,
+    tracker: Loaded<IssueTracker | undefined>,
     todo: Loaded<TodoIssue[]>,
     queue: Loaded<{ tickets: Ticket[] }>,
   ): Promise<Loaded<Record<string, IssueSnapshot | null>>> {
     if (!todo.ok) return Promise.resolve(fail(todo.error));
-    if (!client.ok) return Promise.resolve(client);
+    if (!tracker.ok) return Promise.resolve(tracker);
+    const { value: trackerValue } = tracker;
+    if (!trackerValue) return Promise.resolve(ok({}));
     const inTodo = new Set(todo.value.map((issue) => issue.identifier));
     const ids = (queue.ok ? queue.value.tickets : [])
       .map((ticket) => ticket.id)
@@ -233,7 +260,7 @@ export function createSources(deps: DashboardDeps): Sources {
     if (ids.length === 0) return Promise.resolve(ok({}));
     return settle(
       cache.get(cacheKeys.issues(NIGHT_DIR_NAME, ids), TTL_MS.todo, () =>
-        fetchIssueSnapshots(client.value, ids),
+        trackerValue.getSnapshots(ids),
       ),
       SLOW_MS.linear,
       LINEAR_SLOW,
@@ -420,24 +447,21 @@ export function createSources(deps: DashboardDeps): Sources {
       project,
       lookup: envLookup([project.envFile, rootEnvFile()]),
     }));
-    const client = linearClient(
-      envLookup([rootEnvFile(), ...projects.map((p) => p.envFile)]),
-      ".env",
-    );
+    const tracker = machineTracker(projects);
     const queue = loadQueueState(projects);
     const [todo, usage, repoLists] = await Promise.all([
-      loadTodo(client),
+      loadTodo(tracker),
       loadUsage(),
       Promise.all(contexts.map(loadRepoPrLists)),
     ]);
-    const snapshots = await loadSnapshots(client, todo, queue);
+    const snapshots = await loadSnapshots(tracker, todo, queue);
     const issues = todo.ok ? todo.value : [];
     const tickets = queue.ok ? queue.value.tickets : [];
     const lookups = contexts.map((context, i) => {
       const { name } = context.project;
       const candidates = prCandidates(
         issues.filter(
-          (issue) => projectForLinearProject(projects, issue.projectName) === name,
+          (issue) => projectForTrackerProject(projects, issue.projectName) === name,
         ),
         tickets.filter((ticket) => ticket.project === name),
         snapshots,
@@ -498,15 +522,11 @@ export function createSources(deps: DashboardDeps): Sources {
   ) {
     const project = projects.find((p) => p.name === op.project);
     if (!project) throw new Error(`unknown project "${op.project}"`);
-    const client = linearClient(
-      envLookup([rootEnvFile(), ...projects.map((p) => p.envFile)]),
-      ".env",
-    );
-    const todo = await loadTodo(client);
+    const todo = await loadTodo(machineTracker(projects));
     if (!todo.ok) throw new Error(todo.error);
     const issue = todo.value.find((i) => i.identifier === op.id);
     if (!issue) throw new Error(`${op.id} isn't in your Linear Todo list`);
-    if (projectForLinearProject(projects, issue.projectName) !== project.name) {
+    if (projectForTrackerProject(projects, issue.projectName) !== project.name) {
       throw new Error(`${op.id} doesn't belong to ${project.name}`);
     }
     const recorded = readPrepStore(deps.state.prep)[op.id]?.repo;
@@ -617,19 +637,32 @@ export function createSources(deps: DashboardDeps): Sources {
     return { name, level, reason: worst.reason };
   }
 
-  function linearTeams(name: string): Promise<Loaded<LinearTeam[]>> {
+  function trackerTeams(name: string): Promise<Loaded<TrackerTeam[]>> {
     if (!PROJECT_NAME.test(name)) {
       return Promise.resolve(fail(`invalid project name "${name}"`));
+    }
+    let kind: IssueTrackerKind;
+    try {
+      const { raw } = readRawProjectConfig(name, deps.projectsDir);
+      const configured = (raw as { issueTracker?: unknown } | null)?.issueTracker;
+      if (!ISSUE_TRACKER_KINDS.includes(configured as IssueTrackerKind)) {
+        return Promise.resolve(
+          fail(`issueTracker must be one of: ${ISSUE_TRACKER_KINDS.join(", ")}`),
+        );
+      }
+      kind = configured as IssueTrackerKind;
+    } catch (error) {
+      return Promise.resolve(fail(firstLine(error)));
     }
     const lookup = envLookup([
       path.join(deps.projectsDir, name, ".env"),
       rootEnvFile(),
     ]);
-    const client = linearClient(lookup, `projects/${name}/.env or .env`);
-    if (!client.ok) return Promise.resolve(client);
+    const tracker = trackerFor(kind, lookup, `projects/${name}/.env or .env`);
+    if (!tracker.ok) return Promise.resolve(tracker);
     return settle(
       cache.get(cacheKeys.teams(name), TTL_MS.teams, () =>
-        fetchTeams(client.value),
+        tracker.value.listTeams(),
       ),
       SLOW_MS.linear,
       LINEAR_SLOW,
@@ -650,7 +683,7 @@ export function createSources(deps: DashboardDeps): Sources {
         projectsDir: deps.projectsDir,
         exampleDir: deps.exampleDir,
         rootDir: deps.root,
-        teams: () => linearTeams(name),
+        teams: () => trackerTeams(name),
         hostLogin: (kind, lookup, repoPath) =>
           cache.get(
             cacheKeys.hostLogin(name, envFingerprint(path.join(deps.projectsDir, name, ".env"))),
@@ -662,7 +695,7 @@ export function createSources(deps: DashboardDeps): Sources {
             },
           ),
       }),
-    linearTeams,
+    trackerTeams,
     launch: (req) =>
       launchInHerdr(req, {
         exec,

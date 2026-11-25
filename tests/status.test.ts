@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentReport, ClaudeResult } from "../src/claude.js";
-import { deriveOutcome } from "../src/status.js";
+import type { Issue } from "../src/issue-tracker.js";
+import { deriveOutcome, reviewMove } from "../src/status.js";
 
 const report = (over: Partial<AgentReport> = {}): AgentReport => ({
   status: "done", title: "", summary: "s", filesCreated: [], filesModified: [],
@@ -38,5 +39,28 @@ describe("deriveOutcome", () => {
 
   it("keeps partial and needs_review as reported", () => {
     expect(deriveOutcome(ok({ report: report({ status: "partial" }) })).status).toBe("partial");
+  });
+});
+
+describe("reviewMove", () => {
+  const review = { id: "review", name: "In Review" };
+  const issue = (over: Partial<Issue> = {}): Issue => ({
+    id: "i", identifier: "ENG-1", name: "n", description: "", comments: [], state: "Todo", url: "u", reviewTarget: review, ...over,
+  });
+
+  it("moves tickets that finished done or need review", () => {
+    expect((["done", "needs_review"] as const).map(s => reviewMove(issue(), s))).toEqual([review, review]);
+  });
+
+  it("leaves partial, skipped and errored tickets where they are", () => {
+    expect((["partial", "skipped", "error"] as const).map(s => reviewMove(issue(), s))).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("has nowhere to move a ticket with no review target", () => {
+    expect(reviewMove(issue({ reviewTarget: undefined }), "done")).toBeUndefined();
+  });
+
+  it("has nowhere to move a missing issue", () => {
+    expect(reviewMove(null, "done")).toBeUndefined();
   });
 });

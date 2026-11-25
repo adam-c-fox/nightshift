@@ -1,3 +1,4 @@
+import { ISSUE_TRACKER_DENIED_TOOLS } from "./issue-tracker.js";
 import { PR_HOST_DENIED_DOMAINS } from "./pr-host.js";
 import type { RepoConfig } from "./project.js";
 
@@ -22,7 +23,7 @@ export function buildAgentSettings(
       deny: [
         ...deniedFiles.map(f => `Read(/${f})`),
         ...(readLogs ? [] : [`Read(/${nightshiftRoot}/logs/**)`]),
-        "WebFetch", "WebSearch", "mcp__claude_ai_Linear", "mcp__claude_ai_Notion",
+        "WebFetch", "WebSearch", ...ISSUE_TRACKER_DENIED_TOOLS, "mcp__claude_ai_Notion",
       ],
     },
     sandbox: {

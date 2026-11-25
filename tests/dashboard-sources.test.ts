@@ -55,7 +55,7 @@ function nightRecord(): NightRecord {
     tickets: [
       {
         ticket: { id: "DEMO-9", name: "nine", context: [], repo: "app" },
-        linear: null,
+        issue: null,
         status: "needs_review",
         summary: "needs a look",
         filesCreated: [],
@@ -189,8 +189,9 @@ function writeAcme() {
     join(root, "projects/acme/project.json"),
     JSON.stringify({
       repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } },
-      linearTeams: ["DEMO"],
-      linearProjects: ["Demo"],
+      trackerTeams: ["DEMO"],
+      issueTracker: "linear",
+      trackerProjects: ["Demo"],
       prHost: "azure-devops",
     }),
   );
@@ -227,7 +228,7 @@ beforeEach(() => {
   writeAcme();
   write(
     join(root, "projects/example/project.json"),
-    JSON.stringify({ repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } }, linearProjects: ["Example"], prHost: "azure-devops" }),
+    JSON.stringify({ repos: { app: { path: appRepo, checks: [{ name: "t", command: "x" }] } }, issueTracker: "linear", trackerProjects: ["Example"], prHost: "azure-devops" }),
   );
   write(join(root, "projects/example/.env.example"), "LINEAR_API_KEY=\n");
   write(join(root, "reports/acme/nightshift-2026-10-02.html"), "<html></html>");
@@ -357,7 +358,7 @@ describe("evening", () => {
       "AZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\nBRANCH_PREFIX=ns\n",
     );
     const view = await eveningView();
-    expect(view.linearError).toMatch(/LINEAR_API_KEY/);
+    expect(view.linearError).toBe("LINEAR_API_KEY is not set (.env)");
     expect(view.queue.map((r) => r.id)).toEqual(["DEMO-1"]);
     expect(fetchCalls).toHaveLength(0);
   });
@@ -370,6 +371,13 @@ describe("evening", () => {
       "AZURE_DEVOPS_ORG=o\nAZURE_DEVOPS_PROJECT=P\n",
     );
     expect((await eveningView()).linearError).toMatch(/LINEAR_API_KEY/);
+  });
+
+  it("makes no tracker call and reports no tracker error with zero projects", async () => {
+    rmSync(join(root, "projects"), { recursive: true });
+    const view = await eveningView();
+    expect(view.linearError).toBeUndefined();
+    expect(todoFetches()).toBe(0);
   });
 
   it("caches Linear and PR loads until they are refreshed", async () => {
@@ -441,7 +449,8 @@ describe("evening", () => {
           web: { path: webRepo, checks: [{ name: "t", command: "x" }] },
         },
         defaultRepo: "app",
-        linearProjects: ["Demo"],
+        issueTracker: "linear",
+        trackerProjects: ["Demo"],
         prHost: "azure-devops",
       }),
     );
@@ -596,7 +605,7 @@ describe("morning", () => {
   });
 
   it("keeps the item with an unknown PR when the project no longer loads", async () => {
-    rmSync(join(root, "projects/acme"), { recursive: true });
+    rmSync(join(root, "projects"), { recursive: true });
     const { items } = await sources.morning();
     expect(items.find((i) => i.key === "ticket:DEMO-9")).toMatchObject({
       pr: { state: "unknown" },
@@ -660,22 +669,22 @@ describe("projects", () => {
   });
 });
 
-describe("linearTeams", () => {
+describe("trackerTeams", () => {
   it("fetches the teams once and caches them", async () => {
-    expect(await sources.linearTeams("acme")).toEqual({
+    expect(await sources.trackerTeams("acme")).toEqual({
       ok: true,
       value: [{ key: "DEMO", name: "Growth" }],
     });
-    await sources.linearTeams("acme");
+    await sources.trackerTeams("acme");
     expect(fetchCalls).toHaveLength(1);
     sources.refresh("teams");
-    await sources.linearTeams("acme");
+    await sources.trackerTeams("acme");
     expect(fetchCalls).toHaveLength(2);
   });
 
   it("fails without calling Linear when the key is missing", async () => {
     write(join(root, "projects/acme/.env"), "");
-    expect(await sources.linearTeams("acme")).toMatchObject({
+    expect(await sources.trackerTeams("acme")).toMatchObject({
       ok: false,
       error: expect.stringMatching(/LINEAR_API_KEY/),
     });
@@ -683,14 +692,41 @@ describe("linearTeams", () => {
   });
 
   it("rejects an invalid project name", async () => {
-    expect(await sources.linearTeams("../etc")).toMatchObject({ ok: false });
+    expect(await sources.trackerTeams("../etc")).toMatchObject({ ok: false });
+  });
+
+  it("still lists teams when another part of the project config is invalid", async () => {
+    write(
+      join(root, "projects/acme/project.json"),
+      JSON.stringify({
+        repos: { app: { path: join(root, "repos/missing"), checks: [] } },
+        trackerTeams: ["DEMO"],
+        issueTracker: "linear",
+        trackerProjects: ["Demo"],
+      }),
+    );
+    expect(await sources.trackerTeams("acme")).toEqual({
+      ok: true,
+      value: [{ key: "DEMO", name: "Growth" }],
+    });
+  });
+
+  it("fails when issueTracker is not a known kind", async () => {
+    write(
+      join(root, "projects/acme/project.json"),
+      JSON.stringify({ issueTracker: "jira" }),
+    );
+    expect(await sources.trackerTeams("acme")).toMatchObject({
+      ok: false,
+      error: "issueTracker must be one of: linear",
+    });
   });
 });
 
 describe("projectChecks", () => {
   it("includes the Linear team and PR host login checks", async () => {
     const checks = await sources.projectChecks("acme");
-    expect(checks.find((c) => c.name === "linearTeams")).toMatchObject({
+    expect(checks.find((c) => c.name === "trackerTeams")).toMatchObject({
       level: "pass",
     });
     expect(checks.find((c) => c.name === "PR host login")).toMatchObject({

@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { REVIEW_LENSES, lensStage, roundStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type LinearComment, type LinearTicket, type NightBudget, type RunUsage, type PrCommentWork, type ThreadReport } from "./types.js";
+import { REVIEW_LENSES, lensStage, roundStage, type Ticket, type TicketResult, type SessionResult, type SessionPostmortem, type NightBudget, type RunUsage, type PrCommentWork, type ThreadReport } from "./types.js";
 import { archiveTickets, loadAllowance } from "./tickets.js";
 import { loadQueue, QUEUE_FILE, type QueueRepos } from "./queue.js";
 import { createProjectSwitcher, nightOrder, type PrWrites, type ProjectContext } from "./night.js";
 import { nightlyAllowancePercent, resolveAllowance, startNightBudget, closedBudget, checkGate, budgetGateMessage, formatUsageAttempts, sessionAbortReason, snapshotUsage, UsageUnavailableError, waitForSessionCapacity } from "./budget.js";
-import { fetchTicket, setIssueState, shouldMarkInProgress, shouldMarkInReview } from "./linear.js";
+import { createIssueTracker, type Issue, type IssueComment, type IssueTracker, type WorkflowStep } from "./issue-tracker.js";
 import { openCodexBudget, readCodexUsage, runCodexFinder, runCodexLens } from "./codex.js";
 import { runAgent, runConfirm, runDedupe, runFinder, runFix, runFixReview, type TicketBrief } from "./claude.js";
 import { readCited, ticketText } from "./confirm.js";
@@ -16,7 +16,7 @@ import { getEnv, useProjectEnv } from "./env.js";
 import { createPrHost, type PrHost } from "./pr-host.js";
 import { parseRunArgs, RUN_USAGE, type RunArgs } from "./args.js";
 import { listProjects, loadAllProjects, loadProject, NIGHT_DIR_NAME, projectEnvFiles, type Project } from "./project.js";
-import { deriveOutcome } from "./status.js";
+import { deriveOutcome, reviewMove } from "./status.js";
 import { findOpenTicketPr, commitSubject, prContent, prAction, type ExistingPr, type PRResult, type PrContent } from "./pr.js";
 import { applyThreadActions, planThreadActions, sweepPrComments, type SweepResult } from "./pr-comments.js";
 import { loadPrCommentState, prKey, pruneClosed, savePrCommentState, type PrCommentState } from "./pr-comment-state.js";
@@ -71,7 +71,7 @@ function errorMessage(e: unknown): string {
 
 function placeholderResult(ticket: Ticket, status: TicketResult["status"], summary: string, branchPrefix: string | undefined): TicketResult {
   return {
-    ticket, linear: null, status, summary,
+    ticket, issue: null, status, summary,
     filesCreated: [], filesModified: [], tests: [],
     verifyCommands: [], notes: "", followups: [],
     worktreePath: "", branch: ticketBranchName(branchPrefix, ticket.id, ticket.name), durationSec: 0,
@@ -138,13 +138,13 @@ function holdForAutoComplete(result: TicketResult, existing: ExistingPr): void {
   result.notes = [result.notes, `PR #${existing.prId} has auto-complete set; not pushing agent commits to it.`].filter(Boolean).join(" | ");
 }
 
-async function moveLinearTicket(linear: LinearTicket, target: LinearTicket["inProgressState"]): Promise<void> {
+async function moveIssue(tracker: IssueTracker, issue: Issue, target: WorkflowStep | undefined): Promise<void> {
   if (!target) return;
   try {
-    await setIssueState(linear.id, target.id);
-    log(`  Linear: moved ${linear.identifier} to ${target.name}`);
+    await tracker.moveIssue(issue, target);
+    log(`  Linear: moved ${issue.identifier} to ${target.name}`);
   } catch (e) {
-    log(`  Linear: could not move ${linear.identifier} to ${target.name}: ${(e as Error).message}`);
+    log(`  Linear: could not move ${issue.identifier} to ${target.name}: ${(e as Error).message}`);
   }
 }
 
@@ -246,7 +246,7 @@ async function settlePrThreads(
 }
 
 async function processTicket(
-  ticket: Ticket, project: Project, prHost: PrHost, branchPrefix: string | undefined, instructions: string, dryRun: boolean,
+  ticket: Ticket, project: Project, prHost: PrHost, tracker: IssueTracker, branchPrefix: string | undefined, instructions: string, dryRun: boolean,
   budgetRef: { current: NightBudget }, codexBudgetRef: { current: NightBudget }, processed: Map<string, ProcessedTicket>,
   prWrites: PrWrites,
 ): Promise<TicketResult> {
@@ -267,18 +267,18 @@ async function processTicket(
 
   log(`\n── [${project.name}] Ticket ${ticketId} – ${ticketName} [${repo}] ──`);
 
-  let linear: LinearTicket | null = null;
+  let issue: Issue | null = null;
   let linearDesc = "", linearUrl = "", linearState = "";
-  let linearComments: LinearComment[] = [];
+  let linearComments: IssueComment[] = [];
   try {
-    linear = await fetchTicket(ticketId);
-    if (linear) {
-      linearDesc = linear.description;
-      linearComments = linear.comments;
-      linearUrl = linear.url;
-      linearState = linear.state;
-      log(`  Linear: ${linear.name} [${linear.state}]`);
-      if (!dryRun && !ticket.prComments && shouldMarkInProgress(linear.stateType)) await moveLinearTicket(linear, linear.inProgressState);
+    issue = await tracker.getIssue(ticketId);
+    if (issue) {
+      linearDesc = issue.description;
+      linearComments = issue.comments;
+      linearUrl = issue.url;
+      linearState = issue.state;
+      log(`  Linear: ${issue.name} [${issue.state}]`);
+      if (!dryRun && !ticket.prComments) await moveIssue(tracker, issue, issue.startTarget);
     } else {
       log(`  Linear: ticket ${ticketId} not found (using tonight.md context only)`);
     }
@@ -286,7 +286,7 @@ async function processTicket(
     log(`  Linear fetch error: ${(e as Error).message}`);
   }
 
-  const branchBase = ticketBranchName(branchPrefix, ticketId, linear?.name ?? ticketName);
+  const branchBase = ticketBranchName(branchPrefix, ticketId, issue?.name ?? ticketName);
   wt.branch = branchBase;
   const existing = ticket.prComments?.pr ?? await lookUpExistingPr(prHost, branchBase, repoPath);
   if (dryRun) {
@@ -297,7 +297,7 @@ async function processTicket(
     wt = createWorktree({ repoPath, ticketId, repo: repoConfig, branchBase, startFrom, stackedOn: parent?.branch }, log);
     if (ticket.prComments && !wt.startedFromPr) {
       const gone = placeholderResult(ticket, "needs_review", "PR branch gone; review comments not addressed", branchPrefix);
-      gone.linear = linear;
+      gone.issue = issue;
       gone.worktreePath = wt.wtPath;
       gone.notes = gone.summary;
       await settlePrThreads(prHost, gone, ticket.prComments, { reports: [], pushed: false, verified: false, changed: false }, prWrites, false);
@@ -329,7 +329,7 @@ async function processTicket(
   const report = result.report;
   const ticketResult: TicketResult = {
     ticket,
-    linear,
+    issue,
     status: (report?.status ?? "needs_review") as TicketResult["status"],
     title: report?.title ?? "",
     summary: report?.summary ?? (result.parseError ? `Parse error: ${result.parseError}` : "Agent produced no report."),
@@ -513,7 +513,7 @@ async function processTicket(
     }
   }
 
-  if (!dryRun && linear && !ticket.prComments && shouldMarkInReview(ticketResult.status, linear.stateType)) await moveLinearTicket(linear, linear.inReviewState);
+  if (!dryRun && issue && !ticket.prComments) await moveIssue(tracker, issue, reviewMove(issue, ticketResult.status));
   ticketResult.durationSec = Math.round((Date.now() - startTime) / 1000);
   log(`  Result: ${ticketResult.status} (${ticketResult.durationSec}s)`);
   processed.set(ticketId, { branch: wt.branch, repo, pushed });
@@ -602,7 +602,7 @@ const claimedByEarlierProjects = (projectName: string): Set<string> => {
 
 async function runPrSweep(project: Project, prHost: PrHost, state: PrCommentState, stateFile: string, dryRun: boolean): Promise<SweepResult> {
   const sweep = await sweepPrComments(project.repos, state, {
-    host: prHost, teams: project.linearTeams ?? [],
+    host: prHost, teams: project.trackerTeams ?? [],
     claimedElsewhere: claimedByEarlierProjects(project.name),
     log,
   });
@@ -631,6 +631,7 @@ async function main() {
     useEnv: useProjectEnv,
     getEnv,
     prHost: p => createPrHost(p.prHost, getEnv),
+    issueTracker: p => createIssueTracker(p.issueTracker, getEnv),
     startDb: script => {
       if (dryRun) return undefined;
       const db = startTestDb(log, undefined, process.env, script);
@@ -770,7 +771,7 @@ async function main() {
         const ctx = enter(ticket.project!);
         const { prWrites } = ctx;
         try {
-          const r = await processTicket(ticket, ctx.project, ctx.prHost, ctx.branchPrefix, ctx.instructions, dryRun, budgetRef, codexBudgetRef, processed, prWrites);
+          const r = await processTicket(ticket, ctx.project, ctx.prHost, ctx.issueTracker, ctx.branchPrefix, ctx.instructions, dryRun, budgetRef, codexBudgetRef, processed, prWrites);
           results.push(r);
         } catch (e) {
           log(`  ERROR processing ${ticket.id}: ${(e as Error).message}`);

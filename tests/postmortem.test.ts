@@ -7,7 +7,7 @@ import {
 import type { SessionResult, TicketResult } from "../src/types.js";
 
 const ticket = (id: string, status: TicketResult["status"]): TicketResult => ({
-  ticket: { id, name: "n", context: [], repo: "main" }, linear: null, status, summary: "", filesCreated: [], filesModified: [],
+  ticket: { id, name: "n", context: [], repo: "main" }, issue: null, status, summary: "", filesCreated: [], filesModified: [],
   tests: [], verifyCommands: [], notes: "", followups: [], worktreePath: "/w", branch: "b", durationSec: 1,
 });
 

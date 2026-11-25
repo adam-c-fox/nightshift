@@ -1,5 +1,11 @@
 import type { ClaudeResult } from "./claude.js";
+import type { Issue, WorkflowStep } from "./issue-tracker.js";
 import type { TicketStatus } from "./types.js";
+
+const REVIEWABLE_STATUSES: TicketStatus[] = ["done", "needs_review"];
+
+export const reviewMove = (issue: Issue | null, status: TicketStatus): WorkflowStep | undefined =>
+  issue && REVIEWABLE_STATUSES.includes(status) ? issue.reviewTarget : undefined;
 
 export interface Outcome {
   status: TicketStatus;

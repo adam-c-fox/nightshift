@@ -90,7 +90,7 @@ function fakeSources(): Sources {
       { name: "acme", level: "pass" as const, reason: "" },
     ]),
     projectChecks: vi.fn(async () => []),
-    linearTeams: vi.fn(async () => ({
+    trackerTeams: vi.fn(async () => ({
       ok: true as const,
       value: [{ key: "DEMO", name: "Growth" }],
     })),
@@ -563,7 +563,8 @@ describe("POST /api/queue", () => {
       join(root, "projects/acme/project.json"),
       JSON.stringify({
         repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
-        linearProjects: ["Demo"],
+        issueTracker: "linear",
+        trackerProjects: ["Demo"],
         prHost: "azure-devops",
       }),
     );
@@ -665,8 +666,9 @@ describe("no secrets in responses", () => {
       join(root, "projects/acme/project.json"),
       JSON.stringify({
         repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
-        linearTeams: ["DEMO"],
-        linearProjects: ["Demo"],
+        trackerTeams: ["DEMO"],
+        issueTracker: "linear",
+        trackerProjects: ["Demo"],
         prHost: "azure-devops",
       }),
     );
@@ -679,7 +681,8 @@ describe("no secrets in responses", () => {
       join(root, "projects/example/project.json"),
       JSON.stringify({
         repos: { app: { path: repo, checks: [{ name: "t", command: "x" }] } },
-        linearProjects: ["Example"],
+        issueTracker: "linear",
+        trackerProjects: ["Example"],
         prHost: "azure-devops",
       }),
     );

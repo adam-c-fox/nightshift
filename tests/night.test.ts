@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createProjectSwitcher, nightOrder } from "../src/night.js";
 import { CLAUDE_TOKEN } from "../src/agent-env.js";
+import type { IssueTracker } from "../src/issue-tracker.js";
 import type { PrHost } from "../src/pr-host.js";
 import type { Project } from "../src/project.js";
 import type { Ticket } from "../src/types.js";
@@ -54,16 +55,18 @@ describe("createProjectSwitcher", () => {
     let envFile = "";
     const prefixes: Record<string, string> = { "/eoe.env": "eoe-prefix", "/memo.env": "memo-prefix" };
     const hosts: Record<string, PrHost> = { eoe: {} as PrHost, memosum: {} as PrHost };
+    const trackers: Record<string, IssueTracker> = { eoe: {} as IssueTracker, memosum: {} as IssueTracker };
     const switcher = createProjectSwitcher({
       load: name => projects[name],
       useEnv: file => { envFile = file; events.push(`env ${file}`); },
       getEnv: name => (name === "BRANCH_PREFIX" ? prefixes[envFile] : undefined),
       prHost: project => { events.push(`host ${project.name}`); return hosts[project.name]; },
+      issueTracker: project => { events.push(`tracker ${project.name}`); return trackers[project.name]; },
       startDb: script => { events.push(`start ${script}`); return { url: "x", stop: () => events.push(`stop ${script}`) }; },
       loadPrState: name => ({ state: {}, file: `/state/${name}.json` }),
       genericInstructions: "generic",
     });
-    return { switcher, events, hosts };
+    return { switcher, events, hosts, trackers };
   }
 
   it("gives each project its own branch prefix, instructions and PR state", () => {
@@ -85,6 +88,14 @@ describe("createProjectSwitcher", () => {
     expect(switcher.enter("eoe").prHost).toBe(hosts.eoe);
     expect(switcher.enter("memosum").prHost).toBe(hosts.memosum);
     expect(events.filter(e => /^(env|host)/.test(e))).toEqual(["env /eoe.env", "host eoe", "env /memo.env", "host memosum"]);
+  });
+
+  it("creates the issue tracker after the env switch, once per switch, and exposes it on the context", () => {
+    const { switcher, events, trackers } = setup();
+    expect(switcher.enter("eoe").issueTracker).toBe(trackers.eoe);
+    expect(switcher.enter("eoe").issueTracker).toBe(trackers.eoe);
+    expect(switcher.enter("memosum").issueTracker).toBe(trackers.memosum);
+    expect(events.filter(e => /^(env|tracker)/.test(e))).toEqual(["env /eoe.env", "tracker eoe", "env /memo.env", "tracker memosum"]);
   });
 
   it("stops the previous test db before starting the next, and does not restart on re-entry", () => {
@@ -112,6 +123,7 @@ describe("createProjectSwitcher", () => {
       useEnv: file => { envFile = file; },
       getEnv: name => process.env[name] ?? (name === CLAUDE_TOKEN ? tokens[envFile] : undefined),
       prHost: () => ({}) as PrHost,
+      issueTracker: () => ({}) as IssueTracker,
       startDb: () => undefined,
       loadPrState: name => ({ state: {}, file: `/state/${name}.json` }),
       genericInstructions: "generic",

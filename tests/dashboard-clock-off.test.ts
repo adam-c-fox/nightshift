@@ -7,7 +7,7 @@ import {
   type TicketPr,
 } from "../src/dashboard/clock-off.js";
 import type { Loaded } from "../src/dashboard/cache.js";
-import type { IssueSnapshot, TodoIssue } from "../src/linear.js";
+import type { IssueSnapshot, TodoIssue } from "../src/issue-tracker.js";
 import { descriptionHash, type PrepRecord } from "../src/prep.js";
 import type { Project } from "../src/project.js";
 import type { Ticket } from "../src/types.js";
@@ -21,9 +21,9 @@ function issue(
 ): TodoIssue {
   const priority = opts.priority ?? 3;
   return {
-    id: `uuid-${id}`,
     identifier: id,
     title: `Title ${id}`,
+    state: "Todo",
     url: `https://linear.app/acme/issue/${id}`,
     priority,
     priorityLabel: PRIORITY_LABELS[priority],
@@ -58,6 +58,7 @@ function snapshot(
     title: `Snap ${id}`,
     url: `https://linear.app/acme/issue/${id}`,
     state: "Todo",
+    ready: true,
     assignedToMe: true,
     description: "plain description",
     commentCreatedAt: [],
@@ -74,8 +75,8 @@ const fail = (error: string): Loaded<never> => ({ ok: false, error });
 
 const now = new Date("2026-10-07T20:00:00Z");
 const projects: EveningInput["projects"] = [
-  { name: "acme", linearProjects: ["Demo"], repos: { api: repoConfig(), web: repoConfig() }, defaultRepo: "api" },
-  { name: "beta", linearProjects: ["Beta"], repos: { app: repoConfig() }, defaultRepo: "app" },
+  { name: "acme", trackerProjects: ["Demo"], repos: { api: repoConfig(), web: repoConfig() }, defaultRepo: "api" },
+  { name: "beta", trackerProjects: ["Beta"], repos: { app: repoConfig() }, defaultRepo: "app" },
 ];
 const usage: UsageSummary = { weeklyPercent: 40, resetInfo: "Oct 12" };
 
@@ -130,7 +131,7 @@ describe("buildEvening queue", () => {
     const view = buildEvening(
       input({
         queue: ok({ tickets: [ticket("B-1")] }),
-        snapshots: ok({ "B-1": snapshot("B-1", { state: "In Progress" }) }),
+        snapshots: ok({ "B-1": snapshot("B-1", { state: "In Progress", ready: false }) }),
       }),
     );
     expect(view.queue[0]).toMatchObject({
@@ -139,6 +140,24 @@ describe("buildEvening queue", () => {
       linearState: "In Progress",
       title: "Snap B-1",
     });
+  });
+
+  it("warns not_todo from ready=false with the state's name in the text", () => {
+    const view = buildEvening(
+      input({
+        queue: ok({ tickets: [ticket("B-1")] }),
+        snapshots: ok({ "B-1": snapshot("B-1", { state: "Done", ready: false }) }),
+      }),
+    );
+    expect(view.warnings.map((w) => w.message)).toEqual([
+      "B-1 is in tonight.md but is Done in Linear",
+    ]);
+  });
+
+  it("shows a todo row's state from the issue", () => {
+    const todo = { ...issue("A-1"), state: "Ready" };
+    const view = buildEvening(input({ todo: ok([todo]) }));
+    expect(view.tabs.flatMap((tab) => tab.rows)[0].linearState).toBe("Ready");
   });
 
   it("lists a sweep entry per project with its open PR count", () => {
@@ -278,7 +297,7 @@ describe("buildEvening queue warnings", () => {
           tickets: [ticket("B-1"), ticket("B-2", "app", "beta"), ticket("B-3")],
         }),
         snapshots: ok({
-          "B-1": snapshot("B-1", { state: "In Progress" }),
+          "B-1": snapshot("B-1", { state: "In Progress", ready: false }),
           "B-2": snapshot("B-2", { assignedToMe: false }),
           "B-3": null,
         }),

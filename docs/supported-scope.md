@@ -1,15 +1,15 @@
 # Supported scope and extension points
 
-Nightshift can work across different codebases without changing its source when they fit the stack below. Repo paths, routing descriptions, project instructions, Linear projects, and test database scripts are project configuration. The nightly Claude allowance is one setting for every project. Each repo's setup and check commands are configuration too. Providers and agent integrations are code.
+Nightshift can work across different codebases without changing its source when they fit the stack below. Repo paths, routing descriptions, project instructions, tracker projects, and test database scripts are project configuration. The nightly Claude allowance is one setting for every project. Each repo's setup and check commands are configuration too. Providers and agent integrations are code.
 
-PR hosts sit behind the `PrHost` interface in [`pr-host.ts`](../src/pr-host.ts). Each project picks one with the required `prHost` key in `project.json`, and Azure DevOps is the only implementation. The issue tracker and coding agent have no interface yet, so adding one means changing and testing the runner and its related tools.
+PR hosts sit behind the `PrHost` interface in [`pr-host.ts`](../src/pr-host.ts). Each project picks one with the required `prHost` key in `project.json`, and Azure DevOps is the only implementation. Issue trackers sit behind the `IssueTracker` interface in [`issue-tracker.ts`](../src/issue-tracker.ts). Each project picks one with the required `issueTracker` key, and Linear is the only implementation. All projects must use the same tracker, because the queue is shared. The coding agent has no interface yet, so adding one means changing and testing the runner and its related tools.
 
 ## What works today
 
 | Area | Current support |
 | --- | --- |
 | Projects | Multiple local git repos per project, with absolute paths and a default repo. Each repo lists its own `setup` and `checks` commands, sandbox `network` hosts and agent `tools`. |
-| Tickets | Linear descriptions, comments, assignees and workflow states. The evening list uses the state name `Todo`; the runner looks for a started state and an `In Review` state. Ticket IDs use letters followed by a number, such as `ENG-142`. |
+| Tickets | `issueTracker: linear`: Linear descriptions, comments, assignees and workflow states. The evening list uses the state name `Todo`; the runner looks for a started state and an `In Review` state. Ticket IDs use letters followed by a number, such as `ENG-142`; every tracker's IDs must match that format. |
 | PRs and remote CI | `prHost: azure-devops`, through `az`, including existing PRs, reviewer votes, auto-complete, branch policies, build runs and failure logs. A project's repos share its Azure organization/project settings. |
 | Target repos | Any repo whose setup and checks are shell commands. A command can run once per directory matched by a file glob. |
 | Implementation and review | Claude Code implements and fixes changes, confirms review candidates and runs the postmortem. Codex supplies an additional read-only review pass; an unavailable Codex pass is recorded as skipped. |
@@ -48,7 +48,7 @@ Adding another project, including one with a different package manager or langua
 | Integration | Starting points | Work beyond the API calls |
 | --- | --- | --- |
 | GitHub or GitLab PRs | [`pr-host.ts`](../src/pr-host.ts), [`pr-hosts/azure-devops/`](../src/pr-hosts/azure-devops), [`pr-host-contract.ts`](../tests/pr-host-contract.ts) | Implement the `PrHost` interface and add one entry to `PR_HOSTS`. Azure branch-policy and stacked-build behavior needs an equivalent or an explicit supported limitation. See [providers.md](providers.md), part A. |
-| Jira or GitHub Issues | [`linear.ts`](../src/linear.ts), [`types.ts`](../src/types.ts), [`tickets.ts`](../src/tickets.ts) | Normalize ticket content, comments, assignment and state transitions. Update prep commands, skills, dashboard queries and ticket-ID validation. GitHub's numeric issue IDs need a repository-qualified identity so tickets from different repos cannot collide. |
+| Jira or GitHub Issues | [`issue-tracker.ts`](../src/issue-tracker.ts), [`issue-trackers/linear/`](../src/issue-trackers/linear), [`issue-tracker-contract.ts`](../tests/issue-tracker-contract.ts) | Implement `IssueTracker` and pass the contract suite. Native IDs that don't match `[A-Z]+-\d+` (GitHub's numeric issue numbers, for example) must map reversibly into it, with a prefix per repository, and `PR` is reserved by the PR sweep. All projects share one tracker, so mixing trackers needs ID namespacing first. Follow [providers.md](providers.md), part B. |
 | Another coding agent | [`claude.ts`](../src/claude.ts), [`codex.ts`](../src/codex.ts), [`budget.ts`](../src/budget.ts) | Implement process arguments, authentication, event/output parsing, usage accounting, retries and sandbox permissions. The structured report/review blocks are reusable, but confirmation, fixing and postmortem runs still depend on Claude. |
 
-To add a PR host, follow [providers.md](providers.md), part A. For a second issue tracker or coding agent, follow part B: list the calls the runner already makes, put an interface around them, and replace provider-specific domain types at that boundary.
+To add a PR host, follow [providers.md](providers.md), part A. To add an issue tracker, follow part B. For a coding agent, follow part C: list the calls the runner already makes, put an interface around them, and replace provider-specific domain types at that boundary.

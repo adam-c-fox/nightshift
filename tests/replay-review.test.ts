@@ -165,18 +165,20 @@ describe("replaySummary", () => {
   });
 });
 
+const snapshot = { name: "CSV export", description: "Export rows", comments: [{ author: "a", body: "b", createdAt: "t" }], url: "https://linear.app/x/ENG-1", state: "In Progress" };
+
 const session = {
   tickets: [
     {
       ticket: { id: "ENG-1", name: "Old name", context: ["keep it small"] },
-      linear: { name: "CSV export", description: "Export rows", comments: [{ author: "a", body: "b", createdAt: "t" }], url: "https://linear.app/x/ENG-1", state: "In Progress" },
+      issue: snapshot,
       checks: [
         { name: "tests", command: "npm test", passed: true, durationSec: 3 },
         { name: "lint", command: "npm run lint", passed: false, durationSec: 2 },
         { name: "types", command: "npm run typecheck", passed: false, durationSec: 1, status: "regression" },
       ],
     },
-    { ticket: { id: "ENG-2", name: "Other" }, linear: null },
+    { ticket: { id: "ENG-2", name: "Other" }, issue: null },
   ],
 };
 
@@ -186,6 +188,11 @@ describe("briefFromSession", () => {
       ticketId: "ENG-1", ticketName: "CSV export", context: ["keep it small"], linearDesc: "Export rows",
       linearComments: [{ author: "a", body: "b", createdAt: "t" }], linearUrl: "https://linear.app/x/ENG-1", state: "In Progress",
     });
+  });
+
+  it("reads sessions written before the field was renamed from linear to issue", () => {
+    const legacy = { tickets: [{ ticket: { id: "ENG-1", name: "Old name", context: ["keep it small"] }, linear: snapshot }] };
+    expect(briefFromSession(legacy, "ENG-1").brief).toEqual(briefFromSession(session, "ENG-1").brief);
   });
 
   it("falls back to the ticket's own fields without a Linear snapshot", () => {

@@ -1,9 +1,25 @@
-import { requireEnv } from "./env.js";
-import type { LinearComment, LinearTicket, TicketStatus } from "./types.js";
-
-export type { LinearComment, LinearTicket };
+import type { EnvLookup } from "../../pr-host.js";
 
 const BASE_URL = "https://api.linear.app/graphql";
+
+export interface LinearComment {
+  author: string;
+  createdAt: string;
+  body: string;
+}
+
+export interface LinearTicket {
+  id: string;
+  identifier: string;
+  name: string;
+  description: string;
+  comments: LinearComment[];
+  state: string;
+  stateType: string;
+  inProgressState?: { id: string; name: string };
+  inReviewState?: { id: string; name: string };
+  url: string;
+}
 
 export interface WorkflowState {
   id: string;
@@ -36,10 +52,9 @@ export function pickInProgressState(states: WorkflowState[]): WorkflowState | un
 }
 
 const FINISHED_TYPES = ["completed", "canceled"];
-const REVIEWABLE_STATUSES: TicketStatus[] = ["done", "needs_review"];
 
-export function shouldMarkInReview(status: TicketStatus, stateType: string): boolean {
-  return REVIEWABLE_STATUSES.includes(status) && !FINISHED_TYPES.includes(stateType);
+export function isFinished(stateType: string): boolean {
+  return FINISHED_TYPES.includes(stateType);
 }
 
 export function pickInReviewState(states: WorkflowState[]): WorkflowState | undefined {
@@ -49,6 +64,12 @@ export function pickInReviewState(states: WorkflowState[]): WorkflowState | unde
 export interface LinearClient {
   apiKey: string;
   fetch?: typeof fetch;
+}
+
+export function linearClient(lookup: EnvLookup, fetchFn?: typeof fetch): LinearClient {
+  const apiKey = lookup("LINEAR_API_KEY");
+  if (!apiKey) throw new Error("LINEAR_API_KEY not found in environment or .env file");
+  return { apiKey, fetch: fetchFn };
 }
 
 class LinearNotFoundError extends Error {}
@@ -72,7 +93,7 @@ function throwOnMissingData(json: { data?: unknown; errors?: GraphqlErrors }): v
 async function linearRequest<T extends { data?: unknown; errors?: { message: string }[] }>(
   query: string,
   variables: Record<string, unknown>,
-  client: LinearClient = { apiKey: requireEnv("LINEAR_API_KEY") },
+  client: LinearClient,
 ): Promise<T> {
   const res = await (client.fetch ?? fetch)(BASE_URL, {
     method: "POST",
@@ -92,14 +113,14 @@ async function linearRequest<T extends { data?: unknown; errors?: { message: str
   return json;
 }
 
-export async function setIssueState(issueId: string, stateId: string): Promise<void> {
+export async function setIssueState(issueId: string, stateId: string, client: LinearClient): Promise<void> {
   const mutation = `
     mutation SetIssueState($id: String!, $stateId: String!) {
       issueUpdate(id: $id, input: { stateId: $stateId }) { success }
     }
   `;
   const json = await linearRequest<{ data?: { issueUpdate?: { success: boolean } }; errors?: { message: string }[] }>(
-    mutation, { id: issueId, stateId },
+    mutation, { id: issueId, stateId }, client,
   );
   if (!json.data?.issueUpdate?.success) {
     const reason = json.errors?.map(e => e.message).join("; ") ?? "no error given";
@@ -111,7 +132,7 @@ export function authorizationHeader(apiKey: string): string {
   return apiKey.startsWith("lin_oauth_") ? `Bearer ${apiKey}` : apiKey;
 }
 
-export async function fetchTicket(identifier: string, client?: LinearClient): Promise<LinearTicket | null> {
+export async function fetchTicket(identifier: string, client: LinearClient): Promise<LinearTicket | null> {
   const query = `
     query GetIssue($id: String!) {
       issue(id: $id) {

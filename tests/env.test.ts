@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { envLookup, getEnv, lookupEnv, parseEnv, ROOT_ENV_FILE, useProjectEnv } from "../src/env.js";
-import { authorizationHeader } from "../src/linear.js";
+import { authorizationHeader } from "../src/issue-trackers/linear/client.js";
 
 describe("parseEnv", () => {
   it("handles comments, quotes and export prefixes", () => {

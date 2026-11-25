@@ -44,7 +44,7 @@ export interface PrContent {
 export function prContent(result: TicketResult): PrContent {
   return {
     ticketId: result.ticket.id, title: result.title ?? "", summary: result.summary,
-    verifyCommands: result.verifyCommands, ticketUrl: result.linear?.url,
+    verifyCommands: result.verifyCommands, ticketUrl: result.issue?.url,
     risks: result.review?.risks ?? [],
     conflicts: result.review?.conflicts ?? [],
   };

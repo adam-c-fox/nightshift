@@ -394,7 +394,7 @@ function ticketCardHTML(t: TicketResult): string {
     </summary>
     <div class="card-body">
       <p class="summary">${prose(t.summary)}</p>
-      ${t.linear ? `<a href="${esc(t.linear.url)}" target="_blank" class="linear-link">Open in Linear →</a>` : ""}
+      ${t.issue ? `<a href="${esc(t.issue.url)}" target="_blank" class="linear-link">Open in Linear →</a>` : ""}
       ${files ? `<ul class="files">${files}</ul>` : ""}
       ${tests}
       ${verify}

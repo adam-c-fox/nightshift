@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { envLookup, parseEnv, ROOT_ENV_FILE } from "../env.js";
-import type { LinearTeam } from "../linear.js";
+import { ISSUE_TRACKER_KINDS, ISSUE_TRACKERS, type IssueTrackerKind, type TrackerTeam } from "../issue-tracker.js";
 import {
   PROJECT_NAME,
   parseProjectConfig,
@@ -25,7 +25,7 @@ export interface CheckDeps {
   projectsDir: string;
   exampleDir: string;
   rootDir?: string;
-  teams: () => Promise<Loaded<LinearTeam[]>>;
+  teams: () => Promise<Loaded<TrackerTeam[]>>;
   hostLogin: (
     kind: PrHostKind,
     lookup: (name: string) => string | undefined,
@@ -45,12 +45,16 @@ type RawProject = {
   repos?: Record<string, { path?: unknown }>;
   defaultRepo?: unknown;
   testDb?: unknown;
-  linearTeams?: unknown;
+  trackerTeams?: unknown;
   prHost?: unknown;
+  issueTracker?: unknown;
 };
 
 const prHostKind = (raw: RawProject): PrHostKind | undefined =>
   PR_HOST_KINDS.find((kind) => kind === raw.prHost);
+
+const trackerKind = (raw: RawProject): IssueTrackerKind | undefined =>
+  ISSUE_TRACKER_KINDS.find((kind) => kind === raw.issueTracker);
 
 function check(name: string, level: CheckLevel, reason: string): ConfigCheck {
   return { name, level, reason };
@@ -137,6 +141,7 @@ function envCheck(
   projectDir: string,
   deps: FileCheckDeps,
   kind: PrHostKind | undefined,
+  tracker: IssueTrackerKind | undefined,
 ): ConfigCheck {
   const rootDir = deps.rootDir ?? DEFAULT_ROOT_DIR;
   const lookup = projectLookup(projectDir, rootDir);
@@ -144,6 +149,7 @@ function envCheck(
     ...new Set([
       ...requiredEnvKeys(projectDir, deps.exampleDir, rootDir),
       ...(kind ? PR_HOSTS[kind].envKeys : []),
+      ...(tracker ? ISSUE_TRACKERS[tracker].envKeys : []),
     ]),
   ];
   const keys = {
@@ -201,33 +207,33 @@ export function fileChecks(name: string, deps: FileCheckDeps): ConfigCheck[] {
           "warn",
           "missing; agents get no project instructions",
         ),
-    envCheck(name, projectDir, deps, prHostKind(raw)),
+    envCheck(name, projectDir, deps, prHostKind(raw), trackerKind(raw)),
     testDbCheck(projectDir, raw),
   ];
 }
 
 function configuredTeams(raw: RawProject): string[] {
-  return Array.isArray(raw.linearTeams)
-    ? raw.linearTeams.filter((team): team is string => typeof team === "string")
+  return Array.isArray(raw.trackerTeams)
+    ? raw.trackerTeams.filter((team): team is string => typeof team === "string")
     : [];
 }
 
-async function linearTeamsCheck(
+async function trackerTeamsCheck(
   configured: string[],
   teams: CheckDeps["teams"],
 ): Promise<ConfigCheck> {
   if (configured.length === 0) {
-    return check("linearTeams", "pass", "not set; all your Todo tickets");
+    return check("trackerTeams", "pass", "not set; all your Todo tickets");
   }
   const loaded = await teams();
   if (!loaded.ok) {
-    return check("linearTeams", "warn", `couldn't check: ${loaded.error}`);
+    return check("trackerTeams", "warn", `couldn't check: ${loaded.error}`);
   }
   const known = new Set(loaded.value.map((team) => team.key));
   const unknown = configured.filter((key) => !known.has(key));
   return unknown.length > 0
-    ? check("linearTeams", "fail", `unknown team keys: ${unknown.join(", ")}`)
-    : check("linearTeams", "pass", `${configured.join(", ")} found in Linear`);
+    ? check("trackerTeams", "fail", `unknown team keys: ${unknown.join(", ")}`)
+    : check("trackerTeams", "pass", `${configured.join(", ")} found in Linear`);
 }
 
 async function prHostLoginCheck(
@@ -258,7 +264,7 @@ export async function projectChecks(
   const repoPath = Object.values(raw.repos ?? {}).find((repo) => typeof repo.path === "string")?.path as string | undefined;
   return [
     ...checks,
-    await linearTeamsCheck(configuredTeams(raw), deps.teams),
+    await trackerTeamsCheck(configuredTeams(raw), deps.teams),
     ...(kind && repoPath ? [await prHostLoginCheck(kind, lookup, repoPath, deps.hostLogin)] : []),
   ];
 }

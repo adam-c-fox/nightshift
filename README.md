@@ -25,14 +25,14 @@ See [architecture and design decisions](docs/architecture.md) for the review pro
 
 | Area | Supported today |
 | --- | --- |
-| Ticket tracker | Linear |
+| Ticket tracker | Linear (`issueTracker: linear`) |
 | PR host and CI | Azure DevOps, chosen per project with `prHost`. See [adding a provider](docs/providers.md) |
 | Coding agents | Claude Code, with an additional Codex review pass |
 | Target repos | Any repo whose setup and checks are shell commands |
 | Runtime | Node 22.12+ or Node 24 LTS, Git and a Unix shell |
 | Platforms | Developed on macOS; CI checks Node 22 and 24 on Linux. Dashboard startup installation uses macOS LaunchAgents. |
 
-Adding projects on this stack is configuration work. Each repo's setup and check commands are project configuration. New ticket trackers and PR hosts need code changes. There is no connector interface yet. [Supported scope and extension points](docs/supported-scope.md) maps the assumptions and the work a new connector would require.
+Adding projects on this stack is configuration work. Each repo's setup and check commands are project configuration. New ticket trackers and PR hosts need code changes behind their interfaces. [Supported scope and extension points](docs/supported-scope.md) maps the assumptions and the work a new connector would require.
 
 ## Setup
 

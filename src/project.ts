@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { ISSUE_TRACKER_KINDS, type IssueTrackerKind } from "./issue-tracker.js";
 import { PR_HOST_KINDS, type PrHostKind } from "./pr-host.js";
 
 export const PROJECTS_DIR = path.resolve(import.meta.dirname, "..", "projects");
@@ -7,7 +8,7 @@ export const REPO_NAME_PATTERN = "[a-z0-9][a-z0-9_-]*";
 export const REPO_NAME = new RegExp(`^${REPO_NAME_PATTERN}$`);
 export const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const NIGHT_DIR_NAME = "night";
-export const LINEAR_TEAM_KEY = /^[A-Z][A-Z0-9]*$/;
+export const TRACKER_TEAM_KEY = /^[A-Z][A-Z0-9]*$/;
 
 export interface RepoCommand {
   command: string;
@@ -35,8 +36,9 @@ export interface Project {
   defaultRepo: string;
   instructions: string;
   testDbScript?: string;
-  linearProjects: string[];
-  linearTeams?: string[];
+  issueTracker: IssueTrackerKind;
+  trackerProjects: string[];
+  trackerTeams?: string[];
   prHost: PrHostKind;
   envFile: string;
 }
@@ -46,6 +48,9 @@ type RawConfig = {
   defaultRepo?: unknown;
   testDb?: unknown;
   allowancePercent?: unknown;
+  issueTracker?: unknown;
+  trackerProjects?: unknown;
+  trackerTeams?: unknown;
   linearProjects?: unknown;
   linearTeams?: unknown;
   prHost?: unknown;
@@ -188,20 +193,26 @@ export function parseProjectConfig(
   if (config.allowancePercent !== undefined)
     fail("allowancePercent moved to NIGHTLY_ALLOWANCE_PERCENT in the root .env");
 
-  const linearProjects = config.linearProjects;
-  if (!isStringList(linearProjects) || linearProjects.length === 0)
-    fail("linearProjects must be a non-empty list of Linear project names");
+  if (config.linearProjects !== undefined) fail("linearProjects was renamed to trackerProjects");
+  if (config.linearTeams !== undefined) fail("linearTeams was renamed to trackerTeams");
 
-  const linearTeams = config.linearTeams ?? [];
+  if (!ISSUE_TRACKER_KINDS.includes(config.issueTracker as IssueTrackerKind))
+    fail(`issueTracker must be one of: ${ISSUE_TRACKER_KINDS.join(", ")}`);
+
+  const trackerProjects = config.trackerProjects;
+  if (!isStringList(trackerProjects) || trackerProjects.length === 0)
+    fail("trackerProjects must be a non-empty list of tracker project names");
+
+  const trackerTeams = config.trackerTeams ?? [];
   if (
-    !Array.isArray(linearTeams) ||
-    !linearTeams.every(
-      (team) => typeof team === "string" && LINEAR_TEAM_KEY.test(team),
+    !Array.isArray(trackerTeams) ||
+    !trackerTeams.every(
+      (team) => typeof team === "string" && TRACKER_TEAM_KEY.test(team),
     )
   ) {
-    fail('linearTeams must be a list of Linear team keys like "ENG"');
+    fail('trackerTeams must be a list of team keys like "ENG"');
   }
-  const teams = linearTeams as string[];
+  const teams = trackerTeams as string[];
 
   if (!PR_HOST_KINDS.includes(config.prHost as PrHostKind))
     fail(`prHost must be one of: ${PR_HOST_KINDS.join(", ")}`);
@@ -212,8 +223,9 @@ export function parseProjectConfig(
     repos,
     defaultRepo,
     testDbScript,
-    linearProjects: linearProjects as string[],
-    ...(teams.length > 0 ? { linearTeams: teams } : {}),
+    issueTracker: config.issueTracker as IssueTrackerKind,
+    trackerProjects: trackerProjects as string[],
+    ...(teams.length > 0 ? { trackerTeams: teams } : {}),
     prHost: config.prHost as PrHostKind,
     envFile: path.join(dir, ".env"),
   };
@@ -283,21 +295,32 @@ export function loadAllProjects(projectsDir = PROJECTS_DIR): Project[] {
   const projects = listProjects(projectsDir).map((name) => loadProject(name, projectsDir));
   const owners = new Map<string, string>();
   for (const project of projects) {
-    for (const linearProject of project.linearProjects) {
-      const owner = owners.get(linearProject);
+    for (const trackerProject of project.trackerProjects) {
+      const owner = owners.get(trackerProject);
       if (owner !== undefined) {
-        throw new Error(`Linear project "${linearProject}" is claimed by both ${owner} and ${project.name}`);
+        throw new Error(`Tracker project "${trackerProject}" is claimed by both ${owner} and ${project.name}`);
       }
-      owners.set(linearProject, project.name);
+      owners.set(trackerProject, project.name);
     }
   }
   return projects;
 }
 
-export function projectForLinearProject(
-  projects: Pick<Project, "name" | "linearProjects">[],
-  linearProject: string | null,
+export function projectForTrackerProject(
+  projects: Pick<Project, "name" | "trackerProjects">[],
+  trackerProject: string | null,
 ): string | undefined {
-  if (linearProject === null) return undefined;
-  return projects.find((p) => p.linearProjects.includes(linearProject))?.name;
+  if (trackerProject === null) return undefined;
+  return projects.find((p) => p.trackerProjects.includes(trackerProject))?.name;
+}
+
+export function sharedTrackerKind(
+  projects: Pick<Project, "name" | "issueTracker">[],
+): IssueTrackerKind | undefined {
+  const kinds = new Set(projects.map((p) => p.issueTracker));
+  if (kinds.size > 1) {
+    const listed = projects.map((p) => `${p.name}: ${p.issueTracker}`).join(", ");
+    throw new Error(`projects use different issue trackers (${listed}); the shared queue needs one`);
+  }
+  return projects[0]?.issueTracker;
 }

@@ -1,20 +1,20 @@
 ---
 name: tonight
-description: Draft the shared tonight.md queue from your Linear Todo tickets across every project, with you, before the nightshift run.
+description: Draft the shared tonight.md queue from your Todo tickets across every project, with you, before the nightshift run.
 disable-model-invocation: true
 ---
 
-Plan tonight's nightshift run with the user: fetch their Linear Todo tickets, draft the root `tonight.md` together, and write it.
+Plan tonight's nightshift run with the user: fetch their Todo tickets, draft the root `tonight.md` together, and write it.
 
 The runner works tickets in file order across every project, so order is priority. `tonight.md` in the checkout root is gitignored and holds every project's tickets. Each ticket section needs a `project:` line. The file format is in the header comment of `templates/tonight.md` and in `parseQueue` in `src/queue.ts`.
 
 Run the nightshift commands below from its checkout root, where `package.json` names `nightshift` and `templates/tonight.md` exists. If invoked elsewhere, resolve this skill's directory through any symlink and use its great-grandparent as the checkout root. If the skill is a standalone copy, ask the user for the checkout path.
 
-Discover the connected Linear tools for listing the current user's issues, fetching an issue, and listing its comments. Tool names and schemas vary by connector; load deferred tools with the host's discovery tool and use their actual schemas. The operation names below describe intent. If no connected tool supports an operation, ask the user to connect Linear and stop before writing tonight's file.
+Discover the connected tools for the project's `issueTracker` (`linear`: the Linear connector) for listing the current user's issues, fetching an issue, and listing its comments. Tool names and schemas vary by connector; load deferred tools with the host's discovery tool and use their actual schemas. The operation names below describe intent. If no connected tool supports an operation, ask the user to connect that tracker and stop before writing tonight's file.
 
 ## Steps
 
-1. List the projects with `projects/*/project.json`. Each project's repos, their paths and descriptions, `defaultRepo` and `linearProjects` live there. A ticket belongs to the project whose `linearProjects` holds its Linear project.
+1. List the projects with `projects/*/project.json`. Each project's repos, their paths and descriptions, `defaultRepo`, `issueTracker` and `trackerProjects` live there. A ticket belongs to the project whose `trackerProjects` holds its tracker project.
    Done when you know every project and its repos.
 
 2. Read `tonight.md` in the checkout root; if it doesn't exist, copy `templates/tonight.md` to it and delete the example tickets. If `## <ID> – …` headings exist outside the HTML comment, show them and ask the user: replace, append, or stop. An existing `allowance:` header line is part of the header: keep it or replace it according to the answer in step 11.
@@ -23,11 +23,11 @@ Discover the connected Linear tools for listing the current user's issues, fetch
 3. Fetch candidates with the issue-listing tool, assigned to the authenticated user and in state `Todo` only. If there are none, tell the user and stop.
    Done when you hold every Todo ticket assigned to the user.
 
-4. Run `npm run -s prep-status`; it prints one JSON line per Todo ticket that belongs to a project, with `project` and `prep` fields. Show a numbered list: ID, project, title, team, priority, estimate, prep. The prep column is one of: fresh, stale, new comments, not ready (with its blockers), inferred, none. Stale means the description changed after `/prep`; new comments means comments arrived after `/prep`. A ticket from step 3 that is missing from the output shows "—": its Linear project belongs to no nightshift project, so tonight can't run it. If the command errors, show the prep column as "?" and say why. Suggest an order by Linear priority (Urgent, High, Medium, Low, None), then by project order. Ask which to run tonight, as numbers or IDs, and tell them the runner works tickets in file order, so order is priority.
+4. Run `npm run -s prep-status`; it prints one JSON line per Todo ticket that belongs to a project, with `project` and `prep` fields. Show a numbered list: ID, project, title, team, priority, estimate, prep. The prep column is one of: fresh, stale, new comments, not ready (with its blockers), inferred, none. Stale means the description changed after `/prep`; new comments means comments arrived after `/prep`. A ticket from step 3 that is missing from the output shows "—": its tracker project belongs to no nightshift project, so tonight can't run it. If the command errors, show the prep column as "?" and say why. Suggest an order by tracker priority (Urgent, High, Medium, Low, None), then by project order. Ask which to run tonight, as numbers or IDs, and tell them the runner works tickets in file order, so order is priority.
    When a picked ticket depends on another picked ticket's unmerged code, order it after its parent and add `base: <ID>` under `repo:`. Both must be in the same project and repo.
    Done when the user has named an ordered set.
 
-5. For each picked ticket, fetch the full issue and list its comments with the connected Linear tools.
+5. For each picked ticket, fetch the full issue and list its comments with the connected tools.
    Done when every picked ticket has both.
 
 6. Check each picked ticket against every item in `.claude/skills/prep/gaps.md`. Tickets prepped with `/prep` carry their decisions in the description under `## Decisions`; count those as answered.
@@ -49,7 +49,7 @@ Discover the connected Linear tools for listing the current user's issues, fetch
    The agent already receives the description, so bullets add what the description lacks. Don't repeat a gap answer in another bullet.
    Done when each ticket has bullets, each adding something the description lacks.
 
-9. Look up open PRs for all picked tickets with one read-only call per project: `npm run -s open-prs -- --project <project> <repo>:<ID> …`. It prints one JSON line per ticket. It fetches each ticket's Linear title (so it needs `LINEAR_API_KEY`) to build the branch name `<BRANCH_PREFIX>/<id>-<slug>` (see `ticketBranchName` in `src/worktree.ts`). The runner continues an open PR whose source branch is that name exactly or that name plus `-<digits>` (see `pickTicketPr` in `src/pr.ts`).
+9. Look up open PRs for all picked tickets with one read-only call per project: `npm run -s open-prs -- --project <project> <repo>:<ID> …`. It prints one JSON line per ticket. It fetches each ticket's title from the tracker (so it needs the tracker's API key, `LINEAR_API_KEY` for Linear) to build the branch name `<BRANCH_PREFIX>/<id>-<slug>` (see `ticketBranchName` in `src/worktree.ts`). The runner continues an open PR whose source branch is that name exactly or that name plus `-<digits>` (see `pickTicketPr` in `src/pr.ts`).
    A non-null `pr` means the ticket is requeued: mark it "requeued, continues PR #N", ask the user what feedback the agent should address, and write their answer as bullets saying what to change on top of the existing PR.
    If the line has `"autoComplete": true`, warn the user: the runner will not push to that PR (it would merge unreviewed), so tonight's work stays on a local branch and the ticket ends as needs_review. Suggest they cancel auto-complete first.
    An `error` line or a non-zero exit means: say so and treat that ticket as new.
@@ -69,5 +69,5 @@ Discover the connected Linear tools for listing the current user's issues, fetch
    Done when the parsed output matches the approved draft.
 
 13. Finish with one line per ticket (ID, project, repo, "continues PR #N" or "new") and the reminder that `npm run run:dry` previews the night.
-    Leave the night run and Linear tickets as they are.
+    Leave the night run and tickets as they are.
     Done when the summary is shown.

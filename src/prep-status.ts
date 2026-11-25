@@ -1,14 +1,14 @@
 import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
-import { requireEnv } from "./env.js";
-import { fetchTodoIssues, type TodoIssue } from "./linear.js";
+import { getEnv } from "./env.js";
+import { createIssueTracker, type TodoIssue } from "./issue-tracker.js";
 import {
   prepState,
   readPrepStore,
   type PrepStateName,
   type PrepStore,
 } from "./prep.js";
-import { loadAllProjects, projectForLinearProject, type Project } from "./project.js";
+import { loadAllProjects, projectForTrackerProject, sharedTrackerKind, type Project } from "./project.js";
 import { statePaths } from "./state.js";
 
 export interface PrepStatusLine {
@@ -27,10 +27,10 @@ export interface PrepStatusLine {
 export function prepStatusLines(
   issues: TodoIssue[],
   store: PrepStore,
-  projects: Pick<Project, "name" | "linearProjects">[],
+  projects: Pick<Project, "name" | "trackerProjects">[],
 ): PrepStatusLine[] {
   return issues.flatMap((issue) => {
-    const project = projectForLinearProject(projects, issue.projectName);
+    const project = projectForTrackerProject(projects, issue.projectName);
     if (project === undefined) return [];
     const { state, preppedAt, blockers } = prepState(
       store[issue.identifier],
@@ -61,7 +61,9 @@ async function main(): Promise<void> {
     if (flagProject !== undefined && !projects.some((p) => p.name === flagProject)) {
       throw new Error(`unknown project "${flagProject}"`);
     }
-    const issues = await fetchTodoIssues({ apiKey: requireEnv("LINEAR_API_KEY") });
+    const kind = sharedTrackerKind(projects);
+    if (!kind) return;
+    const issues = await createIssueTracker(kind, getEnv).listTodo();
     const store = readPrepStore(statePaths().prep);
     const lines = prepStatusLines(issues, store, projects);
     for (const line of lines.filter((l) => flagProject === undefined || l.project === flagProject)) {

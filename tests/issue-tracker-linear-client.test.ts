@@ -4,13 +4,19 @@ import {
   fetchTeams,
   fetchTicket,
   fetchTodoIssues,
+  isFinished,
   pickInProgressState,
   pickInReviewState,
   setIssueState,
   shouldMarkInProgress,
-  shouldMarkInReview,
   todoFilter,
-} from "../src/linear.js";
+} from "../src/issue-trackers/linear/client.js";
+
+describe("isFinished", () => {
+  it.each([["completed", true], ["canceled", true], ["started", false], ["unstarted", false], ["backlog", false]])(
+    "%s -> %s", (type, expected) => expect(isFinished(type)).toBe(expected),
+  );
+});
 
 describe("pickInProgressState", () => {
   const states = [
@@ -59,29 +65,12 @@ describe("pickInReviewState", () => {
   });
 });
 
-describe("shouldMarkInReview", () => {
-  it("moves tickets that finished done or need review", () => {
-    expect(shouldMarkInReview("done", "started")).toBe(true);
-    expect(shouldMarkInReview("needs_review", "unstarted")).toBe(true);
-  });
-
-  it("leaves partial, skipped and errored tickets where they are", () => {
-    expect(["partial", "skipped", "error"].map(s => shouldMarkInReview(s as "partial", "started"))).toEqual([false, false, false]);
-  });
-
-  it("never moves a ticket out of a finished state", () => {
-    expect(["completed", "canceled"].map(t => shouldMarkInReview("done", t))).toEqual([false, false]);
-  });
-});
-
 describe("setIssueState", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
   });
 
   it("updates the issue state and throws when Linear reports failure", async () => {
-    vi.stubEnv("LINEAR_API_KEY", "lin_api_x");
     const bodies: unknown[] = [];
     const respond = (success: boolean) => vi.fn(async (_url: string, init: { body: string }) => {
       bodies.push(JSON.parse(init.body));
@@ -89,18 +78,17 @@ describe("setIssueState", () => {
     });
 
     vi.stubGlobal("fetch", respond(true));
-    await setIssueState("issue-1", "progress");
+    await setIssueState("issue-1", "progress", { apiKey: "lin_api_x" });
     expect(bodies[0]).toMatchObject({ variables: { id: "issue-1", stateId: "progress" } });
 
     vi.stubGlobal("fetch", respond(false));
-    await expect(setIssueState("issue-1", "progress")).rejects.toThrow(/not updated/);
+    await expect(setIssueState("issue-1", "progress", { apiKey: "lin_api_x" })).rejects.toThrow(/not updated/);
   });
 });
 
 describe("fetchTicket", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
   });
 
   const issue = (comments: unknown[]) => ({
@@ -110,14 +98,13 @@ describe("fetchTicket", () => {
   });
 
   it("returns the comments oldest first with their author", async () => {
-    vi.stubEnv("LINEAR_API_KEY", "lin_api_x");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: { issue: issue([
       { body: "Second", createdAt: "2026-10-02T09:00:00.000Z", user: { name: "Sam" } },
       { body: "First", createdAt: "2026-10-01T09:00:00.000Z", user: { name: "Adam" } },
       { body: "Linked a PR", createdAt: "2026-10-03T09:00:00.000Z", user: null },
     ]) } }))));
 
-    const ticket = await fetchTicket("ENG-1");
+    const ticket = await fetchTicket("ENG-1", { apiKey: "lin_api_x" });
 
     expect(ticket?.comments).toEqual([
       { author: "Adam", createdAt: "2026-10-01T09:00:00.000Z", body: "First" },

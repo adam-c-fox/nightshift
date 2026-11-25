@@ -5,7 +5,8 @@ import { runWithWatchdog, type WatchdogResult } from "./process.js";
 import type { ClassifiedCheck } from "./checks.js";
 import type { RepoConfig } from "./project.js";
 import { runtimeSettings } from "./settings.js";
-import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, LinearComment, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, ThreadReport, ThreadVerdict, Verdict, VerifyResult } from "./types.js";
+import type { IssueComment } from "./issue-tracker.js";
+import type { CandidateVerdict, ConfirmBatch, Confidence, Decision, Followup, FixResolution, ReviewCandidate, ReviewFinding, ReviewLens, ReviewRisk, Ruling, RunUsage, Severity, TestResult, ThreadReport, ThreadVerdict, Verdict, VerifyResult } from "./types.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const REVIEW_MD = path.join(ROOT, "prompts", "review.md");
@@ -22,13 +23,13 @@ export interface TicketBrief {
   ticketName: string;
   context: string[];
   linearDesc: string;
-  linearComments: LinearComment[];
+  linearComments: IssueComment[];
   linearUrl: string;
   state: string;
   prComments?: boolean;
 }
 
-function commentLines(comments: LinearComment[]): string[] {
+function commentLines(comments: IssueComment[]): string[] {
   if (comments.length === 0) return [];
   const items = comments.map(c => `  - ${c.author}, ${c.createdAt.slice(0, 10)}: ${c.body.replace(/\n/g, "\n    ")}`);
   return [`**Linear comments (oldest first):**`, ...items, ``];
@@ -741,7 +742,7 @@ export async function runAgent(
   ticketName: string,
   context: string[],
   linearDesc: string,
-  linearComments: LinearComment[],
+  linearComments: IssueComment[],
   linearUrl: string,
   linearState: string,
   dryRun: boolean,

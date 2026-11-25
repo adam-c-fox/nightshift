@@ -1,8 +1,8 @@
 import { pathToFileURL } from "node:url";
 import { extractFlag } from "./args.js";
 import { DASHBOARD_ORIGIN } from "./dashboard/address.js";
-import { useProjectEnv } from "./env.js";
-import { fetchTicket } from "./linear.js";
+import { getEnv, useProjectEnv } from "./env.js";
+import { createIssueTracker } from "./issue-tracker.js";
 import { descriptionHash, upsertPrepRecord, type PrepRecord } from "./prep.js";
 import { loadProject } from "./project.js";
 import { statePaths } from "./state.js";
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
       );
     }
     useProjectEnv(project.envFile);
-    const linear = await fetchTicket(args.id);
+    const linear = await createIssueTracker(project.issueTracker, getEnv).getIssue(args.id);
     if (!linear) throw new Error(`ticket ${args.id} not found in Linear`);
     const record = buildPrepRecord(args, linear.description, new Date());
     upsertPrepRecord(statePaths().prep, args.id, record);

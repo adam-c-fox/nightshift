@@ -28,7 +28,7 @@ const ticket = (
   over: Partial<TicketResult> = {},
 ): TicketResult => ({
   ticket: { id, name: `Ticket ${id}`, context: [], repo: "web" },
-  linear: null,
+  issue: null,
   status,
   summary: `Summary ${id}`,
   filesCreated: [],

@@ -1,4 +1,5 @@
 import type { CheckStatus } from "./checks.js";
+import type { Issue } from "./issue-tracker.js";
 import type { ExistingPr } from "./pr.js";
 
 export interface Ticket {
@@ -45,25 +46,6 @@ export interface ThreadOutcome {
 export interface HeldPr { repo: string; prId: number; reason: string }
 
 export interface PrSweepSummary { prsScanned: number; items: number; held: HeldPr[]; error?: string }
-
-export interface LinearComment {
-  author: string;
-  createdAt: string;
-  body: string;
-}
-
-export interface LinearTicket {
-  id: string;
-  identifier: string;
-  name: string;
-  description: string;
-  comments: LinearComment[];
-  state: string;
-  stateType: string;
-  inProgressState?: { id: string; name: string };
-  inReviewState?: { id: string; name: string };
-  url: string;
-}
 
 export type TicketStatus = "done" | "partial" | "needs_review" | "skipped" | "error";
 
@@ -274,7 +256,7 @@ export interface RunRecord {
 
 export interface TicketResult {
   ticket: Ticket;
-  linear: LinearTicket | null;
+  issue: Issue | null;
   status: TicketStatus;
   title?: string;
   summary: string;

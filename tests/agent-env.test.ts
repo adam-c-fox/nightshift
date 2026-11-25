@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentEnv, buildAgentSettings } from "../src/agent-env.js";
+import { ISSUE_TRACKER_DENIED_TOOLS } from "../src/issue-tracker.js";
 
 describe("agentEnv", () => {
   it("keeps the Claude OAuth token so the agent can log in", () => {
@@ -73,6 +74,11 @@ describe("buildAgentSettings", () => {
     expect(s.permissions.deny).toEqual(expect.arrayContaining([
       "WebFetch", "WebSearch", "mcp__claude_ai_Linear", "mcp__claude_ai_Notion",
     ]));
+  });
+
+  it("denies every issue tracker connector", () => {
+    const s = JSON.parse(buildAgentSettings(repo, root));
+    expect(s.permissions.deny).toEqual(expect.arrayContaining(ISSUE_TRACKER_DENIED_TOOLS));
   });
 
   it("never lets the agent reach Azure DevOps", () => {

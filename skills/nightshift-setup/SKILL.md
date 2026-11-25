@@ -21,8 +21,9 @@ Resolve this skill's directory through any symlink, then set `$NS` to its grandp
    - Other repos in the project, as absolute paths. A Terraform repo beside an app repo is common.
    - The project name. It must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`, can't be `new` or `night`, and can't already exist in `$NS/projects/`.
    - Each repo's key, matching `^[a-z0-9][a-z0-9_-]*$` (e.g. `app`, `infra`), and its `setup` and `checks` commands (from CI) with any `in` globs.
-   - `linearTeams`, as team keys like `ENG`. Leave it out to list every team.
-   - `linearProjects`, the Linear project name(s) whose tickets belong to this project. No Linear project may belong to two nightshift projects.
+   - `issueTracker`, which is `linear` (the only value). It can't be detected from a remote, so ask.
+   - `trackerTeams`, as team keys like `ENG`. Leave it out to list every team.
+   - `trackerProjects`, the tracker project name(s) whose tickets belong to this project. No tracker project may belong to two nightshift projects.
 
 ## 2. Fit check
 
@@ -68,14 +69,14 @@ The baseline runs unsandboxed, but night agents run sandboxed. Their network all
 
 ## 5. Write `$NS/projects/<name>/`
 
-- **`project.json`**: use the example's shape. `prHost` is required: write the value from step 2. `/tonight` and `/prep` route each ticket to a repo by its `description`, so fill it with the nouns tickets will use: frameworks, cloud provider, resource types, top-level directories. Set `defaultRepo` when there are two or more repos. Add `testDb` if you wrote the script.
+- **`project.json`**: use the example's shape. `prHost` is required: write the value from step 2. `issueTracker`, `trackerProjects` and, if given, `trackerTeams` come from step 1; every project on this machine must use the same `issueTracker`. `/tonight` and `/prep` route each ticket to a repo by its `description`, so fill it with the nouns tickets will use: frameworks, cloud provider, resource types, top-level directories. Set `defaultRepo` when there are two or more repos. Add `testDb` if you wrote the script.
   - Per repo, `setup` and `checks` come from step 1 and the baseline.
   - `network` holds the registries setup and tests reach (npm, PyPI, NuGet, Terraform registry...), plus `localhost` and `127.0.0.1` when tests use local services (with `allowLocalBinding: true`).
   - `tools` holds the command prefixes the agent needs, e.g. `npm`, `dotnet`, `.venv/bin/pytest`.
   - A runtime that isn't installed here is a **Missing here** item, not a reason to drop the check.
 - **`.env`**: the `env` entries from step 2 and `BRANCH_PREFIX`, then `chmod 600`.
   - Ask the user for an optional `BRANCH_PREFIX`, or leave it empty.
-  - Credentials (PATs, tokens), `LINEAR_API_KEY` and the Claude token belong in the root `$NS/.env`.
+  - Credentials (PATs, tokens), the tracker's API key (`LINEAR_API_KEY` for Linear) and the Claude token belong in the root `$NS/.env`.
 - **`AGENTS.md`**: the example's three sections, each holding only facts you verified in steps 1–4:
   - **Repos**: the layout, how to run one test file, and every place the generic `AGENTS.md` is wrong for this repo. The root `AGENTS.md` is stack-neutral, so stack-specific workflow notes go here (e.g. Terraform: validate instead of unit tests, never plan or apply).
   - **Services in this environment**.
