@@ -1,6 +1,6 @@
 # Dashboard
 
-The dashboard is a local web page for the evening and the morning. It shows what to prep and plan before you log off, and what needs you after a night. Besides reading and writing files in this repo, it calls Linear and Azure DevOps with the same credentials as the runner, runs the usage check, runs git in the configured repo paths and launches herdr.
+The dashboard is a local web page for the evening and the morning. It shows what to prep and plan before you log off, and what needs you after a night. Besides reading and writing files in this repo, it calls Linear and Azure DevOps with the same credentials as the runner, runs the usage check, runs git in the configured repo paths and runs read-only `claude -p` steps for prep.
 
 ## Install
 
@@ -39,12 +39,33 @@ The home page has a "Before clocking off" section. It opens with a global summar
   - `none`: no record and no such section.
 - **Allowance and usage.** Tonight's allowance and where it comes from (`tonight.md` or `NIGHTLY_ALLOWANCE_PERCENT`), and the weekly usage with its reset time, with the Codex weekly usage and its nightly allowance (`CODEX_ALLOWANCE_PERCENT`) next to it.
 - **Warnings.** A queued ticket that Linear can't find, that isn't in Todo or isn't assigned to you; one that is unprepped, stale or not ready; a PR with auto-complete set, which the runner won't push to; and a weekly reset within 24 hours, when `allowance: 100` may be worth setting. If Linear is unavailable or `tonight.md` has a parse error, the page says so and still lists what it can.
-- **Prep and Plan tonight.** Each row has a Prep button and the section has a Plan tonight button. They open a herdr workspace running `/prep <ID> <project>` or `/tonight`, with no project. If herdr isn't installed or isn't running, the dashboard copies the equivalent `claude` command to your clipboard instead.
+- **Notes.** Each queue row has a Notes box. One bullet per line, saved to that ticket's entry in `tonight.md`.
+- **Allowance form.** The allowance line is a form. Enter 1 to 100, choose the default, or choose 100% for the rest of the week. It writes `allowance:` in `tonight.md`.
+- **Prep.** Each row has a Prep button. See [Prep in the dashboard](#prep-in-the-dashboard).
+- **Open preps.** A strip lists unfinished prep sessions, so you can come back to one after a refresh or a restart.
 - **Refresh.** Clears the caches and reloads. Linear tickets are cached for 5 minutes, PRs and their CI results for 5 minutes, usage for 10 minutes and the Linear team list for 1 hour.
+
+## Prep in the dashboard
+
+The Prep button starts a session at `/prep/<sid>`. It runs in steps:
+
+1. **Survey.** A read-only, sandboxed `claude -p` reads the repo with Read, Grep and Glob only. It has no network and no MCP. It looks for gaps against `.claude/skills/prep/gaps.md`.
+2. **Answers.** You answer the gaps in a form.
+3. **Draft.** The draft step resumes the survey's Claude session and writes Acceptance criteria, Decisions and Pointers sections, following `.claude/skills/prep/draft.md`. Code merges them into the description and never touches the text that's already there.
+4. **Review.** Edit the draft, then choose:
+   - **Approve.** Nightshift's own tracker client sets the description, assigns the ticket to you and moves it to Todo. The prep is recorded in `state/prep.json`.
+   - **Ask for changes.** Revises the draft.
+   - **Not ready.** Records the blockers and leaves Linear alone.
+
+Sessions are kept in `state/sessions/<sid>.json`. They survive a refresh and a restart. A step that was running at restart is marked interrupted, with a Retry button. Sessions are pruned after 30 days. At most 2 model steps run at once, and no step starts while a night run is live. Each session shows its cost (est.). Cancel stops the step.
+
+The steps run under `CLAUDE_CODE_OAUTH_TOKEN` from the root `.env`.
+
+The "Plan tonight" button is gone. The `/prep` and `/tonight` skills still work from a terminal, and each prep page has a "Run in terminal instead" link that copies the command.
 
 ## Prep memory
 
-`/prep` records what it did in `state/prep.json` with `prep-mark`:
+Prep records what it did in `state/prep.json` with `prep-mark`:
 
 ```sh
 npm run -s prep-mark -- <ID> --project <name> [--repo <repo>] [--not-ready "<blockers>"]
@@ -70,4 +91,4 @@ npm run -s prep-status
 
 ## Security
 
-The server binds to 127.0.0.1 and only accepts requests whose `Host` is `127.0.0.1` or `localhost` on its port. Every write needs an `X-Nightshift: 1` header and, if there is an `Origin`, it has to be the dashboard's own. The one exception is ticking a checkbox in a report you opened from disk. That report sends the tick to the dashboard when it's running, and keeps it in the browser when it isn't.
+The server binds to 127.0.0.1 and only accepts requests whose `Host` is `127.0.0.1` or `localhost` on its port. Every write needs an `X-Nightshift: 1` header and, if there is an `Origin`, it has to be the dashboard's own. That covers the session routes: `POST /api/sessions` and `POST /api/sessions/<sid>/{answers,revise,approve,not-ready,retry,cancel}`. The reads, `GET /prep/<sid>`, `/fragments/session/<sid>` and `/fragments/sessions`, get the same `Host` check. The survey step can't write files or reach the network. The one exception is ticking a checkbox in a report you opened from disk. That report sends the tick to the dashboard when it's running, and keeps it in the browser when it isn't.

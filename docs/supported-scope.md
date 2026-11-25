@@ -14,7 +14,7 @@ PR hosts sit behind the `PrHost` interface in [`pr-host.ts`](../src/pr-host.ts).
 | Target repos | Any repo whose setup and checks are shell commands. A command can run once per directory matched by a file glob. |
 | Implementation and review | Claude Code implements and fixes changes, confirms review candidates and runs the postmortem. Codex supplies an additional read-only review pass; an unavailable Codex pass is recorded as skipped. |
 | Test services | An optional executable project script accepts `up` and `down`. `up` prints one URL, exported as `TEST_DATABASE_URL`. The example runs Postgres in Docker. |
-| Dashboard | A local HTTP server at `127.0.0.1:4100`. The login/startup installer uses macOS LaunchAgents. Herdr is optional; launch buttons offer a Claude command when it is unavailable. |
+| Dashboard | A local HTTP server at `127.0.0.1:4100`. The login/startup installer uses macOS LaunchAgents. Prep steps run `claude -p` and need `CLAUDE_CODE_OAUTH_TOKEN`. |
 
 The exact configuration is validated in [`project.ts`](../src/project.ts). Check expansion lives in [`checks.ts`](../src/checks.ts); setup commands and git worktrees live in [`worktree.ts`](../src/worktree.ts).
 

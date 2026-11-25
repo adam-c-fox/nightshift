@@ -54,7 +54,7 @@ npm run run:dry
 
 Dry runs read external services and write local logs and reports, but do not edit target repos or publish PRs. A completed night writes `reports/night/nightshift-<date>.html`.
 
-For the evening and morning views, run `npm run dashboard` and open <http://127.0.0.1:4100>. See the [dashboard guide](docs/dashboard.md) for prep state, outstanding actions and automatic startup.
+For the evening and morning views, run `npm run dashboard` and open <http://127.0.0.1:4100>. See the [dashboard guide](docs/dashboard.md) for prepping tickets, prep state, outstanding actions and automatic startup.
 
 ## Development
 
@@ -71,7 +71,7 @@ npm run typecheck
 - [Setup and daily use](docs/setup.md): credentials, projects, skills, scheduling and morning reports.
 - [Architecture and design decisions](docs/architecture.md): worktrees, checks, review confirmation and budgets.
 - [Supported scope and extension points](docs/supported-scope.md): platform assumptions and adding providers.
-- [Dashboard](docs/dashboard.md): evening planning, outstanding work and local HTTP security.
+- [Dashboard](docs/dashboard.md): evening prep and planning, outstanding work and local HTTP security.
 - [Review replay and scoring](docs/review-replay.md): reproduce a review, compare golden sets and inspect fix reviews.
 
 ## License
